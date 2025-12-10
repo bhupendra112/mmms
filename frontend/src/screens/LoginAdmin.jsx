@@ -26,6 +26,7 @@ function LoginAdmin() {
     }
   };
 
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-r from-blue-100 to-indigo-100 p-4">
       <div className="w-full max-w-md bg-white rounded-xl shadow-lg p-8 sm:p-10">

@@ -1,7 +1,7 @@
 // src/redux/api-urls.ts
 
-const BaseUrl = "http://localhost:8080/api/admin";
-
+//const BaseUrl = "http://localhost:8080/api/admin";
+const BaseUrl = "http://72.61.238.122:8080/api/admin"
 export const ApiUrl = {
     ADMIN_USER_LOGIN_API: BaseUrl + "/auth/login",
     GET_GROUP_DETAIL_API: BaseUrl + "/group/detail",

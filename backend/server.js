@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 8080;
 // CORS FIX
 app.use(
     cors({
-        origin: "http://localhost:5173", // your frontend Vite URL
+        origin: "*", // your frontend Vite URL
         methods: ["GET", "POST", "PUT", "DELETE"],
         credentials: true,
     })
