@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import connectDB from "./config/dbConfig.js";
 import adminRouter from "./router/admin/index.js";
+//import "./script/makeAdmin.js"
 
 dotenv.config();
 

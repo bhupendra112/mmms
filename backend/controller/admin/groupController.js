@@ -3,7 +3,7 @@ import message from "../../utility/message.js";
 import { BankMaster, GroupMaster } from "../../model/index.js";
 import { addBankValidationSchema } from "../../validation/adminValidation.js";
 
-export const registerGroup = async(req, res) => {
+export const registerGroup = async (req, res) => {
     try {
         const {
             group_name,
@@ -27,7 +27,7 @@ export const registerGroup = async(req, res) => {
 };
 
 
-export const addBankDetail = async(req, res) => {
+export const addBankDetail = async (req, res) => {
     try {
         // Guard: make sure req.body exists
         const { error } = addBankValidationSchema.validate(req.body);
@@ -70,5 +70,34 @@ export const addBankDetail = async(req, res) => {
             return res.status(400).json({ success: false, message: "Duplicate key error", detail: error.keyValue });
         }
         return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const groupDetail = async (req, res) => {
+    try {
+        const groups = await GroupMaster.find().select("_id group_name");
+
+        // ✅ Correct empty check
+        if (!groups || groups.length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: "No groups found",
+                data: [],
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "All groups fetched successfully",
+            data: groups,
+        });
+    } catch (error) {
+        console.error("groupDetail error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+            error: error.message,
+        });
     }
 };

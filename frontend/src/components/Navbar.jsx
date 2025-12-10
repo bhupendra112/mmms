@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Bell,
   User,
@@ -12,10 +12,15 @@ import {
   DollarSign,
   Settings,
 } from "lucide-react";
+import { useDispatch } from "react-redux";
+import { logout } from "../redux/slice/authSlice";
 
 export default function Navbar() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
 
   const menuItems = [
     {
@@ -35,6 +40,16 @@ export default function Navbar() {
 
   const closeMobileSidebar = () => {
     if (window.innerWidth < 1024) setSidebarOpen(false);
+  };
+
+  const handleLogout = () => {
+    // Clear Redux state
+    dispatch(logout());
+    // Clear localStorage
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("adminName");
+    // Redirect to login page
+    navigate("/login-admin", { replace: true });
   };
 
   return (
@@ -75,11 +90,10 @@ export default function Navbar() {
                       <Link
                         to={path}
                         onClick={closeMobileSidebar}
-                        className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                          active
+                        className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${active
                             ? "bg-gray-800 text-white"
                             : "text-gray-300 hover:bg-gray-800"
-                        }`}
+                          }`}
                       >
                         <Icon size={18} />
                         <span>{label}</span>
@@ -114,7 +128,7 @@ export default function Navbar() {
       {/* ---------------- Main Layout ---------------- */}
       <div className="flex-1 flex flex-col lg:ml-64 transition-all duration-300">
 
-        {/* Top Navbar (fixed width, NOT double shifted) */}
+        {/* Top Navbar */}
         <nav className="fixed top-0 left-0 lg:left-64 right-0 z-20 bg-white border-b shadow-sm">
           <div className="h-14 px-4 flex items-center justify-between">
 
@@ -140,19 +154,38 @@ export default function Navbar() {
             </div>
 
             {/* Right Icons */}
-            <div className="flex items-center space-x-9">
+            <div className="flex items-center space-x-4 relative">
+
               <div className="relative cursor-pointer">
                 <Bell size={22} className="text-gray-700 hover:text-gray-900" />
                 <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full px-1">
                   3
                 </span>
               </div>
-              <User size={22} className="text-gray-700 hover:text-gray-900 cursor-pointer" />
+
+              {/* User Icon with Dropdown */}
+              <div className="relative">
+                <User
+                  size={22}
+                  className="text-gray-700 hover:text-gray-900 cursor-pointer"
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                />
+                {userMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-36 bg-white border border-gray-200 shadow-lg rounded-md z-50">
+                    <button
+                      className="w-full text-left px-4 py-2 hover:bg-gray-100"
+                      onClick={handleLogout}
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </nav>
 
-        {/* ---------------- Main Content ---------------- */}
+        {/* Main Content */}
         <main className="pt-16 p-4 min-h-screen bg-[#f8fbff]">
           <Outlet />
         </main>

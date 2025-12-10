@@ -1,53 +1,75 @@
 import React, { useState } from "react";
-import { createGroup, createBank } from "../services/groupService";
+import { addGroup, addBank } from "../Api/groupApi";
 
-// --------------------------------------------------------
-// MAIN COMPONENT
-// --------------------------------------------------------
+/* =====================================
+   CLEAN PAYLOAD
+===================================== */
+const cleanPayload = (obj) => {
+  const cleaned = {};
+  Object.entries(obj).forEach(([k, v]) => {
+    if (v !== "" && v !== null && v !== undefined) {
+      cleaned[k] = v;
+    }
+  });
+  return cleaned;
+};
+
+/* =====================================
+   MAIN COMPONENT
+===================================== */
 export default function GroupBankMaster() {
   const [step, setStep] = useState(1);
   const [groupData, setGroupData] = useState({});
   const [bankData, setBankData] = useState({});
-
   const [loading, setLoading] = useState(false);
 
   const finalSubmit = async (bankForm) => {
     try {
       setLoading(true);
 
-      // STEP 1: STORE GROUP
-      const groupRes = await createGroup(groupData);
-
-      const groupId = groupRes?.data?._id;
-      if (!groupId) {
-        alert("Group created but no ID returned");
+      if (!groupData.group_name || !groupData.group_code) {
+        alert("Group Name & Code required");
+        setStep(1);
         return;
       }
 
-      // STEP 2: STORE BANK (with group_id)
-      const bankPayload = {
+      const groupPayload = cleanPayload(groupData);
+      const groupRes = await addGroup(groupPayload);
+      const groupId = groupRes?.data?._id;
+
+      if (!groupId) {
+        alert("Group ID missing");
+        return;
+      }
+
+      const bankPayload = cleanPayload({
         ...bankForm,
         group_id: groupId,
-      };
+      });
 
-      await createBank(bankPayload);
+      if (bankPayload.bank_name && bankPayload.account_type) {
+        await addBank(bankPayload);
+      }
 
-      alert("Group & Bank Saved Successfully!");
-      setLoading(false);
+      alert("✅ Saved Successfully");
       setStep(1);
-    } catch (error) {
+      setGroupData({});
+      setBankData({});
+    } catch (err) {
+      console.log(err)
+      // alert(err?.response?.data?.message || "Server Error");
+    } finally {
       setLoading(false);
-      alert(error.message || "Something went wrong!");
     }
   };
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <h1 className="text-3xl font-bold text-center mb-6">Group & Bank Master</h1>
+      <h1 className="text-3xl font-bold text-center mb-6">
+        Group & Bank Master
+      </h1>
 
-      {loading && (
-        <p className="text-center text-lg text-blue-600 font-bold">Saving...</p>
-      )}
+      {loading && <p className="text-center">Saving...</p>}
 
       {step === 1 ? (
         <GroupMasterForm
@@ -68,9 +90,10 @@ export default function GroupBankMaster() {
   );
 }
 
-// --------------------------------------------------------
-// GROUP MASTER FORM (FIXED VERSION)
-// --------------------------------------------------------
+
+/* ======================================================
+   GROUP MASTER FORM
+====================================================== */
 function GroupMasterForm({ onNext, defaultValues }) {
   const [form, setForm] = useState({
     group_name: "",
@@ -98,84 +121,78 @@ function GroupMasterForm({ onNext, defaultValues }) {
     ...defaultValues,
   });
 
-  const govtOptions = ["Yes", "No"];
-  const projectOptions = ["NRLM", "Other"];
-
-  const handleChange = (e) => {
+  const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const submitGroup = (e) => {
-    e.preventDefault();
-    onNext(form);
-  };
 
   return (
     <form
-      onSubmit={submitGroup}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onNext(form);
+      }}
       className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-6 shadow rounded-xl"
     >
       <Input label="Group Name" name="group_name" value={form.group_name} handleChange={handleChange} />
       <Input label="Group Code" name="group_code" value={form.group_code} handleChange={handleChange} />
       <Input label="Cluster Name" name="cluster_name" value={form.cluster_name} handleChange={handleChange} />
       <Input label="Village" name="village" value={form.village} handleChange={handleChange} />
-
-      <Input type="number" label="No. of Members" name="no_members" value={form.no_members} handleChange={handleChange} />
+      <Input label="Cluster" name="cluster" value={form.cluster} handleChange={handleChange} />
+      <Input label="No Members" name="no_members" value={form.no_members} handleChange={handleChange} />
       <Input type="date" label="Formation Date" name="formation_date" value={form.formation_date} handleChange={handleChange} />
-
       <Input label="President Name" name="president_name" value={form.president_name} handleChange={handleChange} />
       <Input label="Secretary Name" name="secretary_name" value={form.secretary_name} handleChange={handleChange} />
       <Input label="Treasurer Name" name="treasurer_name" value={form.treasurer_name} handleChange={handleChange} />
-
-      <Input label="Cluster" name="cluster" value={form.cluster} handleChange={handleChange} />
-      <Input type="number" label="Saving Per Member" name="saving_per_member" value={form.saving_per_member} handleChange={handleChange} />
-
+      <Input label="Saving Per Member" name="saving_per_member" value={form.saving_per_member} handleChange={handleChange} />
+      <Input label="Membership Fees" name="membership_fees" value={form.membership_fees} handleChange={handleChange} />
       <Input label="Membership Group" name="Mship_Group" value={form.Mship_Group} handleChange={handleChange} />
-      <Input type="number" label="Membership Fees" name="membership_fees" value={form.membership_fees} handleChange={handleChange} />
-
       <Input label="Mitan Name" name="mitan_name" value={form.mitan_name} handleChange={handleChange} />
       <Input type="date" label="Meeting Date 1" name="meeting_date_1" value={form.meeting_date_1} handleChange={handleChange} />
       <Input type="date" label="Meeting Date 2" name="meeting_date_2" value={form.meeting_date_2} handleChange={handleChange} />
-
       <Input label="Sahyog Rashi" name="sahyog_rashi" value={form.sahyog_rashi} handleChange={handleChange} />
       <Input label="Share Capital" name="shar_capital" value={form.shar_capital} handleChange={handleChange} />
       <Input label="Other" name="other" value={form.other} handleChange={handleChange} />
-
       <Input label="Remark" name="remark" value={form.remark} handleChange={handleChange} />
 
-      <Select label="Linked with Govt Project?" name="govt_linked" value={form.govt_linked} handleChange={handleChange} options={govtOptions} />
+      <Select
+        label="Govt Linked?"
+        name="govt_linked"
+        value={form.govt_linked}
+        options={["Yes", "No"]}
+        handleChange={handleChange}
+      />
 
       {form.govt_linked === "Yes" && (
         <Select
-          label="Project Type"
+          label="Govt Project Type"
           name="govt_project_type"
           value={form.govt_project_type}
+          options={["NRLM", "Other"]}
           handleChange={handleChange}
-          options={projectOptions}
         />
       )}
 
-      <div className="col-span-2 text-center mt-6">
-        <button className="bg-blue-600 text-white font-bold px-8 py-3 rounded-lg">
-          NEXT → Fill Bank Master
+      <div className="col-span-2 text-center mt-4">
+        <button className="bg-blue-600 text-white px-8 py-3 rounded-lg">
+          NEXT → BANK
         </button>
       </div>
     </form>
   );
 }
 
-// --------------------------------------------------------
-// BANK MASTER FORM
-// --------------------------------------------------------
+
+/* ======================================================
+   BANK MASTER FORM (IMPORTANT FIX)
+====================================================== */
 function BankMasterForm({ onSubmitAll, onBack, defaultValues }) {
   const [form, setForm] = useState({
     bank_name: "",
+    short_name: "",
     account_no: "",
     branch_name: "",
     ifsc: "",
-    short_name: "",
-    ac_open_date: "",
     account_type: "",
+    ac_open_date: "",
     opening_balance: "",
     open_indicator: "",
     cc_limit: "",
@@ -190,78 +207,101 @@ function BankMasterForm({ onSubmitAll, onBack, defaultValues }) {
     ...defaultValues,
   });
 
-  const govtOptions = ["Yes", "No"];
-  const projectOptions = ["NRLM", "Other"];
-  const accountTypes = ["Saving", "CC", "FD"];
-
-  const handleChange = (e) => {
+  const handleChange = (e) =>
     setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const submitBank = (e) => {
-    e.preventDefault();
-    onSubmitAll(form);
-  };
 
   return (
     <form
-      onSubmit={submitBank}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmitAll(form);
+      }}
       className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-6 shadow rounded-xl"
     >
       <Input label="Bank Name" name="bank_name" value={form.bank_name} handleChange={handleChange} />
-      <Input label="Account No." name="account_no" value={form.account_no} handleChange={handleChange} />
-      <Input label="Branch Name" name="branch_name" value={form.branch_name} handleChange={handleChange} />
-      <Input label="IFSC" name="ifsc" value={form.ifsc} handleChange={handleChange} />
       <Input label="Short Name" name="short_name" value={form.short_name} handleChange={handleChange} />
+      <Input label="Account No" name="account_no" value={form.account_no} handleChange={handleChange} />
+      <Input label="Branch Name" name="branch_name" value={form.branch_name} handleChange={handleChange} />
+      <Input label="IFSC Code" name="ifsc" value={form.ifsc} handleChange={handleChange} />
+
+      <Select
+        label="Account Type"
+        name="account_type"
+        value={form.account_type}
+        options={["Saving", "CC", "FD"]}
+        handleChange={handleChange}
+      />
+
       <Input type="date" label="Account Open Date" name="ac_open_date" value={form.ac_open_date} handleChange={handleChange} />
-
-      <Select label="Account Type" name="account_type" value={form.account_type} handleChange={handleChange} options={accountTypes} />
-
       <Input label="Opening Balance" name="opening_balance" value={form.opening_balance} handleChange={handleChange} />
-      <Input label="Open Indicator" name="open_indicator" value={form.open_indicator} handleChange={handleChange} />
 
-      <Input label="CC Limit" name="cc_limit" value={form.cc_limit} handleChange={handleChange} />
-      <Input label="DP Limit" name="dp_limit" value={form.dp_limit} handleChange={handleChange} />
-
-      <Input label="Open Balance Current" name="open_bal_curr" value={form.open_bal_curr} handleChange={handleChange} />
-      <Input type="date" label="FD Maturity Date" name="fd_mat_dt" value={form.fd_mat_dt} handleChange={handleChange} />
-
-      <Input label="Open Indicator Current" name="open_ind_curr" value={form.open_ind_curr} handleChange={handleChange} />
-      <Input label="A/C Closed?" name="flg_acclosed" value={form.flg_acclosed} handleChange={handleChange} />
-      <Input type="date" label="A/C Closed Date" name="acclosed_dt" value={form.acclosed_dt} handleChange={handleChange} />
-
-      <Select label="Linked with Govt Project?" name="govt_linked" value={form.govt_linked} handleChange={handleChange} options={govtOptions} />
-
-      {form.govt_linked === "Yes" && (
-        <Select label="Project Type" name="govt_project_type" value={form.govt_project_type} handleChange={handleChange} options={projectOptions} />
+      {form.account_type === "CC" && (
+        <>
+          <Input label="CC Limit" name="cc_limit" value={form.cc_limit} handleChange={handleChange} />
+          <Input label="DP Limit" name="dp_limit" value={form.dp_limit} handleChange={handleChange} />
+        </>
       )}
 
-      <div className="col-span-2 flex justify-center gap-6 mt-6">
-        <button type="button" className="bg-gray-600 text-white font-bold px-8 py-3 rounded-lg" onClick={onBack}>
-          ← PREVIOUS (Edit Group Master)
-        </button>
+      {form.account_type === "FD" && (
+        <Input type="date" label="FD Maturity Date" name="fd_mat_dt" value={form.fd_mat_dt} handleChange={handleChange} />
+      )}
 
-        <button type="submit" className="bg-green-600 text-white font-bold px-8 py-3 rounded-lg">
-          SUBMIT FINAL FORM
+      <Select
+        label="Account Closed?"
+        name="flg_acclosed"
+        value={form.flg_acclosed}
+        options={["Yes", "No"]}
+        handleChange={handleChange}
+      />
+
+      {form.flg_acclosed === "Yes" && (
+        <Input type="date" label="Account Closed Date" name="acclosed_dt" value={form.acclosed_dt} handleChange={handleChange} />
+      )}
+
+      <Select
+        label="Govt Linked?"
+        name="govt_linked"
+        value={form.govt_linked}
+        options={["Yes", "No"]}
+        handleChange={handleChange}
+      />
+
+      {form.govt_linked === "Yes" && (
+        <Select
+          label="Govt Project Type"
+          name="govt_project_type"
+          value={form.govt_project_type}
+          options={["NRLM", "Other"]}
+          handleChange={handleChange}
+        />
+      )}
+
+      <div className="col-span-2 flex justify-center gap-6 mt-4">
+        <button type="button" onClick={onBack} className="bg-gray-500 text-white px-6 py-2 rounded-lg">
+          ← BACK
+        </button>
+        <button className="bg-green-600 text-white px-6 py-2 rounded-lg">
+          FINAL SUBMIT
         </button>
       </div>
     </form>
   );
 }
 
-// --------------------------------------------------------
-// REUSABLE COMPONENTS
-// --------------------------------------------------------
+
+/* ======================================================
+   REUSABLE INPUTS
+====================================================== */
 function Input({ label, name, value, handleChange, type = "text" }) {
   return (
-    <div className="flex flex-col">
-      <label className="font-semibold mb-1">{label}</label>
+    <div>
+      <label className="font-semibold block mb-1">{label}</label>
       <input
         type={type}
         name={name}
         value={value || ""}
         onChange={handleChange}
-        className="border p-2 rounded-lg focus:ring-2 ring-blue-400"
+        className="border p-2 rounded w-full"
       />
     </div>
   );
@@ -269,18 +309,18 @@ function Input({ label, name, value, handleChange, type = "text" }) {
 
 function Select({ label, name, value, options, handleChange }) {
   return (
-    <div className="flex flex-col">
-      <label className="font-semibold mb-1">{label}</label>
+    <div>
+      <label className="font-semibold block mb-1">{label}</label>
       <select
         name={name}
         value={value || ""}
         onChange={handleChange}
-        className="border p-2 rounded-lg bg-white focus:ring-2 ring-blue-400"
+        className="border p-2 rounded w-full"
       >
         <option value="">Select</option>
-        {options.map((opt, i) => (
-          <option key={i} value={opt}>
-            {opt}
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
           </option>
         ))}
       </select>

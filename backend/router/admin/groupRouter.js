@@ -1,11 +1,11 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, addBankDetail } from "../../controller/admin/groupController.js";
+import { registerGroup, addBankDetail, groupDetail } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
 
-router.post("/register-group", async(req, res) => {
+router.post("/register-group", authAdmin, async (req, res) => {
     const { error } = registerGroupSchema.validate(req.body);
 
     if (error) {
@@ -19,8 +19,12 @@ router.post("/register-group", async(req, res) => {
 });
 
 // ADD BANK WITHOUT VALIDATION
-router.post("/add-bank", (req, res) => {
+router.post("/add-bank", authAdmin, (req, res) => {
     return addBankDetail(req, res);
 });
+
+router.get("/detail", authAdmin, (req, res) => {
+    return groupDetail(req, res);
+})
 
 export default router;

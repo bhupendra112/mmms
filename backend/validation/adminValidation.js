@@ -21,35 +21,47 @@ export const loginValidationSchema = Joi.object({
 // MEMBER REGISTER
 // ======================
 export const registerMemberSchema = Joi.object({
-    Member_Id: Joi.string().required(),
-    Member_Nm: Joi.string().required(),
+    Member_Id: Joi.string().trim().required(),
+    Member_Nm: Joi.string().trim().required(),
+
     Member_Dt: Joi.date().required(),
     Dt_Join: Joi.date().required(),
-    F_H_Name: Joi.string().required(),
-    F_H_FatherName: Joi.string().required(),
-    Voter_Id: Joi.string().optional(),
-    Adhar_Id: Joi.string().optional(),
-    Ration_Card: Joi.string().optional(),
-    Job_Card: Joi.string().optional(),
-    Apl_Bpl_Etc: Joi.string().optional(),
-    Desg: Joi.string().optional(),
-    Bank_Name: Joi.string().optional(),
-    Br_Name: Joi.string().optional(),
-    Bank_Ac: Joi.string().optional(),
-    Ifsc_No: Joi.string().optional(),
-    Age: Joi.number().optional(),
-    Edu_Qual: Joi.string().optional(),
-    Anual_Income: Joi.number().optional(),
-    Profession: Joi.string().optional(),
-    Caste: Joi.string().optional(),
-    Religion: Joi.string().optional(),
-    cell_phone: Joi.string().optional(),
-    dt_birth: Joi.date().optional(),
-    nominee_1: Joi.string().optional(),
-    nominee_2: Joi.string().optional(),
-    res_add1: Joi.string().optional(),
-    res_add2: Joi.string().optional(),
-    Village: Joi.string().optional(),
+
+    F_H_Name: Joi.string().trim().required(),
+    F_H_FatherName: Joi.string().trim().required(),
+
+    Voter_Id: Joi.string().allow("", null),
+    Adhar_Id: Joi.string().allow("", null),
+    Ration_Card: Joi.string().allow("", null),
+    Job_Card: Joi.string().allow("", null),
+
+    Apl_Bpl_Etc: Joi.string().allow("", null),
+    Desg: Joi.string().allow("", null),
+
+    Bank_Name: Joi.string().allow("", null),
+    Br_Name: Joi.string().allow("", null),
+    Bank_Ac: Joi.string().allow("", null),
+    Ifsc_No: Joi.string().allow("", null),
+
+    Age: Joi.number().allow(null),
+    Anual_Income: Joi.number().allow(null),
+
+    Edu_Qual: Joi.string().allow("", null),
+    Profession: Joi.string().allow("", null),
+
+    Caste: Joi.string().allow("", null),
+    Religion: Joi.string().allow("", null),
+
+    cell_phone: Joi.string().allow("", null),
+    dt_birth: Joi.date().allow(null),
+
+    nominee_1: Joi.string().allow("", null),
+    nominee_2: Joi.string().allow("", null),
+
+    res_add1: Joi.string().allow("", null),
+    res_add2: Joi.string().allow("", null),
+    Village: Joi.string().allow("", null),
+
     Group_Name: Joi.string().required(),
 });
 

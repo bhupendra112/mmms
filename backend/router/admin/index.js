@@ -1,6 +1,7 @@
 import express from "express";
 import authRoute from "./authRouter.js";
 import groupRouter from "./groupRouter.js"
+import memberRouter from "./memberRouter.js"
 
 const router = express.Router();
 
@@ -8,6 +9,7 @@ const router = express.Router();
 const routeArray = [
     { path: "/auth", route: authRoute },
     { path: "/group", route: groupRouter },
+    { path: "/member", route: memberRouter },
 ];
 
 // ✅ Debug & register routes

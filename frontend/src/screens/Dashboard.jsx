@@ -1,6 +1,6 @@
 import React from "react";
 import { Users, IndianRupee, PiggyBank, Banknote, TrendingUp, Wallet, CreditCard, List, FilePlus2, HandCoins, BarChart3 } from "lucide-react";
-
+import { useSelector } from "react-redux";
 const Dashboard = () => {
   const summaryCards = [
     { title: "Total Members", value: "120", icon: Users, color: "from-blue-500 to-blue-700" },
@@ -11,6 +11,9 @@ const Dashboard = () => {
     { title: "Cash Received Today", value: "₹22,000", icon: Wallet, color: "from-orange-500 to-orange-700" },
     { title: "Online Payment Today", value: "₹12,500", icon: CreditCard, color: "from-teal-500 to-teal-700" },
   ];
+  const auth = useSelector((state) => state.auth);
+
+  console.log("AUTH FROM REDUX 👉", auth);
 
   const quickActions = [
     { title: "Member List", icon: List, color: "bg-blue-600" },
