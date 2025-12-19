@@ -33,10 +33,16 @@ const GroupMasterSchema = new mongoose.Schema({
 
     govt_linked: { type: String, enum: ["Yes", "No"], default: "No" },
     govt_project_type: { type: String, enum: ["NRLM", "Other", ""], default: "" },
+    // Single bank ref kept for backward compatibility (deprecated)
     bankmaster: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "BankMaster"
-    }
+    },
+    // ✅ Multiple bank accounts per group
+    bankmasters: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "BankMaster"
+    }],
 }, { timestamps: true });
 
 export default mongoose.model("GroupMaster", GroupMasterSchema);

@@ -21,6 +21,8 @@ export const loginValidationSchema = Joi.object({
 // MEMBER REGISTER
 // ======================
 export const registerMemberSchema = Joi.object({
+    group_id: Joi.string().optional(),
+    group_code: Joi.string().optional(),
     Member_Id: Joi.string().required(),
     Member_Nm: Joi.string().required(),
     Member_Dt: Joi.date().required(),
@@ -50,8 +52,8 @@ export const registerMemberSchema = Joi.object({
     res_add1: Joi.string().optional(),
     res_add2: Joi.string().optional(),
     Village: Joi.string().optional(),
-    Group_Name: Joi.string().required(),
-});
+    Group_Name: Joi.string().optional(),
+}).or("group_id", "group_code", "Group_Name");
 
 // ======================
 // GROUP REGISTER VALIDATION

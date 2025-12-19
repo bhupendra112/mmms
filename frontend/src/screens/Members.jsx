@@ -1,29 +1,65 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-
-const dummyMembers = [
-  { id: 1, code: "M001", name: "Rahul Patel", village: "Rewa", status: "Active" },
-  { id: 2, code: "M002", name: "Sita Devi", village: "Satna", status: "Inactive" },
-  { id: 3, code: "M003", name: "Amit Yadav", village: "Chorhata", status: "Active" },
-];
+import { useGroup } from "../contexts/GroupContext";
+import { getMembersByGroup } from "../services/memberService";
+import { getPendingApprovals } from "../services/approvalDB";
 
 const Members = () => {
+  const { currentGroup, isGroupLoading } = useGroup();
   const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState("All");
+  const [members, setMembers] = useState([]);
+  const [pendingMembers, setPendingMembers] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   const handleExport = () => {
     alert("Export function will be added here (CSV / Excel)");
   };
 
-  const filtered = dummyMembers.filter((m) => {
-    const matchSearch =
-      m.name.toLowerCase().includes(search.toLowerCase()) ||
-      m.code.toLowerCase().includes(search.toLowerCase());
+  useEffect(() => {
+    if (isGroupLoading) return;
+    if (!currentGroup?.id) return;
+    setLoading(true);
+    getMembersByGroup(currentGroup.id)
+      .then((res) => setMembers(Array.isArray(res?.data) ? res.data : []))
+      .catch((e) => {
+        console.error("Failed to load members:", e);
+        setMembers([]);
+      })
+      .finally(() => setLoading(false));
+  }, [currentGroup?.id, isGroupLoading]);
 
-    const matchStatus = filterStatus === "All" || m.status === filterStatus;
+  useEffect(() => {
+    if (isGroupLoading) return;
+    if (!currentGroup?.id) return;
+    getPendingApprovals(currentGroup.id)
+      .then((approvals) => {
+        const pending = (approvals || [])
+          .filter((a) => a.type === "member" && a.status === "pending")
+          .map((a) => ({
+            _id: a.id,
+            Member_Id: a.data?.Member_Id || "PENDING",
+            Member_Nm: a.data?.Member_Nm || "-",
+            Village: a.data?.Village || "-",
+            __pending: true,
+          }));
+        setPendingMembers(pending);
+      })
+      .catch((e) => {
+        console.error("Failed to load pending approvals:", e);
+        setPendingMembers([]);
+      });
+  }, [currentGroup?.id, isGroupLoading]);
 
-    return matchSearch && matchStatus;
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const combined = [...pendingMembers, ...members];
+    if (!q) return combined;
+    return combined.filter((m) => {
+      const name = String(m.Member_Nm || "").toLowerCase();
+      const code = String(m.Member_Id || "").toLowerCase();
+      return name.includes(q) || code.includes(q);
+    });
+  }, [members, pendingMembers, search]);
 
   return (
     <div className="p-6">
@@ -32,7 +68,7 @@ const Members = () => {
 
         <div className="flex gap-3">
           <Link
-            to="/member-registration"
+            to="/group/member-registration"
             className="bg-green-600 text-white px-4 py-2 rounded shadow"
           >
             ➕ Add Member
@@ -56,17 +92,13 @@ const Members = () => {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-
-        <select
-          className="border p-2 rounded"
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-        >
-          <option>All</option>
-          <option>Active</option>
-          <option>Inactive</option>
-        </select>
       </div>
+
+      {isGroupLoading && <p className="text-gray-600">Loading group…</p>}
+      {!isGroupLoading && !currentGroup && (
+        <p className="text-gray-600">No active group found.</p>
+      )}
+      {loading && <p className="text-gray-600">Loading members…</p>}
 
       {/* Table */}
       <table className="w-full border">
@@ -82,22 +114,43 @@ const Members = () => {
 
         <tbody>
           {filtered.map((m) => (
-            <tr key={m.id} className="border hover:bg-gray-50">
-              <td className="p-3 border">{m.code}</td>
-              <td className="p-3 border">{m.name}</td>
-              <td className="p-3 border">{m.village}</td>
-              <td className="p-3 border">{m.status}</td>
+            <tr key={m._id} className="border hover:bg-gray-50">
+              <td className="p-3 border">{m.Member_Id}</td>
+              <td className="p-3 border">{m.Member_Nm}</td>
+              <td className="p-3 border">{m.Village || "-"}</td>
+              <td className="p-3 border">
+                {m.__pending ? (
+                  <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm">
+                    Pending Approval
+                  </span>
+                ) : (
+                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                    Active
+                  </span>
+                )}
+              </td>
 
               <td className="p-3 border text-center">
-                <Link
-                  to={`/members/${m.id}`}
-                  className="bg-blue-600 text-white px-3 py-1 rounded"
-                >
-                  View
-                </Link>
+                {m.__pending ? (
+                  <span className="text-gray-500 text-sm">Waiting</span>
+                ) : (
+                  <Link
+                    to={`/group/members/${m._id}`}
+                    className="bg-blue-600 text-white px-3 py-1 rounded"
+                  >
+                    View
+                  </Link>
+                )}
               </td>
             </tr>
           ))}
+          {!loading && filtered.length === 0 && (
+            <tr>
+              <td className="p-4 text-center text-gray-600" colSpan={5}>
+                No members found.
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

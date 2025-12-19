@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 
 const MemberSchema = new mongoose.Schema({
+    Member_Id: { type: String, required: true, unique: true },
+    Group_Name: { type: String },
     group: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "GroupMaster"

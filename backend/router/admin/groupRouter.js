@@ -1,11 +1,11 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, addBankDetail } from "../../controller/admin/groupController.js";
+import { registerGroup, addBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
 
-router.post("/register-group", async(req, res) => {
+router.post("/register-group", async (req, res) => {
     const { error } = registerGroupSchema.validate(req.body);
 
     if (error) {
@@ -16,6 +16,28 @@ router.post("/register-group", async(req, res) => {
     }
 
     return registerGroup(req, res);
+});
+router.get("/test", (req, res) => {
+    res.send("api is correctly working ")
+})
+// LIST ALL GROUPS
+router.get("/list", (req, res) => {
+    return listGroups(req, res);
+});
+
+// LIST BANKS FOR A GROUP (multiple banks)
+router.get("/:groupId/banks", (req, res) => {
+    return listBanksByGroup(req, res);
+});
+
+// GROUP DETAIL BY CODE (useful for group panel)
+router.get("/by-code/:group_code", (req, res) => {
+    return getGroupByCode(req, res);
+});
+
+// GROUP DETAIL BY ID
+router.get("/detail/:id", (req, res) => {
+    return getGroupDetail(req, res);
 });
 
 // ADD BANK WITHOUT VALIDATION

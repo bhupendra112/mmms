@@ -22,7 +22,7 @@ http.interceptors.response.use(
     (res) => res,
     (err) => {
         console.log("[API ERROR]", err);
-        return Promise.reject(err.response ?.data ?.message || "Something went wrong");
+        return Promise.reject(err.response?.data?.message || "Something went wrong");
     }
 );
 

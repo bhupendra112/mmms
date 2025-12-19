@@ -1,68 +1,64 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
+import { Download, FileText, Calendar } from "lucide-react";
+import { exportToExcel, exportToPDF } from "../utils/exportUtils";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+import { getMemberDetail } from "../services/memberService";
 
 export default function MemberDashboard() {
   const { id } = useParams();
+  const [loading, setLoading] = useState(false);
+  const [memberDoc, setMemberDoc] = useState(null);
+  const [loadError, setLoadError] = useState("");
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
-  // LEDGER DATA
-  const ledger = [
-    {
-      date: "2024-03-05",
-      receipt: 1000,
+  useEffect(() => {
+    if (!id) return;
+    setLoading(true);
+    setLoadError("");
+    getMemberDetail(id)
+      .then((res) => setMemberDoc(res?.data || null))
+      .catch((e) => {
+        console.error("Failed to load member detail:", e);
+        setMemberDoc(null);
+        setLoadError(String(e || "Failed to load member"));
+      })
+      .finally(() => setLoading(false));
+  }, [id]);
 
-      savingsDeposit: 500,
-      savingsWithdraw: 0,
-      savingsBalance: 8200,
+  const member = useMemo(() => {
+    // Map backend member doc -> UI model
+    return {
+      code: memberDoc?.Member_Id || "-",
+      name: memberDoc?.Member_Nm || "-",
+      fatherName: memberDoc?.F_H_Name || memberDoc?.F_H_FatherName || "-",
+      village: memberDoc?.Village || "-",
+      joiningDate: memberDoc?.Dt_Join || "",
+      // Financial fields are not stored yet; keep 0 until ledger APIs are added
+      openingBalance: 0,
+      savingsTotal: 0,
+      loanOutstanding: 0,
+      fdTotal: 0,
+      interestPending: 0,
+      lastRecoveryDate: "",
+    };
+  }, [memberDoc]);
 
-      loanPaid: 1200,
-      loanRecovered: 1200,
-      loanBalance: 4500,
+  // Ledger is not wired yet; keep empty until transaction APIs are implemented
+  const ledger = [];
 
-      fdDeposit: 2000,
-      fdWithdraw: 0,
-      fdBalance: 12000,
-
-      interestDue: 200,
-      interestPaid: 50,
-    },
-    {
-      date: "2024-02-05",
-      receipt: 800,
-
-      savingsDeposit: 400,
-      savingsWithdraw: 0,
-      savingsBalance: 7700,
-
-      loanPaid: 0,
-      loanRecovered: 1200,
-      loanBalance: 5700,
-
-      fdDeposit: 0,
-      fdWithdraw: 0,
-      fdBalance: 10000,
-
-      interestDue: 600,
-      interestPaid: 100,
-    },
-  ];
-
-  // MEMBER DETAILS
-  const member = {
-    code: "M001",
-    name: "Rahul Patel",
-    fatherName: "Ramesh Patel",
-    sssmid: "1234-5678",
-    village: "Rewa",
-    joiningDate: "2021-05-12",
-    openingBalance: 1500,
-    savingsTotal: 8200,
-    loanOutstanding: 4500,
-    fdTotal: 12000,
-    interestPending: 800,
-    lastRecoveryDate: "2024-03-10",
+  // Format date to dd/mm/yyyy
+  const formatDate = (dateString) => {
+    if (!dateString) return "";
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
   };
 
   // DATE FILTER FUNCTION
@@ -81,8 +77,71 @@ export default function MemberDashboard() {
 
   const filteredLedger = filterByDate(ledger);
 
-  // EXPORT CSV
-  const exportFullDetails = () => {
+  // Export table to Excel
+  const exportTableToExcel = () => {
+    const data = filteredLedger.map((row) => ({
+      Date: formatDate(row.date),
+      Receipt: row.receipt,
+      "Savings Deposit": row.savingsDeposit,
+      "Savings Withdraw": row.savingsWithdraw,
+      "Savings Balance": row.savingsBalance,
+      "Loan Paid": row.loanPaid,
+      "Loan Recovered": row.loanRecovered,
+      "Loan Balance": row.loanBalance,
+      "FD Deposit": row.fdDeposit,
+      "FD Withdraw": row.fdWithdraw,
+      "FD Balance": row.fdBalance,
+      "Interest Due": row.interestDue,
+      "Interest Paid": row.interestPaid,
+    }));
+
+    exportToExcel(data, `Member_${member.code}_Transactions_${new Date().toISOString().split("T")[0]}`);
+  };
+
+  // Export table to PDF
+  const exportTableToPDF = () => {
+    const headers = [
+      "Date",
+      "Receipt",
+      "Savings Deposit",
+      "Savings Withdraw",
+      "Savings Balance",
+      "Loan Paid",
+      "Loan Recovered",
+      "Loan Balance",
+      "FD Deposit",
+      "FD Withdraw",
+      "FD Balance",
+      "Interest Due",
+      "Interest Paid",
+    ];
+
+    const rows = filteredLedger.map((row) => [
+      formatDate(row.date),
+      row.receipt.toString(),
+      `₹${row.savingsDeposit}`,
+      `₹${row.savingsWithdraw}`,
+      `₹${row.savingsBalance}`,
+      `₹${row.loanPaid}`,
+      `₹${row.loanRecovered}`,
+      `₹${row.loanBalance}`,
+      `₹${row.fdDeposit}`,
+      `₹${row.fdWithdraw}`,
+      `₹${row.fdBalance}`,
+      `₹${row.interestDue}`,
+      `₹${row.interestPaid}`,
+    ]);
+
+    exportToPDF(
+      `${member.name} (${member.code}) - Transaction Report`,
+      headers,
+      rows,
+      `Member_${member.code}_Transactions_${new Date().toISOString().split("T")[0]}`
+    );
+  };
+
+  // Export full member details to Excel
+  const exportFullDetailsToExcel = () => {
     const data = [
       ["Field", "Value"],
       ["Member Code", member.code],
@@ -90,158 +149,365 @@ export default function MemberDashboard() {
       ["Father/Husband Name", member.fatherName],
       ["SSSMID", member.sssmid],
       ["Village", member.village],
-      ["Joining Date", member.joiningDate],
-      ["Opening Balance", member.openingBalance],
-      ["Savings Total", member.savingsTotal],
-      ["Loan Outstanding", member.loanOutstanding],
-      ["FD Total", member.fdTotal],
-      ["Interest Pending", member.interestPending],
-      ["Last Recovery Date", member.lastRecoveryDate],
+      ["Date of Joining", formatDate(member.joiningDate)],
+      ["Opening Balance", `₹${member.openingBalance}`],
+      ["Savings Total", `₹${member.savingsTotal}`],
+      ["Loan Outstanding", `₹${member.loanOutstanding}`],
+      ["FD Total", `₹${member.fdTotal}`],
+      ["Interest Pending", `₹${member.interestPending}`],
+      ["Last Recovery", formatDate(member.lastRecoveryDate)],
     ];
 
-    const csv = data.map((row) => row.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Member Details");
+    XLSX.writeFile(wb, `Member_${member.code}_Full_Details_${new Date().toISOString().split("T")[0]}.xlsx`);
+  };
 
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `member_full_detail_${member.code}.csv`;
-    a.click();
+  // Export full member details to PDF
+  const exportFullDetailsToPDF = () => {
+    const doc = new jsPDF();
+
+    // Title
+    doc.setFontSize(18);
+    doc.text("Member Dashboard - Full Details", 14, 20);
+
+    // Member Information
+    doc.setFontSize(12);
+    doc.text("Basic Details", 14, 35);
+    doc.setFontSize(10);
+
+    let yPos = 42;
+    const lineHeight = 7;
+
+    doc.text(`Member Code: ${member.code}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Name: ${member.name}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Father/Husband Name: ${member.fatherName}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`SSSMID: ${member.sssmid}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Village: ${member.village}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Date of Joining: ${formatDate(member.joiningDate)}`, 14, yPos);
+    yPos += lineHeight + 5;
+
+    // Financial Summary
+    doc.setFontSize(12);
+    doc.text("Financial Summary", 14, yPos);
+    yPos += lineHeight;
+    doc.setFontSize(10);
+
+    doc.text(`Opening Balance: ₹${member.openingBalance}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Savings Total: ₹${member.savingsTotal}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Loan Outstanding: ₹${member.loanOutstanding}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`FD Total: ₹${member.fdTotal}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Interest Pending: ₹${member.interestPending}`, 14, yPos);
+    yPos += lineHeight;
+    doc.text(`Last Recovery: ${formatDate(member.lastRecoveryDate)}`, 14, yPos);
+    yPos += lineHeight + 10;
+
+    // Transaction Table
+    if (filteredLedger.length > 0) {
+      const headers = [
+        "Date",
+        "Receipt",
+        "Savings Deposit",
+        "Savings Withdraw",
+        "Savings Balance",
+        "Loan Paid",
+        "Loan Recovered",
+        "Loan Balance",
+        "FD Deposit",
+        "FD Withdraw",
+        "FD Balance",
+        "Interest Due",
+        "Interest Paid",
+      ];
+
+      const rows = filteredLedger.map((row) => [
+        formatDate(row.date),
+        row.receipt.toString(),
+        `₹${row.savingsDeposit}`,
+        `₹${row.savingsWithdraw}`,
+        `₹${row.savingsBalance}`,
+        `₹${row.loanPaid}`,
+        `₹${row.loanRecovered}`,
+        `₹${row.loanBalance}`,
+        `₹${row.fdDeposit}`,
+        `₹${row.fdWithdraw}`,
+        `₹${row.fdBalance}`,
+        `₹${row.interestDue}`,
+        `₹${row.interestPaid}`,
+      ]);
+
+      doc.autoTable({
+        head: [headers],
+        body: rows,
+        startY: yPos,
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [66, 139, 202] },
+        margin: { left: 14, right: 14 },
+      });
+    }
+
+    doc.save(`Member_${member.code}_Full_Details_${new Date().toISOString().split("T")[0]}.pdf`);
   };
 
   return (
-    <div className="p-6">
-      
-      {/* TOP BUTTONS */}
+    <div className="max-w-7xl mx-auto p-6">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+          <FileText size={32} />
+          Member Dashboard
+        </h1>
+        <p className="text-gray-600 mt-2">{member.name} ({member.code})</p>
+      </div>
+
+      {loading && <p className="text-gray-600 mb-6">Loading member…</p>}
+      {!loading && loadError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+          <p className="text-red-700 font-semibold">Failed to load member</p>
+          <p className="text-red-600 text-sm mt-1">{loadError}</p>
+        </div>
+      )}
+
+      {/* Export Buttons */}
       <div className="flex justify-end gap-4 mb-6">
-        <button className="bg-red-600 hover:bg-red-700 px-6 py-3 text-white font-semibold rounded-lg shadow">
-          Start Recovery Entry
-        </button>
-
         <button
-          onClick={exportFullDetails}
-          className="bg-blue-700 hover:bg-blue-800 px-6 py-3 text-white font-semibold rounded-lg shadow"
+          onClick={exportTableToExcel}
+          className="flex items-center gap-2 px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md"
         >
-          Export Full Details
+          <Download size={18} />
+          Export Table Excel
+        </button>
+        <button
+          onClick={exportTableToPDF}
+          className="flex items-center gap-2 px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold shadow-md"
+        >
+          <FileText size={18} />
+          Export Table PDF
+        </button>
+        <button
+          onClick={exportFullDetailsToExcel}
+          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md"
+        >
+          <Download size={18} />
+          Export Full Details Excel
+        </button>
+        <button
+          onClick={exportFullDetailsToPDF}
+          className="flex items-center gap-2 px-6 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-semibold shadow-md"
+        >
+          <FileText size={18} />
+          Export Full Details PDF
         </button>
       </div>
 
-      <h1 className="text-3xl font-bold mb-6">Member Dashboard</h1>
-
-      {/* BASIC DETAILS */}
-      <div className="bg-white p-6 rounded-xl shadow mb-6">
-        <h2 className="text-xl font-semibold mb-4">Basic Details</h2>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          <p><b>Member Code:</b> {member.code}</p>
-          <p><b>Name:</b> {member.name}</p>
-          <p><b>Father/Husband Name:</b> {member.fatherName}</p>
-          <p><b>SSSMID:</b> {member.sssmid}</p>
-          <p><b>Village:</b> {member.village}</p>
-          <p><b>Date of Joining:</b> {member.joiningDate}</p>
-        </div>
-      </div>
-
-      {/* SUMMARY */}
-      <div className="bg-white p-6 rounded-xl shadow mb-6">
-        <h2 className="text-xl font-semibold mb-4">Financial Summary</h2>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          <p><b>Opening Balance:</b> ₹{member.openingBalance}</p>
-          <p><b>Savings Total:</b> ₹{member.savingsTotal}</p>
-          <p><b>Loan Outstanding:</b> ₹{member.loanOutstanding}</p>
-          <p><b>FD Total:</b> ₹{member.fdTotal}</p>
-          <p><b>Interest Pending:</b> ₹{member.interestPending}</p>
-          <p><b>Last Recovery:</b> {member.lastRecoveryDate}</p>
-        </div>
-      </div>
-
-      {/* DATE FILTER */}
-      <div className="flex gap-4 mb-6">
-        <div>
-          <label>From</label>
-          <input
-            type="date"
-            className="border p-2 ml-2"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-          />
-        </div>
-        <div>
-          <label>To</label>
-          <input
-            type="date"
-            className="border p-2 ml-2"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* LEDGER TABLE */}
-      <div className="overflow-auto">
-        <table className="w-full border text-sm">
-          <thead>
-            <tr className="bg-gray-200">
-              <th rowSpan="2" className="border p-2">Date</th>
-              <th rowSpan="2" className="border p-2">Receipt</th>
-
-              <th colSpan="3" className="border p-2">Monthly Savings</th>
-              <th colSpan="3" className="border p-2">General Loan</th>
-              <th colSpan="3" className="border p-2">FD</th>
-              <th colSpan="2" className="border p-2">Interest</th>
-            </tr>
-
-            <tr className="bg-gray-100">
-              <th className="border p-2">Deposit</th>
-              <th className="border p-2">Withdraw</th>
-              <th className="border p-2">Balance</th>
-
-              <th className="border p-2">Paid</th>
-              <th className="border p-2">Recovered</th>
-              <th className="border p-2">Balance</th>
-
-              <th className="border p-2">Deposit</th>
-              <th className="border p-2">Withdraw</th>
-              <th className="border p-2">Balance</th>
-
-              <th className="border p-2">Due</th>
-              <th className="border p-2">Paid</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {filteredLedger.length === 0 ? (
-              <tr>
-                <td colSpan="14" className="text-center p-3">
-                  No Records Found
-                </td>
+      {/* Basic Details Table */}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Basic Details</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <tbody>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50 w-1/3">Member Code:</td>
+                <td className="p-3 text-gray-800">{member.code}</td>
               </tr>
-            ) : (
-              filteredLedger.map((row, i) => (
-                <tr key={i}>
-                  <td className="border p-2">{row.date}</td>
-                  <td className="border p-2">{row.receipt}</td>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Name:</td>
+                <td className="p-3 text-gray-800">{member.name}</td>
+              </tr>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Father/Husband Name:</td>
+                <td className="p-3 text-gray-800">{member.fatherName}</td>
+              </tr>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">SSSMID:</td>
+                <td className="p-3 text-gray-800">{member.sssmid}</td>
+              </tr>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Village:</td>
+                <td className="p-3 text-gray-800">{member.village}</td>
+              </tr>
+              <tr>
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Date of Joining:</td>
+                <td className="p-3 text-gray-800">{formatDate(member.joiningDate)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-                  <td className="border p-2">{row.savingsDeposit}</td>
-                  <td className="border p-2">{row.savingsWithdraw}</td>
-                  <td className="border p-2">{row.savingsBalance}</td>
+      {/* Financial Summary */}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Financial Summary</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <tbody>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50 w-1/3">Opening Balance:</td>
+                <td className="p-3 text-gray-800">₹{member.openingBalance}</td>
+              </tr>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Savings Total:</td>
+                <td className="p-3 text-gray-800">₹{member.savingsTotal}</td>
+              </tr>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Loan Outstanding:</td>
+                <td className="p-3 text-gray-800">₹{member.loanOutstanding}</td>
+              </tr>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">FD Total:</td>
+                <td className="p-3 text-gray-800">₹{member.fdTotal}</td>
+              </tr>
+              <tr className="border-b border-gray-200">
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Interest Pending:</td>
+                <td className="p-3 text-gray-800">₹{member.interestPending}</td>
+              </tr>
+              <tr>
+                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Last Recovery:</td>
+                <td className="p-3 text-gray-800">{formatDate(member.lastRecoveryDate)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-                  <td className="border p-2">{row.loanPaid}</td>
-                  <td className="border p-2">{row.loanRecovered}</td>
-                  <td className="border p-2">{row.loanBalance}</td>
-
-                  <td className="border p-2">{row.fdDeposit}</td>
-                  <td className="border p-2">{row.fdWithdraw}</td>
-                  <td className="border p-2">{row.fdBalance}</td>
-
-                  <td className="border p-2">{row.interestDue}</td>
-                  <td className="border p-2">{row.interestPaid}</td>
-                </tr>
-              ))
+      {/* Date Filter */}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <Calendar size={24} />
+          Date Range Filter
+        </h2>
+        <div className="flex gap-6 items-end">
+          <div className="flex-1">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">From</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            {fromDate && (
+              <p className="text-xs text-gray-500 mt-1">Selected: {formatDate(fromDate)}</p>
             )}
-          </tbody>
-        </table>
+          </div>
+          <div className="flex-1">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">To</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            {toDate && (
+              <p className="text-xs text-gray-500 mt-1">Selected: {formatDate(toDate)}</p>
+            )}
+          </div>
+          <div>
+            <button
+              onClick={() => {
+                setFromDate("");
+                setToDate("");
+              }}
+              className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Transaction Table */}
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Transaction Details</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-gray-100">
+                <th rowSpan={2} className="border border-gray-300 p-3 text-left font-semibold">
+                  Date
+                </th>
+                <th rowSpan={2} className="border border-gray-300 p-3 text-left font-semibold">
+                  Receipt
+                </th>
+                <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
+                  Monthly Savings
+                </th>
+                <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
+                  General Loan
+                </th>
+                <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
+                  FD
+                </th>
+                <th colSpan={2} className="border border-gray-300 p-3 text-center font-semibold">
+                  Interest
+                </th>
+              </tr>
+              <tr className="bg-gray-50">
+                <th className="border border-gray-300 p-2 text-center font-medium">Deposit</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Withdraw</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Recovered</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Deposit</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Withdraw</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Due</th>
+                <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredLedger.length === 0 ? (
+                <tr>
+                  <td colSpan={14} className="text-center p-6 text-gray-500">
+                    No records found for the selected date range
+                  </td>
+                </tr>
+              ) : (
+                filteredLedger.map((row, i) => (
+                  <tr key={i} className="hover:bg-gray-50">
+                    <td className="border border-gray-300 p-3">{formatDate(row.date)}</td>
+                    <td className="border border-gray-300 p-3">{row.receipt}</td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.savingsDeposit}</td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.savingsWithdraw}</td>
+                    <td className="border border-gray-300 p-3 text-right font-semibold">
+                      ₹{row.savingsBalance}
+                    </td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.loanPaid}</td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.loanRecovered}</td>
+                    <td className="border border-gray-300 p-3 text-right font-semibold">
+                      ₹{row.loanBalance}
+                    </td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.fdDeposit}</td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.fdWithdraw}</td>
+                    <td className="border border-gray-300 p-3 text-right font-semibold">
+                      ₹{row.fdBalance}
+                    </td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.interestDue}</td>
+                    <td className="border border-gray-300 p-3 text-right">₹{row.interestPaid}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        {filteredLedger.length > 0 && (
+          <div className="mt-4 text-sm text-gray-600">
+            Showing {filteredLedger.length} record(s)
+            {fromDate || toDate
+              ? ` (Filtered from ${fromDate ? formatDate(fromDate) : "beginning"} to ${toDate ? formatDate(toDate) : "end"
+              })`
+              : " (All records)"}
+          </div>
+        )}
       </div>
     </div>
   );
