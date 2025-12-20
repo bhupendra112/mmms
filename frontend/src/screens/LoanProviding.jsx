@@ -19,7 +19,6 @@ const LoanProviding = () => {
   const prev = () => step > 1 && setStep(step - 1);
 
   const handleSubmit = () => {
-    console.log("Form Data →", form);
     alert("Loan request submitted successfully!");
   };
 

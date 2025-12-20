@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { exportLoanToExcel, exportLoanToPDF } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { getAllApprovals, getUnsyncedApprovals } from "../../services/approvalDB";
+import { getLoans } from "../../services/loanService";
 
 export default function LoanManagement() {
     const { currentGroup, isOnline } = useGroup();
@@ -11,43 +12,8 @@ export default function LoanManagement() {
     const [searchTerm, setSearchTerm] = useState("");
     const [filterType, setFilterType] = useState("all");
     const [pendingCount, setPendingCount] = useState(0);
-
-    // Mock data - replace with actual API call
-    const mockLoans = [
-        {
-            id: 1,
-            memberCode: "M001",
-            memberName: "Rahul Patel",
-            hasAssets: true,
-            transactionType: "Loan",
-            paymentMode: "Cash",
-            purpose: "Business expansion",
-            amount: 50000,
-            date: "2025-01-15",
-        },
-        {
-            id: 2,
-            memberCode: "M002",
-            memberName: "Sita Devi",
-            hasAssets: false,
-            transactionType: "Deposit",
-            paymentMode: "Bank",
-            purpose: "Monthly deposit",
-            amount: 5000,
-            date: "2025-01-16",
-        },
-        {
-            id: 3,
-            memberCode: "M003",
-            memberName: "Amit Yadav",
-            hasAssets: true,
-            transactionType: "FD",
-            paymentMode: "Bank",
-            purpose: "Fixed deposit",
-            amount: 100000,
-            date: "2025-01-17",
-        },
-    ];
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
 
     useEffect(() => {
         // Load loans from database/API - always load loans
@@ -65,14 +31,41 @@ export default function LoanManagement() {
     }, [isOnline]);
 
     const loadLoans = async () => {
+        if (!currentGroup?.id) {
+            setLoading(false);
+            return;
+        }
+        
         try {
-            // Load from local DB first, then sync with server if online
-            // In real app, load from RxDB or API based on currentGroup
-            // For now, use mock data
-            setLoans(mockLoans);
-        } catch (error) {
-            console.error("Error loading loans:", error);
+            setLoading(true);
+            setError("");
+            const response = await getLoans(currentGroup.id);
+            
+            if (response.success && response.data) {
+                // Transform API data to component format
+                const transformedLoans = Array.isArray(response.data) 
+                    ? response.data.map((loan) => ({
+                        id: loan._id || loan.id,
+                        memberCode: loan.memberCode || loan.member_code || "",
+                        memberName: loan.memberName || loan.member_name || "",
+                        hasAssets: loan.hasAssets || false,
+                        transactionType: loan.transactionType || loan.transaction_type || "Loan",
+                        paymentMode: loan.paymentMode || loan.payment_mode || "Cash",
+                        purpose: loan.purpose || "",
+                        amount: loan.amount || 0,
+                        date: loan.date || loan.createdAt || new Date().toISOString().split('T')[0],
+                    }))
+                    : [];
+                setLoans(transformedLoans);
+            } else {
+                setLoans([]);
+            }
+        } catch (err) {
+            console.error("Error loading loans:", err);
+            setError(err.message || "Failed to load loans");
             setLoans([]);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -91,7 +84,6 @@ export default function LoanManagement() {
         try {
             const unsynced = await getUnsyncedApprovals();
             // In real app, send to server API
-            console.log("Syncing pending approvals:", unsynced);
             // After successful sync, mark as synced
         } catch (error) {
             console.error("Error syncing approvals:", error);
@@ -122,6 +114,16 @@ export default function LoanManagement() {
     };
 
     const totalAmount = filteredLoans.reduce((sum, loan) => sum + parseFloat(loan.amount || 0), 0);
+
+    if (!currentGroup && !loading) {
+        return (
+            <div className="max-w-7xl mx-auto">
+                <div className="flex items-center justify-center min-h-[400px]">
+                    <div className="text-gray-600">Loading group information...</div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="max-w-7xl mx-auto">
@@ -157,6 +159,18 @@ export default function LoanManagement() {
                     </Link>
                 </div>
             </div>
+
+            {error && (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-700">{error}</p>
+                </div>
+            )}
+
+            {loading && (
+                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg text-center">
+                    <p className="text-blue-700">Loading loans...</p>
+                </div>
+            )}
 
             {/* Filters and Export */}
             <div className="bg-white rounded-lg shadow-md p-6 mb-6">

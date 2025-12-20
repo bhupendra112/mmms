@@ -53,6 +53,21 @@ export const registerMemberSchema = Joi.object({
     res_add2: Joi.string().optional(),
     Village: Joi.string().optional(),
     Group_Name: Joi.string().optional(),
+    // Existing member financial details (optional, only if isExistingMember is true)
+    isExistingMember: Joi.boolean().optional(),
+    openingSaving: Joi.number().optional(),
+    fdDetails: Joi.object({
+        date: Joi.date().optional(),
+        maturityDate: Joi.date().optional(),
+        amount: Joi.number().optional(),
+        interest: Joi.number().optional(),
+    }).optional(),
+    loanDetails: Joi.object({
+        amount: Joi.number().optional(),
+        loanDate: Joi.date().optional(),
+        overdueInterest: Joi.number().optional(),
+    }).optional(),
+    openingYogdan: Joi.number().optional(),
 }).or("group_id", "group_code", "Group_Name");
 
 // ======================
@@ -65,16 +80,14 @@ export const registerGroupSchema = Joi.object({
     village: Joi.string().optional(),
     no_members: Joi.number().optional(),
     formation_date: Joi.date().optional(),
-    president_name: Joi.string().optional(),
-    secretary_name: Joi.string().optional(),
-    treasurer_name: Joi.string().optional(),
     cluster: Joi.string().optional(),
     saving_per_member: Joi.number().optional(),
     Mship_Group: Joi.string().optional(),
     membership_fees: Joi.number().optional(),
     mitan_name: Joi.string().optional(),
-    meeting_date_1: Joi.date().optional(),
-    meeting_date_2: Joi.date().optional(),
+    meeting_date_1_day: Joi.number().integer().min(1).max(31).optional(),
+    meeting_date_2_day: Joi.number().integer().min(1).max(31).optional(),
+    meeting_date_2_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).optional(),
     sahyog_rashi: Joi.string().optional(),
     shar_capital: Joi.string().optional(),
     other: Joi.string().optional(),
@@ -115,3 +128,12 @@ export const addBankValidationSchema = Joi.object({
 
     group_id: Joi.string().optional(),
 });
+
+// ======================
+// GROUP LOGIN VALIDATION
+// ======================
+export const groupLoginSchema = Joi.object({
+    groupName: Joi.string().required(),
+    groupId: Joi.string().optional(),
+    groupCode: Joi.string().optional(),
+}).or("groupId", "groupCode");

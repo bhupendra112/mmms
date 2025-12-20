@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { User, IdCard, Building2, DollarSign, GraduationCap, MapPin, Users } from "lucide-react";
-import { Input, Select, TextArea, FormSection } from "../components/forms/FormComponents";
+import { Input, Select, TextArea, FormSection, FileInput } from "../components/forms/FormComponents";
 import { createApprovalRequest } from "../services/approvalDB";
 import { useGroup } from "../contexts/GroupContext";
 import { getGroups } from "../services/groupService";
@@ -16,7 +16,7 @@ export default function MemberRegistration() {
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [form, setForm] = useState({
-    Member_Id: "M001",
+    Member_Id: "",
     Member_Nm: "",
     Member_Dt: "",
     Dt_Join: "",
@@ -26,6 +26,11 @@ export default function MemberRegistration() {
     Adhar_Id: "",
     Ration_Card: "",
     Job_Card: "",
+    // File uploads for identity documents
+    Voter_Id_File: null,
+    Adhar_Id_File: null,
+    Ration_Card_File: null,
+    Job_Card_File: null,
     Apl_Bpl_Etc: "",
     Desg: "",
     Bank_Name: "",
@@ -47,6 +52,21 @@ export default function MemberRegistration() {
     Village: "",
     Group_Name: "",
     group_id: "",
+    // Existing member financial details
+    isExistingMember: false,
+    openingSaving: "",
+    fdDetails: {
+      date: "",
+      maturityDate: "",
+      amount: "",
+      interest: "",
+    },
+    loanDetails: {
+      amount: "",
+      loanDate: "",
+      overdueInterest: "",
+    },
+    openingYogdan: "",
   });
 
   // Load groups list for admin mode (for dynamic group selection)
@@ -93,7 +113,27 @@ export default function MemberRegistration() {
   }, [groups]);
 
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value, type, checked, files } = e.target;
+    if (type === "checkbox") {
+      setForm({ ...form, [name]: checked });
+    } else if (type === "file") {
+      // Handle file uploads
+      setForm({ ...form, [name]: files && files[0] ? files[0] : null });
+    } else if (name.startsWith("fdDetails.")) {
+      const field = name.split(".")[1];
+      setForm({
+        ...form,
+        fdDetails: { ...form.fdDetails, [field]: value },
+      });
+    } else if (name.startsWith("loanDetails.")) {
+      const field = name.split(".")[1];
+      setForm({
+        ...form,
+        loanDetails: { ...form.loanDetails, [field]: value },
+      });
+    } else {
+      setForm({ ...form, [name]: value });
+    }
   };
 
   const handleGroupChange = (e) => {
@@ -110,17 +150,59 @@ export default function MemberRegistration() {
     e.preventDefault();
 
     try {
+      // Create FormData for file uploads
+      const formData = new FormData();
+
+      // Add all form fields to FormData
+      Object.keys(form).forEach(key => {
+        // Skip file fields - they'll be added separately
+        if (key.endsWith('_File')) {
+          return;
+        }
+
+        const value = form[key];
+
+        // Skip null/undefined values
+        if (value === null || value === undefined || value === '') {
+          return;
+        }
+
+        // Handle nested objects (fdDetails, loanDetails)
+        if (typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof File)) {
+          formData.append(key, JSON.stringify(value));
+        } else if (value instanceof Date) {
+          // Convert dates to ISO string
+          formData.append(key, value.toISOString());
+        } else {
+          // Convert all other values to string
+          formData.append(key, String(value));
+        }
+      });
+
+      // Add file uploads if present
+      const fileFields = ['Voter_Id_File', 'Adhar_Id_File', 'Ration_Card_File', 'Job_Card_File'];
+      fileFields.forEach(fieldName => {
+        if (form[fieldName] && form[fieldName] instanceof File) {
+          formData.append(fieldName, form[fieldName]);
+        }
+      });
+
       // If in group context, create approval request
+      // Note: For approval requests, we might need to convert FormData to a regular object
+      // or handle it differently in the approval service
       if (currentGroup) {
-        await createApprovalRequest("member", form, currentGroup.id, currentGroup.name);
+        // Convert FormData to object for approval request (files will be excluded)
+        const approvalData = {};
+        for (const [key, value] of formData.entries()) {
+          if (!(value instanceof File)) {
+            approvalData[key] = value;
+          }
+        }
+        await createApprovalRequest("member", approvalData, currentGroup.id, currentGroup.name);
         alert("Member registration submitted for approval!");
       } else {
-        // In admin context, directly register member to DB
-        await registerMemberApi({
-          ...form,
-          group_id: form.group_id,
-          Group_Name: form.Group_Name,
-        });
+        // In admin context, directly register member to DB with FormData
+        await registerMemberApi(formData);
         alert("Member Registered Successfully!");
       }
 
@@ -136,6 +218,10 @@ export default function MemberRegistration() {
         Adhar_Id: "",
         Ration_Card: "",
         Job_Card: "",
+        Voter_Id_File: null,
+        Adhar_Id_File: null,
+        Ration_Card_File: null,
+        Job_Card_File: null,
         Apl_Bpl_Etc: "",
         Desg: "",
         Bank_Name: "",
@@ -157,6 +243,11 @@ export default function MemberRegistration() {
         Village: "",
         Group_Name: currentGroup?.name || form.Group_Name, // Keep group selection
         group_id: currentGroup?.id || form.group_id,
+        isExistingMember: false,
+        openingSaving: "",
+        fdDetails: { date: "", maturityDate: "", amount: "", interest: "" },
+        loanDetails: { amount: "", loanDate: "", overdueInterest: "" },
+        openingYogdan: "",
       });
     } catch (error) {
       console.error("Error submitting member registration:", error);
@@ -210,6 +301,22 @@ export default function MemberRegistration() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Existing Member Checkbox */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              name="isExistingMember"
+              checked={form.isExistingMember}
+              onChange={handleChange}
+              className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span className="text-lg font-semibold text-gray-800">
+              Is this an existing member? (For migrating from Excel)
+            </span>
+          </label>
+        </div>
+
         {/* Group Selection */}
         <FormSection title="Group Selection" icon={Building2}>
           {isGroupPanel ? (
@@ -255,13 +362,6 @@ export default function MemberRegistration() {
             handleChange={handleChange}
             required
             placeholder="Enter member full name"
-          />
-          <Input
-            type="date"
-            label="Member Date"
-            name="Member_Dt"
-            value={form.Member_Dt}
-            handleChange={handleChange}
           />
           <Input
             type="date"
@@ -315,12 +415,26 @@ export default function MemberRegistration() {
             handleChange={handleChange}
             placeholder="Enter voter ID number"
           />
+          <FileInput
+            label="Voter ID Document"
+            name="Voter_Id_File"
+            value={form.Voter_Id_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
+          />
           <Input
             label="Aadhar Number"
             name="Adhar_Id"
             value={form.Adhar_Id}
             handleChange={handleChange}
             placeholder="Enter Aadhar number"
+          />
+          <FileInput
+            label="Aadhar Document"
+            name="Adhar_Id_File"
+            value={form.Adhar_Id_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
           />
           <Input
             label="Ration Card Number"
@@ -329,12 +443,26 @@ export default function MemberRegistration() {
             handleChange={handleChange}
             placeholder="Enter ration card number"
           />
+          <FileInput
+            label="Ration Card Document"
+            name="Ration_Card_File"
+            value={form.Ration_Card_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
+          />
           <Input
             label="Job Card Number"
             name="Job_Card"
             value={form.Job_Card}
             handleChange={handleChange}
             placeholder="Enter job card number"
+          />
+          <FileInput
+            label="Job Card Document"
+            name="Job_Card_File"
+            value={form.Job_Card_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
           />
         </FormSection>
 
@@ -487,6 +615,101 @@ export default function MemberRegistration() {
           />
         </FormSection>
 
+        {/* Existing Member Financial Details */}
+        {form.isExistingMember && (
+          <FormSection title="Existing Member Financial Details" icon={DollarSign}>
+            <div className="md:col-span-2 bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg mb-4">
+              <p className="text-sm text-gray-700">
+                <strong>Note:</strong> These fields are for migrating existing members from Excel. Opening Yogdan is a one-time balance; future Yogdan will be tracked in the recovery system.
+              </p>
+            </div>
+
+            <Input
+              type="number"
+              label="Opening Saving"
+              name="openingSaving"
+              value={form.openingSaving}
+              handleChange={handleChange}
+              placeholder="Enter opening saving balance"
+            />
+
+            <div className="md:col-span-2">
+              <h3 className="text-lg font-semibold text-gray-800 mb-3">FD Details</h3>
+            </div>
+            <Input
+              type="date"
+              label="FD Date"
+              name="fdDetails.date"
+              value={form.fdDetails.date}
+              handleChange={handleChange}
+            />
+            <Input
+              type="date"
+              label="Maturity Date"
+              name="fdDetails.maturityDate"
+              value={form.fdDetails.maturityDate}
+              handleChange={handleChange}
+            />
+            <Input
+              type="number"
+              label="FD Amount"
+              name="fdDetails.amount"
+              value={form.fdDetails.amount}
+              handleChange={handleChange}
+              placeholder="Enter FD amount"
+            />
+            <Input
+              type="number"
+              label="Interest"
+              name="fdDetails.interest"
+              value={form.fdDetails.interest}
+              handleChange={handleChange}
+              placeholder="Enter interest amount"
+            />
+
+            <div className="md:col-span-2">
+              <h3 className="text-lg font-semibold text-gray-800 mb-3 mt-4">Loan Details</h3>
+            </div>
+            <Input
+              type="number"
+              label="Loan Amount"
+              name="loanDetails.amount"
+              value={form.loanDetails.amount}
+              handleChange={handleChange}
+              placeholder="Enter loan amount"
+            />
+            <Input
+              type="date"
+              label="Loan Date"
+              name="loanDetails.loanDate"
+              value={form.loanDetails.loanDate}
+              handleChange={handleChange}
+            />
+            <Input
+              type="number"
+              label="Overdue Interest"
+              name="loanDetails.overdueInterest"
+              value={form.loanDetails.overdueInterest}
+              handleChange={handleChange}
+              placeholder="Enter overdue interest"
+            />
+
+            <Input
+              type="number"
+              label="Opening Yogdan"
+              name="openingYogdan"
+              value={form.openingYogdan}
+              handleChange={handleChange}
+              placeholder="Enter opening Yogdan balance"
+            />
+            <div className="md:col-span-2">
+              <p className="text-xs text-gray-500 mt-1">
+                This is a one-time opening balance. Future Yogdan will be tracked in the recovery system.
+              </p>
+            </div>
+          </FormSection>
+        )}
+
         {/* Submit Button */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex justify-end gap-4">
@@ -495,7 +718,7 @@ export default function MemberRegistration() {
               onClick={() => {
                 if (window.confirm("Are you sure you want to reset the form?")) {
                   setForm({
-                    Member_Id: "M001",
+                    Member_Id: "",
                     Member_Nm: "",
                     Member_Dt: "",
                     Dt_Join: "",
@@ -505,6 +728,10 @@ export default function MemberRegistration() {
                     Adhar_Id: "",
                     Ration_Card: "",
                     Job_Card: "",
+                    Voter_Id_File: null,
+                    Adhar_Id_File: null,
+                    Ration_Card_File: null,
+                    Job_Card_File: null,
                     Apl_Bpl_Etc: "",
                     Desg: "",
                     Bank_Name: "",
@@ -524,7 +751,13 @@ export default function MemberRegistration() {
                     res_add1: "",
                     res_add2: "",
                     Village: "",
-                    Group_Name: "",
+                    Group_Name: currentGroup?.name || form.Group_Name,
+                    group_id: currentGroup?.id || form.group_id,
+                    isExistingMember: false,
+                    openingSaving: "",
+                    fdDetails: { date: "", maturityDate: "", amount: "", interest: "" },
+                    loanDetails: { amount: "", loanDate: "", overdueInterest: "" },
+                    openingYogdan: "",
                   });
                 }
               }}

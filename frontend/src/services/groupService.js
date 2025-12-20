@@ -86,3 +86,16 @@ export const getGroupBanks = async (groupId) => {
     const res = await httpGroup.get(`/${groupId}/banks`);
     return res.data;
 };
+
+// -------------------------------------------------------------
+// GET BANK DETAIL WITH TRANSACTIONS
+// -------------------------------------------------------------
+export const getBankDetail = async (bankId) => {
+    if (!bankId) throw new Error("bankId is required");
+    try {
+        const res = await httpGroup.get(`/bank/${bankId}`);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};

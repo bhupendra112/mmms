@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Building2, DollarSign, Download, Plus, Search, Wifi, WifiOff } from "lucide-react";
 import { Link } from "react-router-dom";
 import { getGroups } from "../../services/groupService";
-import { getAllApprovals } from "../../services/approvalDB";
+import { getLoans } from "../../services/loanService";
 import { exportLoanToExcel, exportLoanToPDF } from "../../utils/exportUtils";
 
 export default function AdminLoanManagement() {
@@ -11,10 +11,10 @@ export default function AdminLoanManagement() {
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState(null); // {id,name,code,village}
 
-    const [loanApprovals, setLoanApprovals] = useState([]);
+    const [loans, setLoans] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
-    const [statusFilter, setStatusFilter] = useState("all"); // all|pending|approved|rejected
+    const [statusFilter, setStatusFilter] = useState("all"); // all|approved|rejected
 
     useEffect(() => {
         const handleOnline = () => setIsOnline(true);
@@ -49,48 +49,33 @@ export default function AdminLoanManagement() {
             .finally(() => setGroupsLoading(false));
     }, []);
 
-    const loadLoanApprovals = async (groupId) => {
+    const loadLoans = async (groupId) => {
         if (!groupId) return;
         try {
             setLoading(true);
-            const approvals = await getAllApprovals(groupId);
-            const loans = (approvals || [])
-                .filter((a) => a.type === "loan")
-                .map((a) => ({
-                    id: a.id,
-                    status: a.status,
-                    groupId: a.groupId,
-                    groupName: a.groupName,
-                    submittedAt: a.submittedAt,
-                    data: a.data || {},
-                }));
-            setLoanApprovals(loans);
+            const response = await getLoans(groupId);
+            const loansList = Array.isArray(response?.data) ? response.data : [];
+            setLoans(loansList);
         } catch (e) {
-            console.error("Failed to load loan approvals:", e);
-            setLoanApprovals([]);
+            console.error("Failed to load loans:", e);
+            setLoans([]);
         } finally {
             setLoading(false);
         }
     };
 
-    const pendingCount = useMemo(
-        () => loanApprovals.filter((a) => a.status === "pending").length,
-        [loanApprovals]
-    );
-
     const filtered = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
-        return loanApprovals.filter((a) => {
-            const statusOk = statusFilter === "all" || a.status === statusFilter;
+        return loans.filter((loan) => {
+            const statusOk = statusFilter === "all" || loan.status === statusFilter;
             if (!statusOk) return false;
 
             if (!q) return true;
-            const d = a.data || {};
-            const memberName = String(d.memberName || "").toLowerCase();
-            const memberCode = String(d.memberCode || "").toLowerCase();
-            const purpose = String(d.purpose || "").toLowerCase();
-            const txType = String(d.transactionType || "").toLowerCase();
-            const groupLoan = d.isGroupLoan ? "group" : "";
+            const memberName = String(loan.memberName || "").toLowerCase();
+            const memberCode = String(loan.memberCode || "").toLowerCase();
+            const purpose = String(loan.purpose || "").toLowerCase();
+            const txType = String(loan.transactionType || "").toLowerCase();
+            const groupLoan = loan.isGroupLoan ? "group" : "";
             return (
                 memberName.includes(q) ||
                 memberCode.includes(q) ||
@@ -99,20 +84,19 @@ export default function AdminLoanManagement() {
                 groupLoan.includes(q)
             );
         });
-    }, [loanApprovals, searchTerm, statusFilter]);
+    }, [loans, searchTerm, statusFilter]);
 
     const exportRows = useMemo(() => {
-        return filtered.map((a) => {
-            const d = a.data || {};
+        return filtered.map((loan) => {
             return {
-                Status: a.status,
-                "Member Code": d.memberCode || "-",
-                "Member Name": d.memberName || (d.isGroupLoan ? "Group Loan" : "-"),
-                "Transaction Type": d.transactionType || "-",
-                "Payment Mode": d.paymentMode || "-",
-                Purpose: d.purpose || "-",
-                Amount: d.amount ?? "-",
-                Date: d.date || (a.submittedAt ? new Date(a.submittedAt).toLocaleDateString("en-GB") : "-"),
+                Status: loan.status,
+                "Member Code": loan.memberCode || "-",
+                "Member Name": loan.memberName || (loan.isGroupLoan ? "Group Loan" : "-"),
+                "Transaction Type": loan.transactionType || "-",
+                "Payment Mode": loan.paymentMode || "-",
+                Purpose: loan.purpose || "-",
+                Amount: loan.amount ?? "-",
+                Date: loan.date ? new Date(loan.date).toLocaleDateString("en-GB") : (loan.createdAt ? new Date(loan.createdAt).toLocaleDateString("en-GB") : "-"),
             };
         });
     }, [filtered]);
@@ -142,7 +126,7 @@ export default function AdminLoanManagement() {
                                     key={g.id}
                                     onClick={() => {
                                         setSelectedGroup(g);
-                                        loadLoanApprovals(g.id);
+                                        loadLoans(g.id);
                                     }}
                                     className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
                                 >
@@ -185,11 +169,6 @@ export default function AdminLoanManagement() {
                     <div className="flex items-center gap-2 text-sm mt-2">
                         {isOnline ? <Wifi size={16} className="text-green-600" /> : <WifiOff size={16} className="text-red-600" />}
                         <span className={isOnline ? "text-green-700" : "text-red-700"}>{isOnline ? "Online" : "Offline"}</span>
-                        {pendingCount > 0 && (
-                            <span className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-semibold">
-                                {pendingCount} pending
-                            </span>
-                        )}
                     </div>
                 </div>
 
@@ -204,7 +183,7 @@ export default function AdminLoanManagement() {
                     <button
                         onClick={() => {
                             setSelectedGroup(null);
-                            setLoanApprovals([]);
+                            setLoans([]);
                             setSearchTerm("");
                             setStatusFilter("all");
                         }}
@@ -266,7 +245,7 @@ export default function AdminLoanManagement() {
                         Loan Requests ({filtered.length}) {loading ? "— Loading…" : ""}
                     </p>
                     <p className="text-sm text-gray-600 mt-1">
-                        Tip: approve/reject in <span className="font-semibold">Admin → Approvals</span>.
+                        All loans are directly saved to the database.
                     </p>
                 </div>
                 <div className="overflow-x-auto">
@@ -283,32 +262,31 @@ export default function AdminLoanManagement() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filtered.map((a) => {
-                                const d = a.data || {};
-                                const memberLabel = d.isGroupLoan
+                            {filtered.map((loan) => {
+                                const memberLabel = loan.isGroupLoan
                                     ? "Group Loan"
-                                    : `${d.memberName || "-"} (${d.memberCode || "-"})`;
+                                    : `${loan.memberName || "-"} (${loan.memberCode || "-"})`;
                                 return (
-                                    <tr key={a.id} className="hover:bg-gray-50">
+                                    <tr key={loan._id || loan.id} className="hover:bg-gray-50">
                                         <td className="border p-3">
                                             <span
-                                                className={`px-2 py-1 rounded-full text-xs font-semibold ${a.status === "pending"
+                                                className={`px-2 py-1 rounded-full text-xs font-semibold ${loan.status === "pending"
                                                     ? "bg-yellow-100 text-yellow-800"
-                                                    : a.status === "approved"
+                                                    : loan.status === "approved"
                                                         ? "bg-green-100 text-green-800"
                                                         : "bg-red-100 text-red-800"
                                                     }`}
                                             >
-                                                {a.status}
+                                                {loan.status}
                                             </span>
                                         </td>
                                         <td className="border p-3 text-gray-800">{memberLabel}</td>
-                                        <td className="border p-3 text-gray-700">{d.transactionType || "-"}</td>
-                                        <td className="border p-3 text-gray-700">{d.paymentMode || "-"}</td>
-                                        <td className="border p-3 text-gray-700">{d.purpose || "-"}</td>
-                                        <td className="border p-3 text-right text-gray-800">{d.amount ?? "-"}</td>
+                                        <td className="border p-3 text-gray-700">{loan.transactionType || "-"}</td>
+                                        <td className="border p-3 text-gray-700">{loan.paymentMode || "-"}</td>
+                                        <td className="border p-3 text-gray-700">{loan.purpose || "-"}</td>
+                                        <td className="border p-3 text-right text-gray-800">₹{loan.amount?.toLocaleString() || "-"}</td>
                                         <td className="border p-3 text-gray-700">
-                                            {d.date || (a.submittedAt ? new Date(a.submittedAt).toLocaleDateString("en-GB") : "-")}
+                                            {loan.date ? new Date(loan.date).toLocaleDateString("en-GB") : (loan.createdAt ? new Date(loan.createdAt).toLocaleDateString("en-GB") : "-")}
                                         </td>
                                     </tr>
                                 );

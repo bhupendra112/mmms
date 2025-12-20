@@ -1,37 +1,97 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Building2, Users, Banknote, TrendingUp } from "lucide-react";
+import { getDashboardStatistics } from "../../services/dataManagementService";
 
 export default function AdminDashboard() {
-    const stats = [
+    const [stats, setStats] = useState([
         {
             title: "Total Groups",
-            value: "24",
+            value: "0",
             icon: Building2,
             color: "bg-blue-500",
-            change: "+12%",
+            change: "+0%",
         },
         {
             title: "Total Members",
-            value: "1,234",
+            value: "0",
             icon: Users,
             color: "bg-green-500",
-            change: "+8%",
+            change: "+0%",
         },
         {
             title: "Groups with Bank",
-            value: "18",
+            value: "0",
             icon: Banknote,
             color: "bg-purple-500",
-            change: "+5%",
+            change: "+0%",
         },
         {
             title: "Active Groups",
-            value: "22",
+            value: "0",
             icon: TrendingUp,
             color: "bg-orange-500",
-            change: "+15%",
+            change: "+0%",
         },
-    ];
+    ]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        loadDashboardStats();
+    }, []);
+
+    const loadDashboardStats = async () => {
+        try {
+            setLoading(true);
+            setError("");
+            const response = await getDashboardStatistics();
+
+            if (response.success && response.data) {
+                const data = response.data;
+
+                // Format numbers with Indian locale
+                const formatNumber = (num) => {
+                    return new Intl.NumberFormat("en-IN").format(num || 0);
+                };
+
+                setStats([
+                    {
+                        title: "Total Groups",
+                        value: formatNumber(data.totalGroups),
+                        icon: Building2,
+                        color: "bg-blue-500",
+                        change: data.changes?.groups || "+0%",
+                    },
+                    {
+                        title: "Total Members",
+                        value: formatNumber(data.totalMembers),
+                        icon: Users,
+                        color: "bg-green-500",
+                        change: data.changes?.members || "+0%",
+                    },
+                    {
+                        title: "Groups with Bank",
+                        value: formatNumber(data.groupsWithBank),
+                        icon: Banknote,
+                        color: "bg-purple-500",
+                        change: data.changes?.groupsWithBank || "+0%",
+                    },
+                    {
+                        title: "Active Groups",
+                        value: formatNumber(data.activeGroups),
+                        icon: TrendingUp,
+                        color: "bg-orange-500",
+                        change: data.changes?.activeGroups || "+0%",
+                    },
+                ]);
+            }
+        } catch (err) {
+            console.error("Error loading dashboard stats:", err);
+            setError(err.message || "Failed to load dashboard statistics");
+        } finally {
+            setLoading(false);
+        }
+    };
 
     return (
         <div className="max-w-7xl mx-auto">
@@ -40,29 +100,43 @@ export default function AdminDashboard() {
                 <p className="text-gray-600 mt-2">Manage village samooh groups and members</p>
             </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                {stats.map((stat, idx) => {
-                    const Icon = stat.icon;
-                    return (
-                        <div
-                            key={idx}
-                            className="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-gray-600 text-sm font-medium">{stat.title}</p>
-                                    <p className="text-3xl font-bold text-gray-800 mt-2">{stat.value}</p>
-                                    <p className="text-green-600 text-sm mt-1">{stat.change} from last month</p>
+            {error && (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-700">{error}</p>
+                </div>
+            )}
+
+            {loading ? (
+                <div className="flex items-center justify-center min-h-[400px]">
+                    <div className="text-gray-600">Loading dashboard statistics...</div>
+                </div>
+            ) : (
+                <>
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        {stats.map((stat, idx) => {
+                            const Icon = stat.icon;
+                            return (
+                                <div
+                                    key={idx}
+                                    className="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500 hover:shadow-lg transition-shadow"
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-gray-600 text-sm font-medium">{stat.title}</p>
+                                            <p className="text-3xl font-bold text-gray-800 mt-2">{stat.value}</p>
+                                            <p className="text-green-600 text-sm mt-1">{stat.change} from last month</p>
+                                        </div>
+                                        <div className={`${stat.color} p-3 rounded-full`}>
+                                            <Icon className="text-white" size={24} />
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className={`${stat.color} p-3 rounded-full`}>
-                                    <Icon className="text-white" size={24} />
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+                            );
+                        })}
+                    </div>
+                </>
+            )}
 
             {/* Quick Actions */}
             <div className="bg-white rounded-lg shadow-md p-6">

@@ -19,6 +19,12 @@ const MemberSchema = new mongoose.Schema({
     Ration_Card: { type: String },
     Job_Card: { type: String },
 
+    // File uploads for identity documents
+    Voter_Id_File: { type: String }, // Path to uploaded file
+    Adhar_Id_File: { type: String },
+    Ration_Card_File: { type: String },
+    Job_Card_File: { type: String },
+
     Apl_Bpl_Etc: { type: String, enum: ["APL", "BPL"] },
 
     Desg: {
@@ -53,6 +59,22 @@ const MemberSchema = new mongoose.Schema({
     res_add1: { type: String },
     res_add2: { type: String },
     Village: { type: String },
+
+    // Existing member financial details (for migration from Excel)
+    isExistingMember: { type: Boolean, default: false },
+    openingSaving: { type: Number, default: 0 },
+    fdDetails: {
+        date: { type: Date },
+        maturityDate: { type: Date },
+        amount: { type: Number, default: 0 },
+        interest: { type: Number, default: 0 },
+    },
+    loanDetails: {
+        amount: { type: Number, default: 0 },
+        loanDate: { type: Date },
+        overdueInterest: { type: Number, default: 0 },
+    },
+    openingYogdan: { type: Number, default: 0 }, // One-time opening balance, future tracked in recovery
 }, {
     timestamps: true,
 });

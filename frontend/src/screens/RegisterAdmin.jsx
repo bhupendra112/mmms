@@ -33,8 +33,7 @@ const navigate = useNavigate();
 
       setMessage("✅ Registered Successfully!");
 
-      console.log("Admin Registered:", response.data);
-localStorage.setItem("token", res.data.token);
+      localStorage.setItem("token", response.data.token);
 
       alert("Login Successful");
       navigate("/");

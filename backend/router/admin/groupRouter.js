@@ -1,6 +1,6 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, addBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode } from "../../controller/admin/groupController.js";
+import { registerGroup, addBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
@@ -43,6 +43,11 @@ router.get("/detail/:id", (req, res) => {
 // ADD BANK WITHOUT VALIDATION
 router.post("/add-bank", (req, res) => {
     return addBankDetail(req, res);
+});
+
+// GET BANK DETAIL WITH TRANSACTIONS
+router.get("/bank/:bankId", (req, res) => {
+    return getBankDetail(req, res);
 });
 
 export default router;

@@ -22,6 +22,32 @@ const AdminSchema = new mongoose.Schema({
         required: true,
         minlength: 6,
     },
+
+    // Profile fields
+    phone: {
+        type: String,
+        trim: true,
+    },
+    designation: {
+        type: String,
+        trim: true,
+    },
+    organization: {
+        type: String,
+        trim: true,
+    },
+
+    // Settings
+    settings: {
+        twoFactorAuth: {
+            type: Boolean,
+            default: false,
+        },
+        sessionTimeout: {
+            type: Number,
+            default: 30, // minutes
+        },
+    },
 }, { timestamps: true });
 
 const Admin = mongoose.model("Admin", AdminSchema);

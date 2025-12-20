@@ -2,6 +2,10 @@ import express from "express";
 import authRoute from "./authRouter.js";
 import groupRouter from "./groupRouter.js"
 import memberRouter from "./memberRouter.js"
+import loanRouter from "./loanRouter.js"
+import recoveryRouter from "./recoveryRouter.js"
+import groupAuthRouter from "./groupAuthRouter.js"
+import dataManagementRouter from "./dataManagementRouter.js"
 
 const router = express.Router();
 
@@ -10,23 +14,18 @@ const routeArray = [
     { path: "/auth", route: authRoute },
     { path: "/group", route: groupRouter },
     { path: "/member", route: memberRouter },
+    { path: "/loan", route: loanRouter },
+    { path: "/recovery", route: recoveryRouter },
+    { path: "/group-auth", route: groupAuthRouter },
+    { path: "/data-management", route: dataManagementRouter },
 ];
 
-// ✅ Debug & register routes
+// ✅ Register routes
 routeArray.forEach((routeItem) => {
     if (!routeItem || !routeItem.path || !routeItem.route) {
-        console.error("❌ Invalid routeItem:", routeItem);
         return;
     }
-
-    console.log(`🔹 Registering route: ${routeItem.path}`);
     router.use(routeItem.path, routeItem.route);
-});
-
-// ✅ Debug middleware to catch unhandled routes
-router.use((req, res, next) => {
-    console.warn(`⚠️  Unhandled route: ${req.method} ${req.originalUrl}`);
-    next();
 });
 
 export default router;

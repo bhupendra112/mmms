@@ -79,16 +79,13 @@ function GroupMasterForm({ onNext, defaultValues }) {
     village: "",
     no_members: "",
     formation_date: "",
-    president_name: "",
-    secretary_name: "",
-    treasurer_name: "",
-    cluster: "",
     saving_per_member: "",
     Mship_Group: "",
     membership_fees: "",
     mitan_name: "",
-    meeting_date_1: "",
-    meeting_date_2: "",
+    meeting_date_1_day: "",
+    meeting_date_2_day: "",
+    meeting_date_2_time: "",
     sahyog_rashi: "",
     shar_capital: "",
     other: "",
@@ -123,19 +120,60 @@ function GroupMasterForm({ onNext, defaultValues }) {
       <Input type="number" label="No. of Members" name="no_members" value={form.no_members} handleChange={handleChange} />
       <Input type="date" label="Formation Date" name="formation_date" value={form.formation_date} handleChange={handleChange} />
 
-      <Input label="President Name" name="president_name" value={form.president_name} handleChange={handleChange} />
-      <Input label="Secretary Name" name="secretary_name" value={form.secretary_name} handleChange={handleChange} />
-      <Input label="Treasurer Name" name="treasurer_name" value={form.treasurer_name} handleChange={handleChange} />
-
-      <Input label="Cluster" name="cluster" value={form.cluster} handleChange={handleChange} />
       <Input type="number" label="Saving Per Member" name="saving_per_member" value={form.saving_per_member} handleChange={handleChange} />
 
       <Input label="Membership Group" name="Mship_Group" value={form.Mship_Group} handleChange={handleChange} />
       <Input type="number" label="Membership Fees" name="membership_fees" value={form.membership_fees} handleChange={handleChange} />
 
       <Input label="Mitan Name" name="mitan_name" value={form.mitan_name} handleChange={handleChange} />
-      <Input type="date" label="Meeting Date 1" name="meeting_date_1" value={form.meeting_date_1} handleChange={handleChange} />
-      <Input type="date" label="Meeting Date 2" name="meeting_date_2" value={form.meeting_date_2} handleChange={handleChange} />
+
+      <div className="flex flex-col">
+        <label className="font-semibold mb-1">Meeting Date 1 - Day</label>
+        <input
+          type="number"
+          name="meeting_date_1_day"
+          value={form.meeting_date_1_day || ""}
+          onChange={handleChange}
+          min="1"
+          max="31"
+          placeholder="Day (1-31)"
+          className="border p-2 rounded-lg focus:ring-2 ring-blue-400"
+        />
+      </div>
+      <div className="flex flex-col">
+        <label className="font-semibold mb-1">Meeting Date 1 - Time</label>
+        <input
+          type="time"
+          name="meeting_date_1_time"
+          value={form.meeting_date_1_time || ""}
+          onChange={handleChange}
+          className="border p-2 rounded-lg focus:ring-2 ring-blue-400"
+        />
+      </div>
+
+      <div className="flex flex-col">
+        <label className="font-semibold mb-1">Meeting Date 2 - Day</label>
+        <input
+          type="number"
+          name="meeting_date_2_day"
+          value={form.meeting_date_2_day || ""}
+          onChange={handleChange}
+          min="1"
+          max="31"
+          placeholder="Day (1-31)"
+          className="border p-2 rounded-lg focus:ring-2 ring-blue-400"
+        />
+      </div>
+      <div className="flex flex-col">
+        <label className="font-semibold mb-1">Meeting Date 2 - Time</label>
+        <input
+          type="time"
+          name="meeting_date_2_time"
+          value={form.meeting_date_2_time || ""}
+          onChange={handleChange}
+          className="border p-2 rounded-lg focus:ring-2 ring-blue-400"
+        />
+      </div>
 
       <Input label="Sahyog Rashi" name="sahyog_rashi" value={form.sahyog_rashi} handleChange={handleChange} />
       <Input label="Share Capital" name="shar_capital" value={form.shar_capital} handleChange={handleChange} />

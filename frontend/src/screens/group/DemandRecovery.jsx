@@ -28,8 +28,10 @@ import {
 import { exportRecoveryToExcel, exportRecoveryToPDF } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { createApprovalRequest } from "../../services/approvalDB";
+import { registerRecovery } from "../../services/recoveryService";
 import { getGroups } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
+import { isMeetingDay, getNextMeetingDate, formatMeetingDateTime } from "../../utils/meetingDateUtils";
 
 export default function DemandRecovery() {
   const { currentGroup, isOnline, isGroupPanel, isGroupLoading } = useGroup();
@@ -53,6 +55,7 @@ export default function DemandRecovery() {
     loan: "",
     fd: "",
     interest: "",
+    yogdan: "",
     other: "",
   });
   const [paymentMode, setPaymentMode] = useState({
@@ -67,16 +70,39 @@ export default function DemandRecovery() {
   // Determine active group: use currentGroup from context if available, otherwise use selectedGroup (admin)
   const activeGroup = currentGroup || selectedGroup;
 
+  // Check if today is a meeting day and get next meeting date
+  const today = new Date();
+  const isTodayMeetingDay = activeGroup ? isMeetingDay(today, activeGroup) : false;
+  const nextMeetingDate = activeGroup ? getNextMeetingDate(activeGroup) : null;
+  const meetingTime = activeGroup?.raw?.meeting_date_2_time || activeGroup?.meeting_date_2_time || null;
+
   // Demand summary (dynamic): uses group saving_per_member (if available) + amounts entered in current meeting.
-  // NOTE: Loan/FD/Interest dues require ledger APIs; for now we show collected amounts as "actual".
+  // Includes opening balances from existing member financial data
   const getDemandSummary = (memberId) => {
     const recovery = recoveries.find((r) => r.memberId === memberId);
+    const member = allMembers.find((m) => m.id === memberId);
+
+    // Get opening balances from member data (if existing member)
+    const openingSaving = member?.openingSaving || member?.raw?.openingSaving || 0;
+    const openingLoan = member?.loanDetails?.amount || member?.raw?.loanDetails?.amount || 0;
+    const openingFd = member?.fdDetails?.amount || member?.raw?.fdDetails?.amount || 0;
+    const openingYogdan = member?.openingYogdan || member?.raw?.openingYogdan || 0;
+    const openingInterest = member?.loanDetails?.overdueInterest || member?.raw?.loanDetails?.overdueInterest || 0;
+
     const savingDue = Number(activeGroup?.raw?.saving_per_member || activeGroup?.saving_per_member || 0) || 0;
     const actualSaving = parseFloat(recovery?.amounts?.saving || 0) || 0;
     const actualLoan = parseFloat(recovery?.amounts?.loan || 0) || 0;
     const actualFd = parseFloat(recovery?.amounts?.fd || 0) || 0;
     const actualInterest = parseFloat(recovery?.amounts?.interest || 0) || 0;
+    const actualYogdan = parseFloat(recovery?.amounts?.yogdan || 0) || 0;
     const actualOther = parseFloat(recovery?.amounts?.other || 0) || 0;
+
+    // Calculate closing balances (opening + actual received)
+    const closingSaving = openingSaving + actualSaving;
+    const closingLoan = Math.max(0, openingLoan - actualLoan); // Loan balance decreases with payment
+    const closingFd = openingFd + actualFd; // FD increases with deposit
+    const closingInterest = Math.max(0, openingInterest - actualInterest); // Interest decreases with payment
+    const closingYogdan = openingYogdan + actualYogdan; // Yogdan increases with recovery
 
     return {
       saving: {
@@ -85,12 +111,45 @@ export default function DemandRecovery() {
         total: savingDue,
         actual: actualSaving,
         unpaid: Math.max(savingDue - actualSaving, 0),
-        opening: 0,
-        closing: 0,
+        opening: openingSaving,
+        closing: closingSaving,
       },
-      loan: { prev: 0, curr: 0, total: actualLoan, actual: actualLoan, unpaid: 0, opening: 0, closing: 0 },
-      fd: { prev: 0, curr: 0, total: actualFd, actual: actualFd, unpaid: 0, opening: 0, closing: 0 },
-      interest: { prev: 0, curr: 0, total: actualInterest, actual: actualInterest, unpaid: 0, opening: 0, closing: 0 },
+      loan: {
+        prev: 0,
+        curr: 0,
+        total: actualLoan,
+        actual: actualLoan,
+        unpaid: Math.max(0, openingLoan - actualLoan),
+        opening: openingLoan,
+        closing: closingLoan,
+      },
+      fd: {
+        prev: 0,
+        curr: 0,
+        total: actualFd,
+        actual: actualFd,
+        unpaid: 0,
+        opening: openingFd,
+        closing: closingFd,
+      },
+      interest: {
+        prev: 0,
+        curr: 0,
+        total: actualInterest,
+        actual: actualInterest,
+        unpaid: Math.max(0, openingInterest - actualInterest),
+        opening: openingInterest,
+        closing: closingInterest,
+      },
+      yogdan: {
+        prev: 0,
+        curr: 0,
+        total: actualYogdan,
+        actual: actualYogdan,
+        unpaid: 0,
+        opening: openingYogdan,
+        closing: closingYogdan,
+      },
       other: { prev: 0, curr: 0, total: actualOther, actual: actualOther, unpaid: 0, opening: 0, closing: 0 },
     };
   };
@@ -146,6 +205,12 @@ export default function DemandRecovery() {
             id: m._id,
             code: m.Member_Id,
             name: m.Member_Nm,
+            raw: m, // Store full member data to access financial details
+            openingSaving: m.openingSaving || 0,
+            loanDetails: m.loanDetails || {},
+            fdDetails: m.fdDetails || {},
+            openingYogdan: m.openingYogdan || 0,
+            isExistingMember: m.isExistingMember || false,
           }))
         );
       })
@@ -221,8 +286,9 @@ export default function DemandRecovery() {
         const loan = parseFloat(recovery.amounts?.loan || 0);
         const fd = parseFloat(recovery.amounts?.fd || 0);
         const interest = parseFloat(recovery.amounts?.interest || 0);
+        const yogdan = parseFloat(recovery.amounts?.yogdan || 0);
         const other = parseFloat(recovery.amounts?.other || 0);
-        const memberTotal = saving + loan + fd + interest + other;
+        const memberTotal = saving + loan + fd + interest + yogdan + other;
 
         totalAmount += memberTotal;
 
@@ -245,7 +311,7 @@ export default function DemandRecovery() {
     setAttendance("present");
     setRecoveryByOther(false);
     setOtherMemberId("");
-    setAmountBreakup({ saving: "", loan: "", fd: "", interest: "", other: "" });
+    setAmountBreakup({ saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "" });
     setPaymentMode({ cash: false, online: false });
     setOnlineRef("");
     setScreenshot(null);
@@ -265,6 +331,7 @@ export default function DemandRecovery() {
     loan: false,
     fd: false,
     interest: false,
+    yogdan: false,
     other: false,
   });
 
@@ -317,6 +384,18 @@ export default function DemandRecovery() {
 
   // Save current member recovery
   const handleSaveRecovery = async () => {
+    // Validate activeGroup exists
+    if (!activeGroup || !activeGroup.id) {
+      alert("Group information is missing. Please select a group.");
+      return;
+    }
+
+    // Validate meeting day
+    if (!isMeetingDay(new Date(), activeGroup)) {
+      alert("Recovery can only be done on scheduled meeting days. Please check the meeting schedule.");
+      return;
+    }
+
     // If absent and no recovery by other, save as absent without recovery
     if (attendance === "absent" && !recoveryByOther) {
       try {
@@ -334,6 +413,7 @@ export default function DemandRecovery() {
             loan: 0,
             fd: 0,
             interest: 0,
+            yogdan: 0,
             other: 0,
           },
           paymentMode: { cash: false, online: false },
@@ -379,8 +459,9 @@ export default function DemandRecovery() {
     const loan = parseFloat(amountBreakup.loan) || 0;
     const fd = parseFloat(amountBreakup.fd) || 0;
     const interest = parseFloat(amountBreakup.interest) || 0;
+    const yogdan = parseFloat(amountBreakup.yogdan) || 0;
     const other = parseFloat(amountBreakup.other) || 0;
-    const total = saving + loan + fd + interest + other;
+    const total = saving + loan + fd + interest + yogdan + other;
 
     if (total === 0) {
       alert("Please enter at least one amount");
@@ -389,8 +470,8 @@ export default function DemandRecovery() {
 
     try {
       const recoveryData = {
-        groupId: groupData.id,
-        groupName: groupData.name,
+        groupId: activeGroup.id,
+        groupName: activeGroup.name,
         memberId: currentMember.id,
         memberCode: currentMember.code,
         memberName: currentMember.name,
@@ -402,6 +483,7 @@ export default function DemandRecovery() {
           loan,
           fd,
           interest,
+          yogdan,
           other,
         },
         paymentMode,
@@ -437,9 +519,16 @@ export default function DemandRecovery() {
       return;
     }
 
+    // Validate meeting day
+    if (!isMeetingDay(new Date(), activeGroup)) {
+      alert("Recovery can only be finalized on scheduled meeting days. Please check the meeting schedule.");
+      return;
+    }
+
     try {
-      // Create approval request for recovery (only for group panel, not admin)
+      // For group panel, create approval request; for admin, save directly to MongoDB
       if (currentGroup) {
+        // Group panel: create approval request
         await createApprovalRequest("recovery", {
           recoveries,
           groupPhoto,
@@ -447,6 +536,20 @@ export default function DemandRecovery() {
           memberCount: allMembers.length,
           date: new Date().toLocaleDateString("en-GB"),
         }, activeGroup.id, activeGroup.name);
+        alert("Recovery data submitted for approval!");
+      } else {
+        // Admin: directly save to MongoDB
+        await registerRecovery({
+          groupId: activeGroup.id,
+          groupName: activeGroup.name,
+          groupCode: activeGroup.code,
+          recoveries,
+          groupPhoto,
+          totals,
+          memberCount: allMembers.length,
+          date: new Date().toLocaleDateString("en-GB"),
+        });
+        alert("Recovery data saved successfully!");
       }
 
       await saveGroupPhoto({
@@ -459,8 +562,6 @@ export default function DemandRecovery() {
         memberCount: allMembers.length,
         date: new Date().toLocaleDateString("en-GB"),
       });
-
-      alert("Recovery data submitted for approval!");
 
       // Reset everything
       setRecoveries([]);
@@ -485,7 +586,7 @@ export default function DemandRecovery() {
       setAttendance(memberRecovery.attendance);
       setRecoveryByOther(memberRecovery.recoveryByOther || false);
       setOtherMemberId(memberRecovery.otherMemberId || "");
-      setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", other: "" });
+      setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "" });
       setPaymentMode(memberRecovery.paymentMode || { cash: false, online: false });
       setOnlineRef(memberRecovery.onlineRef || "");
     }
@@ -584,8 +685,38 @@ export default function DemandRecovery() {
         </div>
       )}
 
+      {/* Meeting Date Check - Block access if not on meeting day */}
+      {currentStep === 1 && activeGroup && !isTodayMeetingDay && (
+        <div className="bg-white rounded-lg shadow-md p-8 text-center">
+          <div className="flex flex-col items-center gap-4">
+            <XCircle size={64} className="text-red-500" />
+            <h2 className="text-2xl font-bold text-gray-800">Recovery Not Available</h2>
+            <p className="text-lg text-gray-600">
+              Recovery can only be done on scheduled meeting days.
+            </p>
+            {nextMeetingDate && (
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-gray-600 mb-1">Next Meeting Date:</p>
+                <p className="text-xl font-semibold text-blue-700">
+                  {formatMeetingDateTime(nextMeetingDate, meetingTime)}
+                </p>
+              </div>
+            )}
+            <p className="text-sm text-gray-500 mt-4">
+              Today's date: {today.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
+            </p>
+            {activeGroup.raw?.meeting_date_1_day && (
+              <p className="text-sm text-gray-500">
+                Meeting days: {activeGroup.raw.meeting_date_1_day}
+                {activeGroup.raw.meeting_date_2_day && ` and ${activeGroup.raw.meeting_date_2_day}`} of each month
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Step 1: Recovery Entry */}
-      {currentStep === 1 && activeGroup && (
+      {currentStep === 1 && activeGroup && isTodayMeetingDay && (
         <div className="space-y-6">
           {/* Progress Bar */}
           <div className="bg-white rounded-lg shadow-md p-6">
@@ -829,6 +960,7 @@ export default function DemandRecovery() {
                         { key: "loan", label: "Loan" },
                         { key: "fd", label: "FD" },
                         { key: "interest", label: "Interest" },
+                        { key: "yogdan", label: "Yogdan" },
                         { key: "other", label: "Other" },
                       ].map(({ key, label }) => (
                         <button
@@ -882,6 +1014,18 @@ export default function DemandRecovery() {
                           placeholder="Enter interest amount"
                         />
                       )}
+                      {activeAmountFields.yogdan && (
+                        <Input
+                          label="Yogdan Amount"
+                          name="yogdan"
+                          type="number"
+                          value={amountBreakup.yogdan}
+                          handleChange={(e) =>
+                            setAmountBreakup({ ...amountBreakup, yogdan: e.target.value })
+                          }
+                          placeholder="Enter Yogdan amount"
+                        />
+                      )}
                       {activeAmountFields.other && (
                         <Input
                           label="Other Amount"
@@ -904,6 +1048,7 @@ export default function DemandRecovery() {
                           parseFloat(amountBreakup.loan || 0) +
                           parseFloat(amountBreakup.fd || 0) +
                           parseFloat(amountBreakup.interest || 0) +
+                          parseFloat(amountBreakup.yogdan || 0) +
                           parseFloat(amountBreakup.other || 0)
                         ).toLocaleString()}
                       </p>
@@ -1062,6 +1207,7 @@ export default function DemandRecovery() {
                     (recovery.amounts?.loan || 0) +
                     (recovery.amounts?.fd || 0) +
                     (recovery.amounts?.interest || 0) +
+                    (recovery.amounts?.yogdan || 0) +
                     (recovery.amounts?.other || 0)
                     : 0;
                   return (

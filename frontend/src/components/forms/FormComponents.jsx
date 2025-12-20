@@ -75,6 +75,30 @@ export function TextArea({ label, name, value, handleChange, required = false, r
     );
 }
 
+export function FileInput({ label, name, value, handleChange, required = false, accept = "" }) {
+    return (
+        <div className="flex flex-col">
+            <label className="font-semibold mb-1.5 text-gray-700 text-sm">
+                {label}
+                {required && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            <input
+                type="file"
+                name={name}
+                onChange={handleChange}
+                accept={accept}
+                required={required}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+            {value && (
+                <p className="mt-2 text-sm text-green-600">
+                    File Selected: {value.name || value}
+                </p>
+            )}
+        </div>
+    );
+}
+
 export function FormSection({ title, icon: Icon, children }) {
     return (
         <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">

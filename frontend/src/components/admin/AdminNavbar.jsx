@@ -14,7 +14,28 @@ import {
     PlusCircle,
     DollarSign,
     CheckCircle,
+    LogOut,
 } from "lucide-react";
+import { useAdmin } from "../../contexts/AdminContext";
+
+// Logout Button Component
+function LogoutButton() {
+    const { logout } = useAdmin();
+
+    return (
+        <button
+            onClick={() => {
+                if (window.confirm("Are you sure you want to logout?")) {
+                    logout();
+                }
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors text-gray-300 hover:bg-gray-800 hover:text-red-400"
+        >
+            <LogOut size={18} />
+            <span>Logout</span>
+        </button>
+    );
+}
 
 export default function AdminNavbar() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -132,7 +153,7 @@ export default function AdminNavbar() {
                     ))}
                 </div>
 
-                <div className="border-t border-gray-800 p-4">
+                <div className="border-t border-gray-800 p-4 space-y-2">
                     <Link
                         to="/admin/settings"
                         className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${location.pathname === "/admin/settings"
@@ -143,6 +164,7 @@ export default function AdminNavbar() {
                         <Settings size={18} />
                         <span>Settings</span>
                     </Link>
+                    <LogoutButton />
                 </div>
             </aside>
 

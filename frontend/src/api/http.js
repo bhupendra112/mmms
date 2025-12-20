@@ -1,29 +1,22 @@
 import axios from "axios";
+import { getAuthToken } from "../utils/getAuthToken";
+import { createRequestInterceptor, createErrorInterceptor } from "../utils/httpInterceptor";
 
 const http = axios.create({
-    baseURL: import.meta.env.VITE_BASE_URL, // VITE_ prefix required
+    baseURL: import.meta.env.VITE_BASE_URL || "https://mmms.online/api",
     headers: { "Content-Type": "application/json" },
 });
 
 // ⬇️ REQUEST INTERCEPTOR — Automatically add token
 http.interceptors.request.use(
-    (config) => {
-        const token = localStorage.getItem("token");
-
-        if (token) config.headers["Authorization"] = `Bearer ${token}`;
-
-        return config;
-    },
+    createRequestInterceptor(getAuthToken),
     (error) => Promise.reject(error)
 );
 
-// Error Interceptor
+// ⬇️ RESPONSE INTERCEPTOR — Handle all error status codes
 http.interceptors.response.use(
     (res) => res,
-    (err) => {
-        console.log("[API ERROR]", err);
-        return Promise.reject(err.response?.data?.message || "Something went wrong");
-    }
+    createErrorInterceptor(true) // true = isAdmin
 );
 
 export default http;

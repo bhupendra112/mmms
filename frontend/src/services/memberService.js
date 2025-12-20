@@ -17,6 +17,18 @@ const sanitizePayload = (payload) => {
 };
 
 export const registerMember = async (data) => {
+  // Check if data is FormData (for file uploads)
+  if (data instanceof FormData) {
+    // For FormData, let axios handle the Content-Type automatically
+    const res = await httpMember.post("/register-member", data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return res.data;
+  }
+  
+  // For regular JSON data, sanitize and send
   const payload = sanitizePayload(data);
   const res = await httpMember.post("/register-member", payload);
   return res.data;

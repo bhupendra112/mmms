@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { useSelector, useDispatch } from "react-redux";
+import { selectGroup, selectIsGroupAuthenticated } from "../store/groupAuthSlice";
 import { getGroups, getGroupDetail, getGroupByCode } from "../services/groupService";
 
 const GroupContext = createContext();
@@ -19,9 +21,46 @@ export const useGroup = () => {
 };
 
 export const GroupProvider = ({ children }) => {
+    const dispatch = useDispatch();
+    const reduxGroup = useSelector(selectGroup);
+    const isAuthenticated = useSelector(selectIsGroupAuthenticated);
     const ACTIVE_GROUP_ID_KEY = "activeGroupId";
     const ACTIVE_GROUP_CODE_KEY = "activeGroupCode";
     const ACTIVE_GROUP_CACHE_KEY = "activeGroupCache";
+    
+    // Check authentication and load group on mount
+    useEffect(() => {
+        if (!isAuthenticated) {
+            // Redirect to login if not authenticated (but not if already on login page)
+            if (window.location.pathname !== "/group/login") {
+                window.location.href = "/group/login";
+            }
+            setIsGroupLoading(false);
+            return;
+        }
+        
+        // If authenticated and Redux has group data, use it
+        if (reduxGroup) {
+            const mappedGroup = {
+                id: reduxGroup.id || reduxGroup._id,
+                code: reduxGroup.code || reduxGroup.group_code,
+                name: reduxGroup.name || reduxGroup.group_name,
+                village: reduxGroup.village,
+                cluster: reduxGroup.cluster || reduxGroup.cluster_name,
+                noMembers: reduxGroup.no_members,
+                memberCount: reduxGroup.memberCount || reduxGroup.no_members || 0,
+            };
+            _setCurrentGroup(mappedGroup);
+            setIsGroupLoading(false);
+        } else {
+            // Try to load from localStorage cache or API
+            loadActiveGroup()
+                .catch((e) => {
+                    console.error("Failed to load active group:", e);
+                    setIsGroupLoading(false);
+                });
+        }
+    }, [isAuthenticated, reduxGroup]);
 
     const mapGroupFromApi = (group) => {
         if (!group) return null;
@@ -34,9 +73,6 @@ export const GroupProvider = ({ children }) => {
             formationDate: group.formation_date,
             noMembers: group.no_members,
             memberCount: group.memberCount ?? group.no_members ?? 0,
-            president: group.president_name,
-            secretary: group.secretary_name,
-            treasurer: group.treasurer_name,
             bank: group.bankmaster || null, // primary/latest bank
             banks: Array.isArray(group.banks) ? group.banks : [],
             raw: group,
@@ -122,18 +158,6 @@ export const GroupProvider = ({ children }) => {
             window.removeEventListener("online", handleOnline);
             window.removeEventListener("offline", handleOffline);
         };
-    }, []);
-
-    useEffect(() => {
-        // Load group on mount
-        setIsGroupLoading(true);
-        loadActiveGroup()
-            .catch((e) => {
-                console.error("Failed to load active group:", e);
-                _setCurrentGroup(null);
-            })
-            .finally(() => setIsGroupLoading(false));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (

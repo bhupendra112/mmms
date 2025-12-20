@@ -171,7 +171,6 @@ export async function initRecoveryDB() {
         }
 
         recoveryDB = db;
-        console.log('✅ Recovery Database initialized successfully');
         return recoveryDB;
     } catch (error) {
         console.error('❌ Error initializing database:', error);

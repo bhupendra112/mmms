@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp } from "lucide-react";
+import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X } from "lucide-react";
 import { Link } from "react-router-dom";
-import { getGroupBanks, getGroups, getGroupDetail } from "../../services/groupService";
+import { getGroupBanks, getGroups, getGroupDetail, getBankDetail } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
+import { getLoans } from "../../services/loanService";
+import { getRecoveries } from "../../services/recoveryService";
 
 export default function GroupManagement() {
     const [searchTerm, setSearchTerm] = useState("");
@@ -12,10 +14,24 @@ export default function GroupManagement() {
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
     const [selectedGroupData, setSelectedGroupData] = useState(null);
+    const [selectedGroupRaw, setSelectedGroupRaw] = useState(null); // Store raw group data for full details
     const [groupMembers, setGroupMembers] = useState([]);
     const [membersLoading, setMembersLoading] = useState(false);
     const [groupBanks, setGroupBanks] = useState([]);
     const [banksLoading, setBanksLoading] = useState(false);
+    const [selectedBank, setSelectedBank] = useState(null);
+    const [bankTransactions, setBankTransactions] = useState([]);
+    const [bankDetailLoading, setBankDetailLoading] = useState(false);
+    const [showBankModal, setShowBankModal] = useState(false);
+    const [financeData, setFinanceData] = useState({
+        totalSavings: 0,
+        totalLoans: 0,
+        totalFD: 0,
+        totalInterest: 0,
+        totalYogdan: 0,
+        totalRecovery: 0,
+        loading: false,
+    });
 
     const mapGroupToUI = (g) => {
         if (!g) return null;
@@ -28,9 +44,6 @@ export default function GroupManagement() {
             cluster: g.cluster || g.cluster_name,
             formationDate: g.formation_date ? new Date(g.formation_date).toLocaleDateString("en-GB") : "",
             noMembers: g.memberCount ?? g.no_members ?? 0,
-            president: g.president_name || "",
-            secretary: g.secretary_name || "",
-            treasurer: g.treasurer_name || "",
             bankDetails: bank
                 ? {
                     bankName: bank.bank_name,
@@ -40,13 +53,7 @@ export default function GroupManagement() {
                 }
                 : null,
             members: [], // TODO: will be loaded when member APIs are wired
-            finance: {
-                totalSavings: 0,
-                totalLoans: 0,
-                totalFD: 0,
-                totalInterest: 0,
-                totalRecovery: 0,
-            },
+            // Finance will be calculated dynamically
         };
     };
 
@@ -81,6 +88,8 @@ export default function GroupManagement() {
         try {
             setDetailLoading(true);
             const res = await getGroupDetail(groupId);
+            // Store raw data for full details
+            setSelectedGroupRaw(res?.data || null);
             const mapped = mapGroupToUI(res?.data);
             if (mapped) setSelectedGroupData(mapped);
         } catch (e) {
@@ -115,6 +124,109 @@ export default function GroupManagement() {
             setGroupBanks([]);
         } finally {
             setBanksLoading(false);
+        }
+    };
+
+    const handleViewBank = async (bankId) => {
+        try {
+            setBankDetailLoading(true);
+            setShowBankModal(true);
+            const res = await getBankDetail(bankId);
+            setSelectedBank(res?.data?.bank || null);
+            setBankTransactions(res?.data?.transactions || []);
+        } catch (error) {
+            console.error("Failed to load bank detail:", error);
+            alert("Failed to load bank details");
+        } finally {
+            setBankDetailLoading(false);
+        }
+    };
+
+    const calculateFinance = async (groupId) => {
+        if (!groupId) return;
+        try {
+            setFinanceData((prev) => ({ ...prev, loading: true }));
+
+            // Load members, loans, and recoveries in parallel
+            const [membersRes, loansRes, recoveriesRes] = await Promise.all([
+                getMembersByGroup(groupId).catch(() => ({ data: [] })),
+                getLoans(groupId).catch((e) => {
+                    console.error("Failed to load loans:", e);
+                    return { data: [] };
+                }),
+                getRecoveries(groupId).catch((e) => {
+                    console.error("Failed to load recoveries:", e);
+                    return { data: [] };
+                }),
+            ]);
+
+            // Handle API response structure: services return { success, message, data: [...] }
+            // So we access .data to get the actual array
+            const members = Array.isArray(membersRes?.data) ? membersRes.data : [];
+            const loans = Array.isArray(loansRes?.data) ? loansRes.data : [];
+            const recoveries = Array.isArray(recoveriesRes?.data) ? recoveriesRes.data : [];
+
+            // Calculate totals from members (existing member financial data)
+            let totalSavings = 0;
+            let totalLoans = 0;
+            let totalFD = 0;
+            let totalInterest = 0;
+            let totalYogdan = 0;
+
+            members.forEach((member) => {
+                // Opening savings
+                totalSavings += parseFloat(member.openingSaving || 0);
+
+                // Loan details
+                if (member.loanDetails?.amount) {
+                    totalLoans += parseFloat(member.loanDetails.amount);
+                }
+                if (member.loanDetails?.overdueInterest) {
+                    totalInterest += parseFloat(member.loanDetails.overdueInterest);
+                }
+
+                // FD details
+                if (member.fdDetails?.amount) {
+                    totalFD += parseFloat(member.fdDetails.amount);
+                }
+
+                // Opening Yogdan
+                totalYogdan += parseFloat(member.openingYogdan || 0);
+            });
+
+            // Add loans from LoanMaster (approved loans)
+            loans.forEach((loan) => {
+                if (loan.status === "approved") {
+                    if (loan.transactionType === "Loan") {
+                        totalLoans += parseFloat(loan.amount || 0);
+                    } else if (loan.transactionType === "Saving") {
+                        totalSavings += parseFloat(loan.amount || 0);
+                    } else if (loan.transactionType === "FD") {
+                        totalFD += parseFloat(loan.amount || 0);
+                    }
+                }
+            });
+
+            // Calculate total recovery from RecoveryMaster
+            let totalRecovery = 0;
+            recoveries.forEach((recovery) => {
+                if (recovery.status === "approved" && recovery.totals) {
+                    totalRecovery += parseFloat(recovery.totals.totalAmount || 0);
+                }
+            });
+
+            setFinanceData({
+                totalSavings,
+                totalLoans,
+                totalFD,
+                totalInterest,
+                totalYogdan,
+                totalRecovery,
+                loading: false,
+            });
+        } catch (e) {
+            console.error("Failed to calculate finance:", e);
+            setFinanceData((prev) => ({ ...prev, loading: false }));
         }
     };
 
@@ -168,6 +280,7 @@ export default function GroupManagement() {
                                         loadGroupDetail(group.id);
                                         loadGroupMembers(group.id);
                                         loadBanks(group.id);
+                                        calculateFinance(group.id);
                                     }}
                                     className={`p-4 border-b cursor-pointer transition-colors ${selectedGroup === group.id
                                         ? "bg-blue-50 border-l-4 border-l-blue-600"
@@ -249,35 +362,161 @@ export default function GroupManagement() {
                             </div>
 
                             {/* Tab Content */}
-                            {activeTab === "overview" && (
-                                <div className="bg-white rounded-lg shadow-md p-6">
-                                    <h3 className="text-xl font-semibold text-gray-800 mb-4">Group Overview</h3>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                        <div className="p-4 bg-gray-50 rounded-lg">
-                                            <p className="text-sm text-gray-600">Formation Date</p>
-                                            <p className="font-semibold text-gray-800">{selectedGroupData.formationDate}</p>
-                                        </div>
-                                        <div className="p-4 bg-gray-50 rounded-lg">
-                                            <p className="text-sm text-gray-600">Total Members</p>
-                                            <p className="font-semibold text-gray-800">{selectedGroupData.noMembers}</p>
-                                        </div>
-                                        <div className="p-4 bg-gray-50 rounded-lg">
-                                            <p className="text-sm text-gray-600">Cluster</p>
-                                            <p className="font-semibold text-gray-800">{selectedGroupData.cluster}</p>
-                                        </div>
-                                        <div className="p-4 bg-gray-50 rounded-lg">
-                                            <p className="text-sm text-gray-600">President</p>
-                                            <p className="font-semibold text-gray-800">{selectedGroupData.president}</p>
-                                        </div>
-                                        <div className="p-4 bg-gray-50 rounded-lg">
-                                            <p className="text-sm text-gray-600">Secretary</p>
-                                            <p className="font-semibold text-gray-800">{selectedGroupData.secretary}</p>
-                                        </div>
-                                        <div className="p-4 bg-gray-50 rounded-lg">
-                                            <p className="text-sm text-gray-600">Treasurer</p>
-                                            <p className="font-semibold text-gray-800">{selectedGroupData.treasurer}</p>
+                            {activeTab === "overview" && selectedGroupRaw && (
+                                <div className="space-y-6">
+                                    {/* Basic Group Information */}
+                                    <div className="bg-white rounded-lg shadow-md p-6">
+                                        <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Basic Group Information</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Group Name</p>
+                                                <p className="font-semibold text-gray-800">{selectedGroupRaw.group_name || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Group Code</p>
+                                                <p className="font-semibold text-gray-800">{selectedGroupRaw.group_code || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Village</p>
+                                                <p className="font-semibold text-gray-800">{selectedGroupRaw.village || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Cluster Name</p>
+                                                <p className="font-semibold text-gray-800">{selectedGroupRaw.cluster_name || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Number of Members</p>
+                                                <p className="font-semibold text-gray-800">{selectedGroupRaw.no_members || selectedGroupRaw.memberCount || 0}</p>
+                                            </div>
                                         </div>
                                     </div>
+
+                                    {/* Formation & Meeting Details */}
+                                    <div className="bg-white rounded-lg shadow-md p-6">
+                                        <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Formation & Meeting Details</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {selectedGroupRaw.formation_date && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Formation Date</p>
+                                                    <p className="font-semibold text-gray-800">
+                                                        {new Date(selectedGroupRaw.formation_date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                                                    </p>
+                                                </div>
+                                            )}
+                                            {selectedGroupRaw.meeting_date_1_day && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Meeting Date 1 - Day</p>
+                                                    <p className="font-semibold text-gray-800">{selectedGroupRaw.meeting_date_1_day}</p>
+                                                </div>
+                                            )}
+                                            {selectedGroupRaw.meeting_date_2_day && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Meeting Date 2 - Day</p>
+                                                    <p className="font-semibold text-gray-800">{selectedGroupRaw.meeting_date_2_day}</p>
+                                                </div>
+                                            )}
+                                            {selectedGroupRaw.meeting_date_2_time && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Meeting Time</p>
+                                                    <p className="font-semibold text-gray-800">{selectedGroupRaw.meeting_date_2_time}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Office Bearers */}
+                                    {selectedGroupRaw.mitan_name && (
+                                        <div className="bg-white rounded-lg shadow-md p-6">
+                                            <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Office Bearers</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Mitan Name</p>
+                                                    <p className="font-semibold text-gray-800">{selectedGroupRaw.mitan_name}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Financial Information */}
+                                    {(selectedGroupRaw.saving_per_member || selectedGroupRaw.membership_fees || selectedGroupRaw.sahyog_rashi || selectedGroupRaw.shar_capital || selectedGroupRaw.Mship_Group) && (
+                                        <div className="bg-white rounded-lg shadow-md p-6">
+                                            <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Financial Information</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {selectedGroupRaw.saving_per_member && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-1">Saving Per Member</p>
+                                                        <p className="font-semibold text-gray-800">₹{selectedGroupRaw.saving_per_member.toLocaleString()}</p>
+                                                    </div>
+                                                )}
+                                                {selectedGroupRaw.membership_fees && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-1">Membership Fees</p>
+                                                        <p className="font-semibold text-gray-800">₹{selectedGroupRaw.membership_fees.toLocaleString()}</p>
+                                                    </div>
+                                                )}
+                                                {selectedGroupRaw.sahyog_rashi && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-1">Sahyog Rashi</p>
+                                                        <p className="font-semibold text-gray-800">{selectedGroupRaw.sahyog_rashi}</p>
+                                                    </div>
+                                                )}
+                                                {selectedGroupRaw.shar_capital && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-1">Share Capital</p>
+                                                        <p className="font-semibold text-gray-800">{selectedGroupRaw.shar_capital}</p>
+                                                    </div>
+                                                )}
+                                                {selectedGroupRaw.Mship_Group && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-1">Membership Group</p>
+                                                        <p className="font-semibold text-gray-800">{selectedGroupRaw.Mship_Group}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Government Project Information */}
+                                    {(selectedGroupRaw.govt_linked || selectedGroupRaw.govt_project_type) && (
+                                        <div className="bg-white rounded-lg shadow-md p-6">
+                                            <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Government Project Information</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {selectedGroupRaw.govt_linked && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-1">Linked with Govt Project?</p>
+                                                        <p className="font-semibold text-gray-800">{selectedGroupRaw.govt_linked}</p>
+                                                    </div>
+                                                )}
+                                                {selectedGroupRaw.govt_project_type && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-1">Project Type</p>
+                                                        <p className="font-semibold text-gray-800">{selectedGroupRaw.govt_project_type}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Additional Information */}
+                                    {(selectedGroupRaw.other || selectedGroupRaw.remark) && (
+                                        <div className="bg-white rounded-lg shadow-md p-6">
+                                            <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Additional Information</h3>
+                                            <div className="space-y-4">
+                                                {selectedGroupRaw.other && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-2">Other Information</p>
+                                                        <p className="font-semibold text-gray-800 whitespace-pre-wrap">{selectedGroupRaw.other}</p>
+                                                    </div>
+                                                )}
+                                                {selectedGroupRaw.remark && (
+                                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-sm text-gray-600 mb-2">Remarks</p>
+                                                        <p className="font-semibold text-gray-800 whitespace-pre-wrap">{selectedGroupRaw.remark}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -365,6 +604,7 @@ export default function GroupManagement() {
                                                         <th className="border p-3 text-left font-semibold text-gray-700">IFSC</th>
                                                         <th className="border p-3 text-left font-semibold text-gray-700">Type</th>
                                                         <th className="border p-3 text-left font-semibold text-gray-700">Branch</th>
+                                                        <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -375,6 +615,15 @@ export default function GroupManagement() {
                                                             <td className="border p-3 text-gray-600">{b.ifsc || "-"}</td>
                                                             <td className="border p-3 text-gray-600">{b.account_type}</td>
                                                             <td className="border p-3 text-gray-600">{b.branch_name || "-"}</td>
+                                                            <td className="border p-3 text-center">
+                                                                <button
+                                                                    onClick={() => handleViewBank(b._id)}
+                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm mx-auto"
+                                                                >
+                                                                    <Eye size={14} />
+                                                                    View
+                                                                </button>
+                                                            </td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
@@ -399,78 +648,136 @@ export default function GroupManagement() {
                                 <div className="bg-white rounded-lg shadow-md p-6">
                                     <div className="flex items-center justify-between mb-4">
                                         <h3 className="text-xl font-semibold text-gray-800">Finance Summary</h3>
-                                        <Link
-                                            to="/admin/demand-recovery"
-                                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                                        >
-                                            <DollarSign size={16} />
-                                            Manage Recovery
-                                        </Link>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => selectedGroup && calculateFinance(selectedGroup)}
+                                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                disabled={financeData.loading}
+                                            >
+                                                {financeData.loading ? "Calculating..." : "Refresh"}
+                                            </button>
+                                            <Link
+                                                to="/admin/demand-recovery"
+                                                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                            >
+                                                <DollarSign size={16} />
+                                                Manage Recovery
+                                            </Link>
+                                        </div>
                                     </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                        <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Total Savings</p>
-                                                    <p className="text-2xl font-bold text-gray-800">₹{selectedGroupData.finance.totalSavings.toLocaleString()}</p>
-                                                </div>
-                                                <TrendingUp className="text-blue-600" size={24} />
-                                            </div>
+                                    {financeData.loading ? (
+                                        <div className="text-center py-8">
+                                            <p className="text-gray-600">Calculating finance details...</p>
                                         </div>
-                                        <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Total Loans</p>
-                                                    <p className="text-2xl font-bold text-gray-800">₹{selectedGroupData.finance.totalLoans.toLocaleString()}</p>
+                                    ) : (
+                                        <>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                                                <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="text-sm text-gray-600">Total Savings</p>
+                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalSavings.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1">From members + loan transactions</p>
+                                                        </div>
+                                                        <TrendingUp className="text-blue-600" size={24} />
+                                                    </div>
                                                 </div>
-                                                <DollarSign className="text-green-600" size={24} />
-                                            </div>
-                                        </div>
-                                        <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Total FD</p>
-                                                    <p className="text-2xl font-bold text-gray-800">₹{selectedGroupData.finance.totalFD.toLocaleString()}</p>
+                                                <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="text-sm text-gray-600">Total Loans</p>
+                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalLoans.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1">From members + approved loans</p>
+                                                        </div>
+                                                        <DollarSign className="text-green-600" size={24} />
+                                                    </div>
                                                 </div>
-                                                <Banknote className="text-purple-600" size={24} />
-                                            </div>
-                                        </div>
-                                        <div className="p-4 bg-orange-50 rounded-lg border-l-4 border-orange-500">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Total Interest</p>
-                                                    <p className="text-2xl font-bold text-gray-800">₹{selectedGroupData.finance.totalInterest.toLocaleString()}</p>
+                                                <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="text-sm text-gray-600">Total FD</p>
+                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalFD.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1">From members + FD transactions</p>
+                                                        </div>
+                                                        <Banknote className="text-purple-600" size={24} />
+                                                    </div>
                                                 </div>
-                                                <TrendingUp className="text-orange-600" size={24} />
-                                            </div>
-                                        </div>
-                                        <div className="p-4 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Total Recovery</p>
-                                                    <p className="text-2xl font-bold text-gray-800">₹{selectedGroupData.finance.totalRecovery.toLocaleString()}</p>
+                                                <div className="p-4 bg-orange-50 rounded-lg border-l-4 border-orange-500">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="text-sm text-gray-600">Total Interest</p>
+                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalInterest.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1">Overdue interest from members</p>
+                                                        </div>
+                                                        <TrendingUp className="text-orange-600" size={24} />
+                                                    </div>
                                                 </div>
-                                                <DollarSign className="text-yellow-600" size={24} />
+                                                <div className="p-4 bg-indigo-50 rounded-lg border-l-4 border-indigo-500">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="text-sm text-gray-600">Total Yogdan</p>
+                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalYogdan.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1">Opening Yogdan from members</p>
+                                                        </div>
+                                                        <DollarSign className="text-indigo-600" size={24} />
+                                                    </div>
+                                                </div>
+                                                <div className="p-4 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="text-sm text-gray-600">Total Recovery</p>
+                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalRecovery.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1">From approved recovery sessions</p>
+                                                        </div>
+                                                        <DollarSign className="text-yellow-600" size={24} />
+                                                    </div>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div className="p-4 bg-gray-50 rounded-lg border-l-4 border-gray-500">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Net Total</p>
-                                                    <p className="text-2xl font-bold text-gray-800">
+
+                                            {/* Net Total and Summary */}
+                                            <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg p-6 border-2 border-gray-300">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <h4 className="text-lg font-semibold text-gray-800">Net Financial Position</h4>
+                                                    <TrendingUp className="text-gray-600" size={28} />
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <p className="text-sm text-gray-600 mb-2">Total Assets</p>
+                                                        <p className="text-3xl font-bold text-green-700">
+                                                            ₹{(
+                                                                financeData.totalSavings +
+                                                                financeData.totalFD +
+                                                                financeData.totalRecovery +
+                                                                financeData.totalYogdan
+                                                            ).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-sm text-gray-600 mb-2">Total Liabilities</p>
+                                                        <p className="text-3xl font-bold text-red-700">
+                                                            ₹{(
+                                                                financeData.totalLoans +
+                                                                financeData.totalInterest
+                                                            ).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-4 pt-4 border-t border-gray-300">
+                                                    <p className="text-sm text-gray-600 mb-1">Net Balance</p>
+                                                    <p className={`text-4xl font-bold ${(financeData.totalSavings + financeData.totalFD + financeData.totalRecovery + financeData.totalYogdan) -
+                                                        (financeData.totalLoans + financeData.totalInterest) >= 0
+                                                        ? "text-green-700"
+                                                        : "text-red-700"
+                                                        }`}>
                                                         ₹{(
-                                                            selectedGroupData.finance.totalSavings +
-                                                            selectedGroupData.finance.totalLoans +
-                                                            selectedGroupData.finance.totalFD +
-                                                            selectedGroupData.finance.totalInterest +
-                                                            selectedGroupData.finance.totalRecovery
+                                                            (financeData.totalSavings + financeData.totalFD + financeData.totalRecovery + financeData.totalYogdan) -
+                                                            (financeData.totalLoans + financeData.totalInterest)
                                                         ).toLocaleString()}
                                                     </p>
                                                 </div>
-                                                <TrendingUp className="text-gray-600" size={24} />
                                             </div>
-                                        </div>
-                                    </div>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -482,6 +789,204 @@ export default function GroupManagement() {
                     )}
                 </div>
             </div>
+
+            {/* Bank Detail Modal */}
+            {showBankModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-white border-b p-6 flex items-center justify-between">
+                            <h2 className="text-2xl font-bold text-gray-800">Bank Details</h2>
+                            <button
+                                onClick={() => {
+                                    setShowBankModal(false);
+                                    setSelectedBank(null);
+                                    setBankTransactions([]);
+                                }}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="p-6">
+                            {bankDetailLoading ? (
+                                <div className="text-center py-12">
+                                    <p className="text-gray-600">Loading bank details...</p>
+                                </div>
+                            ) : selectedBank ? (
+                                <>
+                                    {/* Bank Information */}
+                                    <div className="mb-8">
+                                        <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Bank Information</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Bank Name</p>
+                                                <p className="font-semibold text-gray-800">{selectedBank.bank_name || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Account Number</p>
+                                                <p className="font-semibold text-gray-800">{selectedBank.account_no || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">IFSC Code</p>
+                                                <p className="font-semibold text-gray-800">{selectedBank.ifsc || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Branch Name</p>
+                                                <p className="font-semibold text-gray-800">{selectedBank.branch_name || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Account Type</p>
+                                                <p className="font-semibold text-gray-800">{selectedBank.account_type || "-"}</p>
+                                            </div>
+                                            <div className="p-4 bg-gray-50 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Short Name</p>
+                                                <p className="font-semibold text-gray-800">{selectedBank.short_name || "-"}</p>
+                                            </div>
+                                            {selectedBank.ac_open_date && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Account Open Date</p>
+                                                    <p className="font-semibold text-gray-800">
+                                                        {new Date(selectedBank.ac_open_date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                                                    </p>
+                                                </div>
+                                            )}
+                                            {selectedBank.opening_balance !== undefined && selectedBank.opening_balance !== null && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Opening Balance</p>
+                                                    <p className="font-semibold text-gray-800">₹{selectedBank.opening_balance.toLocaleString()}</p>
+                                                </div>
+                                            )}
+                                            {selectedBank.open_bal_curr !== undefined && selectedBank.open_bal_curr !== null && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Current Opening Balance</p>
+                                                    <p className="font-semibold text-gray-800">₹{selectedBank.open_bal_curr.toLocaleString()}</p>
+                                                </div>
+                                            )}
+                                            {selectedBank.cc_limit !== undefined && selectedBank.cc_limit !== null && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">CC Limit</p>
+                                                    <p className="font-semibold text-gray-800">₹{selectedBank.cc_limit.toLocaleString()}</p>
+                                                </div>
+                                            )}
+                                            {selectedBank.dp_limit !== undefined && selectedBank.dp_limit !== null && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">DP Limit</p>
+                                                    <p className="font-semibold text-gray-800">₹{selectedBank.dp_limit.toLocaleString()}</p>
+                                                </div>
+                                            )}
+                                            {selectedBank.fd_mat_dt && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">FD Maturity Date</p>
+                                                    <p className="font-semibold text-gray-800">
+                                                        {new Date(selectedBank.fd_mat_dt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                                                    </p>
+                                                </div>
+                                            )}
+                                            {selectedBank.flg_acclosed && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Account Closed</p>
+                                                    <p className="font-semibold text-gray-800">{selectedBank.flg_acclosed}</p>
+                                                </div>
+                                            )}
+                                            {selectedBank.acclosed_dt && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Account Closed Date</p>
+                                                    <p className="font-semibold text-gray-800">
+                                                        {new Date(selectedBank.acclosed_dt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                                                    </p>
+                                                </div>
+                                            )}
+                                            {selectedBank.govt_linked && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Govt Linked</p>
+                                                    <p className="font-semibold text-gray-800">{selectedBank.govt_linked}</p>
+                                                </div>
+                                            )}
+                                            {selectedBank.govt_project_type && (
+                                                <div className="p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-sm text-gray-600 mb-1">Project Type</p>
+                                                    <p className="font-semibold text-gray-800">{selectedBank.govt_project_type}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Transactions Table */}
+                                    <div>
+                                        <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">
+                                            Transactions ({bankTransactions.length})
+                                        </h3>
+                                        {bankTransactions.length > 0 ? (
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full border-collapse">
+                                                    <thead>
+                                                        <tr className="bg-gray-100">
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Date</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Type</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Transaction Type</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Member</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Purpose</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Amount</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Payment Mode</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {bankTransactions.map((tx) => (
+                                                            <tr key={tx.id} className="hover:bg-gray-50">
+                                                                <td className="border p-3 text-gray-800">
+                                                                    {tx.date
+                                                                        ? new Date(tx.date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
+                                                                        : tx.createdAt
+                                                                            ? new Date(tx.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
+                                                                            : "-"}
+                                                                </td>
+                                                                <td className="border p-3 text-gray-800">
+                                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.type === "Loan" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"
+                                                                        }`}>
+                                                                        {tx.type}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="border p-3 text-gray-800">{tx.transactionType || "-"}</td>
+                                                                <td className="border p-3 text-gray-800">
+                                                                    {tx.memberName || "-"}
+                                                                    {tx.memberCode && <span className="text-xs text-gray-500 ml-1">({tx.memberCode})</span>}
+                                                                    {tx.isGroupLoan && <span className="text-xs text-blue-600 ml-1">[Group]</span>}
+                                                                </td>
+                                                                <td className="border p-3 text-gray-800">{tx.purpose || "-"}</td>
+                                                                <td className="border p-3 text-right font-semibold text-gray-800">₹{tx.amount?.toLocaleString() || "0"}</td>
+                                                                <td className="border p-3 text-gray-800">{tx.paymentMode || "-"}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                    <tfoot>
+                                                        <tr className="bg-gray-100 font-semibold">
+                                                            <td colSpan={5} className="border p-3 text-right text-gray-700">Total:</td>
+                                                            <td className="border p-3 text-right text-gray-800">
+                                                                ₹{bankTransactions.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0).toLocaleString()}
+                                                            </td>
+                                                            <td className="border p-3"></td>
+                                                        </tr>
+                                                    </tfoot>
+                                                </table>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-12 bg-gray-50 rounded-lg">
+                                                <Banknote size={48} className="mx-auto mb-4 text-gray-400" />
+                                                <p className="text-gray-600">No transactions found for this bank account</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="text-center py-12">
+                                    <p className="text-gray-600">Bank details not found</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

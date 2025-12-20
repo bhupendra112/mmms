@@ -58,7 +58,7 @@ const Members = () => {
       const name = String(m.Member_Nm || "").toLowerCase();
       const code = String(m.Member_Id || "").toLowerCase();
       return name.includes(q) || code.includes(q);
-    });
+  });
   }, [members, pendingMembers, search]);
 
   return (
@@ -134,12 +134,12 @@ const Members = () => {
                 {m.__pending ? (
                   <span className="text-gray-500 text-sm">Waiting</span>
                 ) : (
-                  <Link
+                <Link
                     to={`/group/members/${m._id}`}
-                    className="bg-blue-600 text-white px-3 py-1 rounded"
-                  >
-                    View
-                  </Link>
+                  className="bg-blue-600 text-white px-3 py-1 rounded"
+                >
+                  View
+                </Link>
                 )}
               </td>
             </tr>

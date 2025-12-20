@@ -10,10 +10,6 @@ const GroupMasterSchema = new mongoose.Schema({
     no_members: { type: Number },
     formation_date: { type: Date },
 
-    president_name: { type: String },
-    secretary_name: { type: String },
-    treasurer_name: { type: String },
-
     cluster: { type: String },
 
     saving_per_member: { type: Number },
@@ -22,8 +18,9 @@ const GroupMasterSchema = new mongoose.Schema({
 
     mitan_name: { type: String },
 
-    meeting_date_1: { type: Date },
-    meeting_date_2: { type: Date },
+    meeting_date_1_day: { type: Number, min: 1, max: 31 },
+    meeting_date_2_day: { type: Number, min: 1, max: 31 },
+    meeting_date_2_time: { type: String },
 
     sahyog_rashi: { type: String },
     shar_capital: { type: String },
@@ -43,6 +40,10 @@ const GroupMasterSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: "BankMaster"
     }],
+
+    // Group login fields
+    loginEnabled: { type: Boolean, default: true },
+    lastLoginAt: { type: Date },
 }, { timestamps: true });
 
 export default mongoose.model("GroupMaster", GroupMasterSchema);

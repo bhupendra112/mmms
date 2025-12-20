@@ -1,5 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { GroupProvider } from "./contexts/GroupContext";
+import { AdminProvider } from "./contexts/AdminContext";
+import ProtectedGroupRoute from "./components/ProtectedGroupRoute";
+import ProtectedAdminRoute from "./components/ProtectedAdminRoute";
 
 // Admin Components
 import AdminNavbar from "./components/admin/AdminNavbar";
@@ -32,52 +35,64 @@ import MemberRegistration from "./screens/MemberRegistration";
 import GroupBankMaster from "./screens/GroupBankMaster";
 import RegisterAdmin from "./screens/RegisterAdmin";
 import LoginAdmin from "./screens/LoginAdmin";
+import LoginGroup from "./screens/LoginGroup";
 
 function App() {
   return (
     <Router>
-      <Routes>
-        {/* Admin Application Routes */}
-        <Route path="/admin" element={<AdminNavbar />}>
-          <Route index element={<AdminDashboard />} />
-          <Route path="group-management" element={<GroupManagement />} />
-          <Route path="bank-details" element={<BankDetails />} />
-          <Route path="create-group" element={<CreateGroup />} />
-          <Route path="members" element={<AdminMembers />} />
-          <Route path="member-registration" element={<MemberRegistration />} />
-          <Route path="members/:id" element={<MemberDashboard />} />
-          <Route path="demand-recovery" element={<DemandRecoveryGroup />} />
-          <Route path="loan-taking" element={<AdminLoanTaking />} />
-          <Route path="loan-management" element={<AdminLoanManagement />} />
-          <Route path="approvals" element={<ApprovalManagement />} />
-          <Route path="settings" element={<AdminSettings />} />
-        </Route>
+      <AdminProvider>
+        <Routes>
+          {/* Admin Application Routes */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedAdminRoute>
+                <AdminNavbar />
+              </ProtectedAdminRoute>
+            }
+          >
+            <Route index element={<AdminDashboard />} />
+            <Route path="group-management" element={<GroupManagement />} />
+            <Route path="bank-details" element={<BankDetails />} />
+            <Route path="create-group" element={<CreateGroup />} />
+            <Route path="members" element={<AdminMembers />} />
+            <Route path="member-registration" element={<MemberRegistration />} />
+            <Route path="members/:id" element={<MemberDashboard />} />
+            <Route path="demand-recovery" element={<DemandRecoveryGroup />} />
+            <Route path="loan-taking" element={<AdminLoanTaking />} />
+            <Route path="loan-management" element={<AdminLoanManagement />} />
+            <Route path="approvals" element={<ApprovalManagement />} />
+            <Route path="settings" element={<AdminSettings />} />
+          </Route>
 
-        {/* Group Application Routes */}
-        <Route
-          path="/group"
-          element={
-            <GroupProvider>
-              <GroupNavbar />
-            </GroupProvider>
-          }
-        >
-          <Route index element={<GroupDashboard />} />
-          <Route path="members" element={<Members />} />
-          <Route path="member-registration" element={<MemberRegistration />} />
-          <Route path="members/:id" element={<MemberDashboard />} />
-          <Route path="demand-recovery" element={<DemandRecoveryGroup />} />
-          <Route path="ledger" element={<GroupLedger />} />
-          <Route path="loans" element={<LoanManagement />} />
-          <Route path="loan-taking" element={<LoanTaking />} />
-        </Route>
+          {/* Group Application Routes */}
+          <Route
+            path="/group"
+            element={
+              <ProtectedGroupRoute>
+                <GroupProvider>
+                  <GroupNavbar />
+                </GroupProvider>
+              </ProtectedGroupRoute>
+            }
+          >
+            <Route index element={<GroupDashboard />} />
+            <Route path="members" element={<Members />} />
+            <Route path="member-registration" element={<MemberRegistration />} />
+            <Route path="members/:id" element={<MemberDashboard />} />
+            <Route path="demand-recovery" element={<DemandRecoveryGroup />} />
+            <Route path="ledger" element={<GroupLedger />} />
+            <Route path="loans" element={<LoanManagement />} />
+            <Route path="loan-taking" element={<LoanTaking />} />
+          </Route>
 
-        {/* Auth Routes (No Layout) */}
-        <Route path="/admin/register" element={<RegisterAdmin />} />
-        <Route path="/login-admin" element={<LoginAdmin />} />
+          {/* Auth Routes (No Layout) */}
+          <Route path="/admin/register" element={<RegisterAdmin />} />
+          <Route path="/login-admin" element={<LoginAdmin />} />
+          <Route path="/group/login" element={<LoginGroup />} />
 
-        {/* Legacy Routes (keeping for backward compatibility) */}
-        {/**    <Route path="/" element={<Navbar />}>
+          {/* Legacy Routes (keeping for backward compatibility) */}
+          {/**    <Route path="/" element={<Navbar />}>
           <Route index element={<Dashboard />} />
           <Route path="members" element={<Members />} />
           <Route path="members/:id" element={<MemberDashboard />} />
@@ -88,9 +103,11 @@ function App() {
           <Route path="register-group" element={<GroupBankMaster />} />
         </Route>
 */}
-        {/* Default redirect to admin */}
-        <Route path="*" element={<Navigate to="/admin" replace />} />
-      </Routes>
+          {/* Default redirect to group panel */}
+          <Route path="/" element={<Navigate to="/group" replace />} />
+          <Route path="*" element={<Navigate to="/group" replace />} />
+        </Routes>
+      </AdminProvider>
     </Router>
   );
 }

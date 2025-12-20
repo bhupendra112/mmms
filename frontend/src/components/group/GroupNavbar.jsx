@@ -1,5 +1,7 @@
 import React, { useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useDispatch } from "react-redux";
+import { logoutGroup } from "../../store/groupAuthSlice";
 import {
     Bell,
     User,
@@ -11,11 +13,19 @@ import {
     DollarSign,
     Settings,
     FileText,
+    LogOut,
 } from "lucide-react";
 
 export default function GroupNavbar() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const location = useLocation();
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
+
+    const handleLogout = () => {
+        dispatch(logoutGroup());
+        navigate("/group/login", { replace: true });
+    };
 
     const menuItems = [
         {
@@ -90,7 +100,7 @@ export default function GroupNavbar() {
                     ))}
                 </div>
 
-                <div className="border-t border-gray-800 p-4">
+                <div className="border-t border-gray-800 p-4 space-y-2">
                     <Link
                         to="/group/settings"
                         className="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-gray-800 transition-colors"
@@ -98,6 +108,13 @@ export default function GroupNavbar() {
                         <Settings size={18} />
                         <span>Settings</span>
                     </Link>
+                    <button
+                        onClick={handleLogout}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-red-600 transition-colors text-gray-300"
+                    >
+                        <LogOut size={18} />
+                        <span>Logout</span>
+                    </button>
                 </div>
             </aside>
 

@@ -5,7 +5,6 @@ import Admin from "../model/admin.js";
 const DB_URL = "mongodb://127.0.0.1:27017/mmms";
 
 mongoose.connect(DB_URL).then(() => {
-    console.log("✅ MongoDB Connected");
     createAdmin();
 });
 
@@ -14,7 +13,6 @@ async function createAdmin() {
         const exists = await Admin.findOne({ email: "admin@example.com" });
 
         if (exists) {
-            console.log("⚠ Admin already exists. No new admin created.");
             return mongoose.connection.close();
         }
 
@@ -25,9 +23,7 @@ async function createAdmin() {
             email: "admin@example.com",
             password: hashed
         });
-
-        console.log("🎉 Hardcoded Admin Created Successfully");
     } catch (e) {
-        console.log("❌ Error:", e);
+        // Error creating admin
     }
 }

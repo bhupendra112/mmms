@@ -1,39 +1,143 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Users, DollarSign, FileText, TrendingUp } from "lucide-react";
 import { useGroup } from "../../contexts/GroupContext";
+import { getMembersByGroup } from "../../services/memberService";
+import { getLoans } from "../../services/loanService";
+import { getRecoveries } from "../../services/recoveryService";
 
 export default function GroupDashboard() {
     const { currentGroup, isGroupLoading } = useGroup();
-    const stats = [
+    const [stats, setStats] = useState([
         {
             title: "Total Members",
-            value: "45",
+            value: "0",
             icon: Users,
             color: "bg-green-500",
-            change: "+3",
+            change: "+0",
         },
         {
             title: "Total Loans",
-            value: "12",
+            value: "0",
             icon: DollarSign,
             color: "bg-blue-500",
-            change: "+2",
+            change: "+0",
         },
         {
             title: "Transactions",
-            value: "234",
+            value: "0",
             icon: FileText,
             color: "bg-purple-500",
-            change: "+15",
+            change: "+0",
         },
         {
             title: "Recovery Rate",
-            value: "85%",
+            value: "0%",
             icon: TrendingUp,
             color: "bg-orange-500",
-            change: "+5%",
+            change: "+0%",
         },
-    ];
+    ]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        if (currentGroup?.id) {
+            loadDashboardStats();
+        } else if (!isGroupLoading) {
+            setLoading(false);
+        }
+    }, [currentGroup, isGroupLoading]);
+
+    const loadDashboardStats = async () => {
+        try {
+            setLoading(true);
+            setError("");
+
+            const [membersRes, loansRes, recoveriesRes] = await Promise.all([
+                getMembersByGroup(currentGroup.id).catch(() => ({ success: false, data: [] })),
+                getLoans(currentGroup.id).catch(() => ({ success: false, data: [] })),
+                getRecoveries(currentGroup.id).catch(() => ({ success: false, data: [] })),
+            ]);
+
+            // Calculate total members
+            const members = membersRes?.data || [];
+            const totalMembers = Array.isArray(members) ? members.length : 0;
+
+            // Calculate total loans (only loan transactions)
+            const loans = loansRes?.data || [];
+            const totalLoans = Array.isArray(loans)
+                ? loans.filter(loan => loan.transactionType === "Loan").length
+                : 0;
+
+            // Calculate total transactions (recovery sessions)
+            const recoveries = recoveriesRes?.data || [];
+            const totalTransactions = Array.isArray(recoveries) ? recoveries.length : 0;
+
+            // Calculate recovery rate
+            // Recovery rate = (members with at least one recovery / total members) * 100
+            let membersWithRecovery = 0;
+            const memberRecoverySet = new Set();
+
+            if (Array.isArray(recoveries)) {
+                recoveries.forEach(recovery => {
+                    if (recovery.recoveries && Array.isArray(recovery.recoveries)) {
+                        recovery.recoveries.forEach(memberRecovery => {
+                            const memberId = memberRecovery.memberId || memberRecovery.memberCode;
+                            if (memberId) {
+                                memberRecoverySet.add(memberId);
+                            }
+                        });
+                    }
+                });
+                membersWithRecovery = memberRecoverySet.size;
+            }
+
+            const recoveryRate = totalMembers > 0
+                ? Math.round((membersWithRecovery / totalMembers) * 100)
+                : 0;
+
+            // Format numbers
+            const formatNumber = (num) => {
+                return new Intl.NumberFormat("en-IN").format(num || 0);
+            };
+
+            setStats([
+                {
+                    title: "Total Members",
+                    value: formatNumber(totalMembers),
+                    icon: Users,
+                    color: "bg-green-500",
+                    change: "+0", // Can be enhanced with historical comparison
+                },
+                {
+                    title: "Total Loans",
+                    value: formatNumber(totalLoans),
+                    icon: DollarSign,
+                    color: "bg-blue-500",
+                    change: "+0",
+                },
+                {
+                    title: "Transactions",
+                    value: formatNumber(totalTransactions),
+                    icon: FileText,
+                    color: "bg-purple-500",
+                    change: "+0",
+                },
+                {
+                    title: "Recovery Rate",
+                    value: `${recoveryRate}%`,
+                    icon: TrendingUp,
+                    color: "bg-orange-500",
+                    change: "+0%",
+                },
+            ]);
+        } catch (err) {
+            console.error("Error loading dashboard stats:", err);
+            setError(err.message || "Failed to load dashboard statistics");
+        } finally {
+            setLoading(false);
+        }
+    };
 
     return (
         <div className="max-w-7xl mx-auto">
@@ -48,29 +152,43 @@ export default function GroupDashboard() {
                 </p>
             </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                {stats.map((stat, idx) => {
-                    const Icon = stat.icon;
-                    return (
-                        <div
-                            key={idx}
-                            className="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-gray-600 text-sm font-medium">{stat.title}</p>
-                                    <p className="text-3xl font-bold text-gray-800 mt-2">{stat.value}</p>
-                                    <p className="text-green-600 text-sm mt-1">{stat.change} from last month</p>
+            {error && (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-700">{error}</p>
+                </div>
+            )}
+
+            {loading || isGroupLoading ? (
+                <div className="flex items-center justify-center min-h-[400px]">
+                    <div className="text-gray-600">Loading dashboard statistics...</div>
+                </div>
+            ) : (
+                <>
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        {stats.map((stat, idx) => {
+                            const Icon = stat.icon;
+                            return (
+                                <div
+                                    key={idx}
+                                    className="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500 hover:shadow-lg transition-shadow"
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-gray-600 text-sm font-medium">{stat.title}</p>
+                                            <p className="text-3xl font-bold text-gray-800 mt-2">{stat.value}</p>
+                                            <p className="text-green-600 text-sm mt-1">{stat.change} from last month</p>
+                                        </div>
+                                        <div className={`${stat.color} p-3 rounded-full`}>
+                                            <Icon className="text-white" size={24} />
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className={`${stat.color} p-3 rounded-full`}>
-                                    <Icon className="text-white" size={24} />
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+                            );
+                        })}
+                    </div>
+                </>
+            )}
 
             {/* Quick Actions */}
             <div className="bg-white rounded-lg shadow-md p-6">

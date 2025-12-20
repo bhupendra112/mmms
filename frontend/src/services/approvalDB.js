@@ -82,7 +82,6 @@ export const initApprovalDB = async () => {
         }
 
         approvalDB = db;
-        console.log("✅ Approval database initialized");
         return db;
     } catch (error) {
         console.error("❌ Error initializing approval database:", error);

@@ -1,6 +1,6 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
-import { BankMaster, GroupMaster, Member } from "../../model/index.js";
+import { BankMaster, GroupMaster, Member, LoanMaster, RecoveryMaster } from "../../model/index.js";
 import { addBankValidationSchema } from "../../validation/adminValidation.js";
 
 export const registerGroup = async (req, res) => {
@@ -76,7 +76,6 @@ export const addBankDetail = async (req, res) => {
 
         return res.status(201).json({ success: true, message: "Bank added", data: newBank });
     } catch (error) {
-        console.error("addBankDetail error:", error);
         // handle Mongoose duplicate key differently if needed
         if (error.code === 11000) {
             return res.status(400).json({ success: false, message: "Duplicate key error", detail: error.keyValue });
@@ -170,6 +169,93 @@ export const getGroupByCode = async (req, res) => {
 
         const memberCount = await Member.countDocuments({ group: group._id });
         return apiResponse.success(res, "Group detail fetched successfully", { ...group, banks, memberCount });
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// GET: BANK DETAIL BY ID WITH TRANSACTIONS
+// ------------------------------------------------------------------
+export const getBankDetail = async (req, res) => {
+    try {
+        const { bankId } = req.params;
+        if (!bankId) {
+            return apiResponse.error(res, "Bank id is required", 400);
+        }
+
+        // Get bank details
+        const bank = await BankMaster.findById(bankId).lean();
+        if (!bank) {
+            return apiResponse.error(res, "Bank not found", 404);
+        }
+
+        // Get group ID if available
+        const groupId = bank.group_id;
+
+        // Get transactions related to this bank (filter by bankId - show all transactions with this bankId, regardless of payment mode)
+        let transactions = [];
+        if (groupId) {
+            // Get all loans/transactions for this group that are associated with this specific bank
+            // Include both Cash and Bank payment modes if bankId is set
+            const loanTransactions = await LoanMaster.find({
+                groupId: groupId,
+                bankId: bankId,
+                status: "approved"
+            }).sort({ date: -1, createdAt: -1 }).lean();
+
+            // Get all recoveries for this group that are online payments
+            const recoveryTransactions = await RecoveryMaster.find({
+                groupId: groupId,
+                status: "approved",
+                "totals.totalOnline": { $gt: 0 }
+            }).sort({ date: -1, createdAt: -1 }).lean();
+
+            // Format loan transactions
+            transactions = loanTransactions.map(tx => ({
+                id: tx._id,
+                type: "Loan",
+                transactionType: tx.transactionType,
+                date: tx.date,
+                amount: tx.amount,
+                paymentMode: tx.paymentMode,
+                purpose: tx.purpose,
+                memberName: tx.memberName || "Group Loan",
+                memberCode: tx.memberCode || "",
+                isGroupLoan: tx.isGroupLoan,
+                createdAt: tx.createdAt
+            }));
+
+            // Format recovery transactions
+            recoveryTransactions.forEach(rec => {
+                rec.recoveries.forEach(memberRec => {
+                    if (memberRec.paymentMode && memberRec.paymentMode.online && memberRec.total > 0) {
+                        transactions.push({
+                            id: `${rec._id}_${memberRec.memberId}`,
+                            type: "Recovery",
+                            transactionType: "Recovery",
+                            date: rec.date,
+                            amount: memberRec.total,
+                            paymentMode: "Bank",
+                            purpose: "Recovery",
+                            memberName: memberRec.memberName,
+                            memberCode: memberRec.memberCode,
+                            isGroupLoan: false,
+                            createdAt: rec.createdAt
+                        });
+                    }
+                });
+            });
+
+            // Sort all transactions by date (newest first)
+            transactions.sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt));
+        }
+
+        return apiResponse.success(res, "Bank detail fetched successfully", {
+            bank,
+            transactions,
+            transactionCount: transactions.length
+        });
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

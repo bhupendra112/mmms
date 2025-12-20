@@ -12,16 +12,13 @@ export default function CreateGroup() {
         village: "",
         no_members: "",
         formation_date: "",
-        president_name: "",
-        secretary_name: "",
-        treasurer_name: "",
-        cluster: "",
         saving_per_member: "",
         Mship_Group: "",
         membership_fees: "",
         mitan_name: "",
-        meeting_date_1: "",
-        meeting_date_2: "",
+        meeting_date_1_day: "",
+        meeting_date_2_day: "",
+        meeting_date_2_time: "",
         sahyog_rashi: "",
         shar_capital: "",
         other: "",
@@ -51,16 +48,13 @@ export default function CreateGroup() {
                 village: "",
                 no_members: "",
                 formation_date: "",
-                president_name: "",
-                secretary_name: "",
-                treasurer_name: "",
-                cluster: "",
                 saving_per_member: "",
                 Mship_Group: "",
                 membership_fees: "",
                 mitan_name: "",
-                meeting_date_1: "",
-                meeting_date_2: "",
+                meeting_date_1_day: "",
+                meeting_date_2_day: "",
+                meeting_date_2_time: "",
                 sahyog_rashi: "",
                 shar_capital: "",
                 other: "",
@@ -128,13 +122,6 @@ export default function CreateGroup() {
                         placeholder="Enter cluster name"
                     />
                     <Input
-                        label="Cluster"
-                        name="cluster"
-                        value={form.cluster}
-                        handleChange={handleChange}
-                        placeholder="Enter cluster"
-                    />
-                    <Input
                         type="number"
                         label="Number of Members"
                         name="no_members"
@@ -153,45 +140,46 @@ export default function CreateGroup() {
                         value={form.formation_date}
                         handleChange={handleChange}
                     />
-                    <Input
-                        type="date"
-                        label="Meeting Date 1"
-                        name="meeting_date_1"
-                        value={form.meeting_date_1}
-                        handleChange={handleChange}
+                    <div className="flex flex-col">
+                        <label className="font-semibold mb-1.5 text-gray-700 text-sm">Meeting Date 1 - Day</label>
+                        <input
+                            type="number"
+                            name="meeting_date_1_day"
+                            value={form.meeting_date_1_day || ""}
+                            onChange={handleChange}
+                            min="1"
+                            max="31"
+                            placeholder="Day (1-31)"
+                            className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
                     />
-                    <Input
-                        type="date"
-                        label="Meeting Date 2"
-                        name="meeting_date_2"
-                        value={form.meeting_date_2}
-                        handleChange={handleChange}
+                    </div>
+                    <div className="flex flex-col">
+                        <label className="font-semibold mb-1.5 text-gray-700 text-sm">Meeting Date 2 - Day</label>
+                        <input
+                            type="number"
+                            name="meeting_date_2_day"
+                            value={form.meeting_date_2_day || ""}
+                            onChange={handleChange}
+                            min="1"
+                            max="31"
+                            placeholder="Day (1-31)"
+                            className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
+                        />
+                    </div>
+                    <div className="flex flex-col">
+                        <label className="font-semibold mb-1.5 text-gray-700 text-sm">Meeting Time</label>
+                        <input
+                            type="time"
+                            name="meeting_date_2_time"
+                            value={form.meeting_date_2_time || ""}
+                            onChange={handleChange}
+                            className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
                     />
+                    </div>
                 </FormSection>
 
                 {/* Office Bearers */}
                 <FormSection title="Office Bearers" icon={Users}>
-                    <Input
-                        label="President Name"
-                        name="president_name"
-                        value={form.president_name}
-                        handleChange={handleChange}
-                        placeholder="Enter president name"
-                    />
-                    <Input
-                        label="Secretary Name"
-                        name="secretary_name"
-                        value={form.secretary_name}
-                        handleChange={handleChange}
-                        placeholder="Enter secretary name"
-                    />
-                    <Input
-                        label="Treasurer Name"
-                        name="treasurer_name"
-                        value={form.treasurer_name}
-                        handleChange={handleChange}
-                        placeholder="Enter treasurer name"
-                    />
                     <Input
                         label="Mitan Name"
                         name="mitan_name"
@@ -300,16 +288,13 @@ export default function CreateGroup() {
                                         village: "",
                                         no_members: "",
                                         formation_date: "",
-                                        president_name: "",
-                                        secretary_name: "",
-                                        treasurer_name: "",
-                                        cluster: "",
                                         saving_per_member: "",
                                         Mship_Group: "",
                                         membership_fees: "",
                                         mitan_name: "",
-                                        meeting_date_1: "",
-                                        meeting_date_2: "",
+                                        meeting_date_1_day: "",
+                                        meeting_date_2_day: "",
+                                        meeting_date_2_time: "",
                                         sahyog_rashi: "",
                                         shar_capital: "",
                                         other: "",

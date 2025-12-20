@@ -20,7 +20,8 @@ import {
 } from "../../services/recoveryDB";
 import { useGroup } from "../../contexts/GroupContext";
 import { createApprovalRequest } from "../../services/approvalDB";
-import { getGroups } from "../../services/groupService";
+import { registerLoan } from "../../services/loanService";
+import { getGroups, getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
 
 export default function LoanTaking() {
@@ -41,6 +42,8 @@ export default function LoanTaking() {
     const [selectedMember, setSelectedMember] = useState(null);
     const [transactionType, setTransactionType] = useState("");
     const [paymentMode, setPaymentMode] = useState("");
+    const [selectedBankId, setSelectedBankId] = useState("");
+    const [groupBanks, setGroupBanks] = useState([]);
     const [purpose, setPurpose] = useState("");
     const [amount, setAmount] = useState("");
     const [bachanPathraPhoto, setBachanPathraPhoto] = useState(null);
@@ -108,6 +111,27 @@ export default function LoanTaking() {
             });
     }, [activeGroup?.id]);
 
+    // Load group banks when active group changes
+    useEffect(() => {
+        const groupId = activeGroup?.id;
+        if (!groupId) {
+            setGroupBanks([]);
+            setSelectedBankId("");
+            return;
+        }
+        getGroupBanks(groupId)
+            .then((res) => {
+                const banks = Array.isArray(res?.data) ? res.data : [];
+                setGroupBanks(banks);
+            })
+            .catch((e) => {
+                console.error("Error loading banks:", e);
+                setGroupBanks([]);
+            });
+    }, [activeGroup?.id]);
+
+    // Note: Bank selection is available for both Cash and Bank modes (required for Bank, optional for Cash)
+
     // Auto-select group when coming from admin loan management (e.g. ?groupId=...)
     useEffect(() => {
         if (!isAdminMode) return;
@@ -129,6 +153,7 @@ export default function LoanTaking() {
         setSelectedMember(null);
         setTransactionType("");
         setPaymentMode("");
+        setSelectedBankId("");
         setPurpose("");
         setAmount("");
         setBachanPathraPhoto(null);
@@ -139,6 +164,7 @@ export default function LoanTaking() {
         if (selectedMember) {
             setTransactionType("");
             setPaymentMode("");
+            setSelectedBankId("");
             setPurpose("");
             setAmount("");
             setBachanPathraPhoto(null);
@@ -209,6 +235,12 @@ export default function LoanTaking() {
             return;
         }
 
+        // Validate bank selection when payment mode is "Bank" (required for Bank, optional for Cash)
+        if (paymentMode === "Bank" && !selectedBankId) {
+            alert("Please select a bank for bank transactions");
+            return;
+        }
+
         if (!purpose.trim()) {
             alert("Please enter purpose");
             return;
@@ -230,6 +262,7 @@ export default function LoanTaking() {
                 isGroupLoan: !hasAssetsForLoan, // Flag for group management loan
                 transactionType,
                 paymentMode,
+                bankId: paymentMode === "Bank" ? selectedBankId : null,
                 purpose,
                 amount: parseFloat(amount),
                 bachanPathraPhoto: bachanPathraPhoto || null,
@@ -237,13 +270,14 @@ export default function LoanTaking() {
                 createdAt: Date.now(),
             };
 
-            // Create approval request for loan (only for group panel, not admin)
+            // For group panel, create approval request; for admin, save directly to MongoDB
             if (currentGroup) {
+                // Group panel: create approval request
                 await createApprovalRequest("loan", loanData, activeGroup.id, activeGroup.name);
                 alert("Loan transaction submitted for approval!");
             } else {
-                // For admin, directly save (or create approval for admin review)
-                console.log("Loan data:", loanData);
+                // Admin: directly save to MongoDB
+                await registerLoan(loanData);
                 alert("Loan transaction saved successfully!");
             }
 
@@ -252,6 +286,7 @@ export default function LoanTaking() {
             setHasAssetsForLoan(null);
             setTransactionType("");
             setPaymentMode("");
+            setSelectedBankId("");
             setPurpose("");
             setAmount("");
             setBachanPathraPhoto(null);
@@ -373,6 +408,7 @@ export default function LoanTaking() {
                                         setSelectedMember(null);
                                         setTransactionType("");
                                         setPaymentMode("");
+                                        setSelectedBankId("");
                                         setPurpose("");
                                         setAmount("");
                                         setBachanPathraPhoto(null);
@@ -525,6 +561,7 @@ export default function LoanTaking() {
                                                         setSelectedMember(null);
                                                         setTransactionType("");
                                                         setPaymentMode("");
+                                                        setSelectedBankId("");
                                                         setPurpose("");
                                                         setAmount("");
                                                         setBachanPathraPhoto(null);
@@ -577,6 +614,31 @@ export default function LoanTaking() {
                                                     options={["Cash", "Bank"]}
                                                     required
                                                 />
+                                            </div>
+                                        )}
+
+                                        {/* Bank Selection - Show for both Cash and Bank payment modes */}
+                                        {paymentMode && (
+                                            <div className="mb-6">
+                                                <Select
+                                                    label={`Select Bank${paymentMode === "Bank" ? " *" : " (Optional)"}`}
+                                                    name="selectedBankId"
+                                                    value={selectedBankId}
+                                                    handleChange={(e) => setSelectedBankId(e.target.value)}
+                                                    options={groupBanks.length > 0 
+                                                        ? groupBanks.map((bank) => ({
+                                                            value: bank._id || bank.id,
+                                                            label: `${bank.bank_name} - ${bank.account_no}${bank.short_name ? ` (${bank.short_name})` : ""}`
+                                                        }))
+                                                        : [{ value: "", label: "No banks available" }]
+                                                    }
+                                                    required={paymentMode === "Bank"}
+                                                />
+                                                {groupBanks.length === 0 && (
+                                                    <p className="text-sm text-red-600 mt-1">
+                                                        No banks found for this group. Please add a bank account first.
+                                                    </p>
+                                                )}
                                             </div>
                                         )}
 
@@ -654,6 +716,7 @@ export default function LoanTaking() {
                                                         setSelectedMember(null);
                                                         setTransactionType("");
                                                         setPaymentMode("");
+                                                        setSelectedBankId("");
                                                         setPurpose("");
                                                         setAmount("");
                                                         setBachanPathraPhoto(null);
@@ -693,6 +756,7 @@ export default function LoanTaking() {
                                         setSelectedMember(null);
                                         setTransactionType("");
                                         setPaymentMode("");
+                                        setSelectedBankId("");
                                         setPurpose("");
                                         setAmount("");
                                         setBachanPathraPhoto(null);

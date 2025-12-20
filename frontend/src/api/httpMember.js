@@ -1,4 +1,6 @@
 import axios from "axios";
+import { getAuthToken } from "../utils/getAuthToken";
+import { createRequestInterceptor, createErrorInterceptor } from "../utils/httpInterceptor";
 
 const getApiOrigin = () => {
   const raw = String(import.meta.env.VITE_BASE_URL || "");
@@ -16,17 +18,13 @@ const httpMember = axios.create({
 });
 
 httpMember.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem("token");
-    if (token) config.headers["Authorization"] = `Bearer ${token}`;
-    return config;
-  },
+  createRequestInterceptor(getAuthToken),
   (error) => Promise.reject(error)
 );
 
 httpMember.interceptors.response.use(
   (res) => res,
-  (err) => Promise.reject(err.response?.data?.message || "Something went wrong")
+  createErrorInterceptor(true) // true = isAdmin
 );
 
 export default httpMember;
