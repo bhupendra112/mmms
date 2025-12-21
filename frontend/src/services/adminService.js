@@ -4,7 +4,7 @@ import http from "../api/http";
 // returns axios response.data on success, throws error object on failure
 export const registerAdminService = async (payload) => {
     try {
-        const res = await http.post("/register", payload);
+        const res = await http.post("/admin/auth/register", payload);
         return res.data; // success object from server
     } catch (err) {
         // err is the object thrown by interceptor: { message, status, data }
@@ -14,7 +14,7 @@ export const registerAdminService = async (payload) => {
 
 export const loginAdminService = async (payload) => {
     try {
-        const res = await http.post("/login", payload);
+        const res = await http.post("/admin/auth/login", payload);
         return res.data;
     } catch (err) {
         throw err;
@@ -23,7 +23,7 @@ export const loginAdminService = async (payload) => {
 
 export const getAdminProfile = async () => {
     try {
-        const res = await http.get("/profile");
+        const res = await http.get("/admin/auth/profile");
         return res.data;
     } catch (err) {
         throw err;
@@ -32,7 +32,7 @@ export const getAdminProfile = async () => {
 
 export const updateAdminProfile = async (payload) => {
     try {
-        const res = await http.put("/profile", payload);
+        const res = await http.put("/admin/auth/profile", payload);
         return res.data;
     } catch (err) {
         throw err;
@@ -41,7 +41,7 @@ export const updateAdminProfile = async (payload) => {
 
 export const changePassword = async (payload) => {
     try {
-        const res = await http.post("/change-password", payload);
+        const res = await http.post("/admin/auth/change-password", payload);
         return res.data;
     } catch (err) {
         throw err;
@@ -50,7 +50,7 @@ export const changePassword = async (payload) => {
 
 export const getAdminSettings = async () => {
     try {
-        const res = await http.get("/settings");
+        const res = await http.get("/admin/auth/settings");
         return res.data;
     } catch (err) {
         throw err;
@@ -59,7 +59,7 @@ export const getAdminSettings = async () => {
 
 export const updateAdminSettings = async (payload) => {
     try {
-        const res = await http.put("/settings", payload);
+        const res = await http.put("/admin/auth/settings", payload);
         return res.data;
     } catch (err) {
         throw err;
