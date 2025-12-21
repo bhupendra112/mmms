@@ -73,7 +73,7 @@ export default function MemberDashboard() {
 
   const loadMemberTransactions = async (memberData) => {
     if (!memberData?.group) return;
-
+    
     try {
       setTransactionsLoading(true);
       const groupId = memberData.group._id || memberData.group;
@@ -90,12 +90,12 @@ export default function MemberDashboard() {
       const loans = loansRes?.data || [];
       const filteredLoans = Array.isArray(loans)
         ? loans.filter(
-          (loan) =>
-            loan.memberId === memberId ||
-            loan.memberId === id ||
-            loan.memberCode === memberCode ||
-            loan.memberCode === memberData.Member_Id
-        )
+            (loan) =>
+              loan.memberId === memberId ||
+              loan.memberId === id ||
+              loan.memberCode === memberCode ||
+              loan.memberCode === memberData.Member_Id
+          )
         : [];
       setMemberLoans(filteredLoans);
 
@@ -235,7 +235,7 @@ export default function MemberDashboard() {
     memberLoans.forEach((loan) => {
       const loanDate = loan.date || loan.createdAt;
       const amount = parseFloat(loan.amount || 0);
-
+      
       if (loan.transactionType === "Loan") {
         runningLoan += amount;
         entries.push({
@@ -1120,13 +1120,13 @@ export default function MemberDashboard() {
                       <td className="border border-gray-300 p-3">
                         <span
                           className={`px-2 py-1 rounded text-xs font-semibold ${loan.transactionType === "Loan"
-                            ? "bg-red-100 text-red-800"
-                            : loan.transactionType === "FD"
+                              ? "bg-red-100 text-red-800"
+                              : loan.transactionType === "FD"
                               ? "bg-blue-100 text-blue-800"
                               : loan.transactionType === "Saving"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-gray-100 text-gray-800"
-                            }`}
+                              ? "bg-green-100 text-green-800"
+                              : "bg-gray-100 text-gray-800"
+                          }`}
                         >
                           {loan.transactionType || "N/A"}
                         </span>
@@ -1139,11 +1139,11 @@ export default function MemberDashboard() {
                       <td className="border border-gray-300 p-3">
                         <span
                           className={`px-2 py-1 rounded text-xs ${loan.status === "approved"
-                            ? "bg-green-100 text-green-800"
-                            : loan.status === "rejected"
+                              ? "bg-green-100 text-green-800"
+                              : loan.status === "rejected"
                               ? "bg-red-100 text-red-800"
                               : "bg-yellow-100 text-yellow-800"
-                            }`}
+                          }`}
                         >
                           {loan.status || "Pending"}
                         </span>
@@ -1195,10 +1195,10 @@ export default function MemberDashboard() {
                     const mode = recovery.paymentMode?.cash && recovery.paymentMode?.online
                       ? "Cash & Online"
                       : recovery.paymentMode?.cash
-                        ? "Cash"
-                        : recovery.paymentMode?.online
-                          ? "Online"
-                          : "N/A";
+                      ? "Cash"
+                      : recovery.paymentMode?.online
+                      ? "Online"
+                      : "N/A";
 
                     return (
                       <tr key={recovery.recoveryId || index} className="hover:bg-gray-50">
@@ -1217,11 +1217,11 @@ export default function MemberDashboard() {
                         <td className="border border-gray-300 p-3">
                           <span
                             className={`px-2 py-1 rounded text-xs ${mode === "Cash"
-                              ? "bg-green-100 text-green-800"
-                              : mode === "Online"
+                                ? "bg-green-100 text-green-800"
+                                : mode === "Online"
                                 ? "bg-blue-100 text-blue-800"
                                 : "bg-purple-100 text-purple-800"
-                              }`}
+                            }`}
                           >
                             {mode}
                           </span>
