@@ -22,6 +22,22 @@ export const registerRecovery = async (data) => {
   return res.data;
 };
 
+export const updateMemberRecovery = async (groupId, date, memberRecovery) => {
+  const payload = {
+    groupId,
+    date,
+    memberRecovery: sanitizePayload(memberRecovery)
+  };
+  const res = await httpRecovery.post("/update-member", payload);
+  return res.data;
+};
+
+export const getRecoveryByDate = async (groupId, date) => {
+  const params = { groupId, date };
+  const res = await httpRecovery.get("/by-date", { params });
+  return res.data;
+};
+
 export const getRecoveries = async (groupId = null) => {
   const params = groupId ? { groupId } : {};
   const res = await httpRecovery.get("/list", { params });
@@ -30,6 +46,22 @@ export const getRecoveries = async (groupId = null) => {
 
 export const getRecoveryDetail = async (id) => {
   const res = await httpRecovery.get(`/detail/${id}`);
+  return res.data;
+};
+
+export const updateRecoveryPhoto = async (groupId, date, groupPhoto) => {
+  const payload = {
+    groupId,
+    date,
+    groupPhoto
+  };
+  const res = await httpRecovery.post("/update-photo", payload);
+  return res.data;
+};
+
+export const getPreviousRecoveryData = async (groupId, memberId, date) => {
+  const params = { groupId, memberId, date };
+  const res = await httpRecovery.get("/previous-data", { params });
   return res.data;
 };
 

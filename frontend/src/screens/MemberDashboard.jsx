@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Download, FileText, Calendar, DollarSign, Image as ImageIcon, User, IdCard } from "lucide-react";
+import { Download, FileText, Calendar, DollarSign, Image as ImageIcon, User, IdCard, Plus } from "lucide-react";
 import { exportToExcel, exportToPDF } from "../utils/exportUtils";
 import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import "jspdf-autotable";
-import { getMemberDetail } from "../services/memberService";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
+import { getMemberDetail, exportMemberLedger } from "../services/memberService";
 import { getLoans } from "../services/loanService";
 import { getRecoveries } from "../services/recoveryService";
+import { getFDsByMember } from "../services/fdService";
+import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
+import CreateFD from "../components/fd/CreateFD";
 
 // Helper function to get full image URL
 const getImageUrl = (imagePath) => {
   if (!imagePath) return null;
 
   // Get backend origin - extract only protocol://host:port (no API paths)
-  const rawBaseURL = import.meta.env.VITE_BASE_URL || "http://localhost:8080";
+  const rawBaseURL = import.meta.env.VITE_BASE_URL || (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
 
   let baseURL;
   try {
@@ -24,7 +27,7 @@ const getImageUrl = (imagePath) => {
   } catch {
     // If parsing fails, extract origin manually
     const match = rawBaseURL.match(/^(https?:\/\/[^/]+)/i);
-    baseURL = match ? match[1] : "http://localhost:8080";
+    baseURL = match ? match[1] : (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
   }
 
   // Ensure imagePath starts with /
@@ -41,11 +44,13 @@ export default function MemberDashboard() {
   const [loadError, setLoadError] = useState("");
   const [memberLoans, setMemberLoans] = useState([]);
   const [memberRecoveries, setMemberRecoveries] = useState([]);
+  const [memberFDs, setMemberFDs] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [imageErrors, setImageErrors] = useState({});
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [showCreateFD, setShowCreateFD] = useState(false);
 
   const handleImageError = (imagePath) => {
     setImageErrors(prev => ({ ...prev, [imagePath]: true }));
@@ -73,29 +78,30 @@ export default function MemberDashboard() {
 
   const loadMemberTransactions = async (memberData) => {
     if (!memberData?.group) return;
-    
+
     try {
       setTransactionsLoading(true);
       const groupId = memberData.group._id || memberData.group;
       const memberId = memberData._id || id;
       const memberCode = memberData.Member_Id;
 
-      // Fetch loans and recoveries for the group
-      const [loansRes, recoveriesRes] = await Promise.all([
+      // Fetch loans, recoveries, and FDs for the member
+      const [loansRes, recoveriesRes, fdsRes] = await Promise.all([
         getLoans(groupId).catch(() => ({ success: false, data: [] })),
         getRecoveries(groupId).catch(() => ({ success: false, data: [] })),
+        getFDsByMember(memberId).catch(() => ({ success: false, data: [] })),
       ]);
 
       // Filter loans by memberId or memberCode
       const loans = loansRes?.data || [];
       const filteredLoans = Array.isArray(loans)
         ? loans.filter(
-            (loan) =>
-              loan.memberId === memberId ||
-              loan.memberId === id ||
-              loan.memberCode === memberCode ||
-              loan.memberCode === memberData.Member_Id
-          )
+          (loan) =>
+            loan.memberId === memberId ||
+            loan.memberId === id ||
+            loan.memberCode === memberCode ||
+            loan.memberCode === memberData.Member_Id
+        )
         : [];
       setMemberLoans(filteredLoans);
 
@@ -123,6 +129,10 @@ export default function MemberDashboard() {
         });
       }
       setMemberRecoveries(filteredRecoveries);
+
+      // Set FDs from FDMaster
+      const fds = fdsRes?.data || [];
+      setMemberFDs(Array.isArray(fds) ? fds : []);
     } catch (error) {
       console.error("Error loading member transactions:", error);
     } finally {
@@ -168,6 +178,9 @@ export default function MemberDashboard() {
     let runningLoan = member.loanOutstanding || 0;
     let runningFD = member.fdTotal || 0;
     let runningInterest = member.loanOverdueInterest || 0;
+
+    // Track FDs from FDMaster to avoid double counting with member.fdDetails
+    const fdFromFDMaster = new Set();
 
     // Add opening balance entry if member is existing member
     if (member.isExistingMember) {
@@ -235,7 +248,7 @@ export default function MemberDashboard() {
     memberLoans.forEach((loan) => {
       const loanDate = loan.date || loan.createdAt;
       const amount = parseFloat(loan.amount || 0);
-      
+
       if (loan.transactionType === "Loan") {
         runningLoan += amount;
         entries.push({
@@ -290,6 +303,32 @@ export default function MemberDashboard() {
       }
     });
 
+    // Add FD transactions from FDMaster
+    memberFDs.forEach((fd) => {
+      const fdDate = fd.date || fd.createdAt;
+      const amount = parseFloat(fd.amount || 0);
+      
+      if (amount > 0) {
+        runningFD += amount;
+        fdFromFDMaster.add(fd._id);
+        entries.push({
+          date: fdDate,
+          receipt: `FD - ${fd.status || "Active"}`,
+          savingsDeposit: 0,
+          savingsWithdraw: 0,
+          savingsBalance: runningSavings,
+          loanPaid: 0,
+          loanRecovered: 0,
+          loanBalance: runningLoan,
+          fdDeposit: amount,
+          fdWithdraw: 0,
+          fdBalance: runningFD,
+          interestDue: runningInterest,
+          interestPaid: 0,
+        });
+      }
+    });
+
     // Add recovery transactions
     memberRecoveries.forEach((recovery) => {
       const recoveryDate = recovery.recoveryDate || recovery.date;
@@ -325,7 +364,7 @@ export default function MemberDashboard() {
 
     // Sort by date
     return entries.sort((a, b) => new Date(a.date) - new Date(b.date));
-  }, [member, memberDoc, memberLoans, memberRecoveries]);
+  }, [member, memberDoc, memberLoans, memberRecoveries, memberFDs]);
 
   // Format date to dd/mm/yyyy
   const formatDate = (dateString) => {
@@ -395,17 +434,17 @@ export default function MemberDashboard() {
     const rows = filteredLedger.map((row) => [
       formatDate(row.date),
       row.receipt.toString(),
-      `₹${row.savingsDeposit}`,
-      `₹${row.savingsWithdraw}`,
-      `₹${row.savingsBalance}`,
-      `₹${row.loanPaid}`,
-      `₹${row.loanRecovered}`,
-      `₹${row.loanBalance}`,
-      `₹${row.fdDeposit}`,
-      `₹${row.fdWithdraw}`,
-      `₹${row.fdBalance}`,
-      `₹${row.interestDue}`,
-      `₹${row.interestPaid}`,
+      `${row.savingsDeposit}`,
+      `${row.savingsWithdraw}`,
+      `${row.savingsBalance}`,
+      `${row.loanPaid}`,
+      `${row.loanRecovered}`,
+      `${row.loanBalance}`,
+      `${row.fdDeposit}`,
+      `${row.fdWithdraw}`,
+      `${row.fdBalance}`,
+      `${row.interestDue}`,
+      `${row.interestPaid}`,
     ]);
 
     exportToPDF(
@@ -481,21 +520,21 @@ export default function MemberDashboard() {
     yPos += lineHeight;
     doc.setFontSize(10);
 
-    doc.text(`Opening Balance: ₹${member.openingBalance.toLocaleString()}`, 14, yPos);
+    doc.text(`Opening Balance: ${member.openingBalance.toLocaleString()}`, 14, yPos);
     yPos += lineHeight;
-    doc.text(`Savings Total: ₹${member.savingsTotal.toLocaleString()}`, 14, yPos);
+    doc.text(`Savings Total: ${member.savingsTotal.toLocaleString()}`, 14, yPos);
     yPos += lineHeight;
-    doc.text(`Loan Outstanding: ₹${member.loanOutstanding.toLocaleString()}`, 14, yPos);
+    doc.text(`Loan Outstanding: ${member.loanOutstanding.toLocaleString()}`, 14, yPos);
     if (member.loanDate) {
       yPos += lineHeight;
       doc.text(`Loan Date: ${formatDate(member.loanDate)}`, 14, yPos);
     }
     if (member.loanOverdueInterest > 0) {
       yPos += lineHeight;
-      doc.text(`Overdue Interest: ₹${member.loanOverdueInterest.toLocaleString()}`, 14, yPos);
+      doc.text(`Overdue Interest: ${member.loanOverdueInterest.toLocaleString()}`, 14, yPos);
     }
     yPos += lineHeight;
-    doc.text(`FD Total: ₹${member.fdTotal.toLocaleString()}`, 14, yPos);
+    doc.text(`FD Total: ${member.fdTotal.toLocaleString()}`, 14, yPos);
     if (member.fdDate) {
       yPos += lineHeight;
       doc.text(`FD Date: ${formatDate(member.fdDate)}`, 14, yPos);
@@ -506,14 +545,14 @@ export default function MemberDashboard() {
     }
     if (member.fdInterest > 0) {
       yPos += lineHeight;
-      doc.text(`FD Interest: ₹${member.fdInterest.toLocaleString()}`, 14, yPos);
+      doc.text(`FD Interest: ${member.fdInterest.toLocaleString()}`, 14, yPos);
     }
     if (member.openingYogdan > 0) {
       yPos += lineHeight;
-      doc.text(`Opening Yogdan: ₹${member.openingYogdan.toLocaleString()}`, 14, yPos);
+      doc.text(`Opening Yogdan: ${member.openingYogdan.toLocaleString()}`, 14, yPos);
     }
     yPos += lineHeight;
-    doc.text(`Interest Pending: ₹${member.interestPending.toLocaleString()}`, 14, yPos);
+    doc.text(`Interest Pending: ${member.interestPending.toLocaleString()}`, 14, yPos);
     yPos += lineHeight;
     doc.text(`Last Recovery: ${formatDate(member.lastRecoveryDate) || "N/A"}`, 14, yPos);
     yPos += lineHeight + 10;
@@ -539,20 +578,20 @@ export default function MemberDashboard() {
       const rows = filteredLedger.map((row) => [
         formatDate(row.date),
         row.receipt.toString(),
-        `₹${row.savingsDeposit}`,
-        `₹${row.savingsWithdraw}`,
-        `₹${row.savingsBalance}`,
-        `₹${row.loanPaid}`,
-        `₹${row.loanRecovered}`,
-        `₹${row.loanBalance}`,
-        `₹${row.fdDeposit}`,
-        `₹${row.fdWithdraw}`,
-        `₹${row.fdBalance}`,
-        `₹${row.interestDue}`,
-        `₹${row.interestPaid}`,
+        `${row.savingsDeposit}`,
+        `${row.savingsWithdraw}`,
+        `${row.savingsBalance}`,
+        `${row.loanPaid}`,
+        `${row.loanRecovered}`,
+        `${row.loanBalance}`,
+        `${row.fdDeposit}`,
+        `${row.fdWithdraw}`,
+        `${row.fdBalance}`,
+        `${row.interestDue}`,
+        `${row.interestPaid}`,
       ]);
 
-      doc.autoTable({
+      autoTable(doc, {
         head: [headers],
         body: rows,
         startY: yPos,
@@ -563,6 +602,43 @@ export default function MemberDashboard() {
     }
 
     doc.save(`Member_${member.code}_Full_Details_${new Date().toISOString().split("T")[0]}.pdf`);
+  };
+
+  // Export complete ledger (from backend API)
+  const exportCompleteLedger = async (format = 'excel') => {
+    if (!id) {
+      alert("Member ID is missing");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const filters = {
+        memberId: id,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+      };
+
+      const response = await exportMemberLedger(filters);
+
+      if (response?.success && response?.data && response.data.length > 0) {
+        const memberData = response.data[0];
+        const memberCode = memberData.memberInfo?.code || "Member";
+
+        if (format === 'excel') {
+          exportMemberLedgerToExcel([memberData], `Member_${memberCode}_Complete_Ledger`);
+        } else {
+          exportMemberLedgerToPDF([memberData], `Member_${memberCode}_Complete_Ledger`);
+        }
+      } else {
+        alert("No ledger data found to export");
+      }
+    } catch (error) {
+      console.error("Error exporting complete ledger:", error);
+      alert("Failed to export complete ledger. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -583,11 +659,18 @@ export default function MemberDashboard() {
         </div>
       )}
 
-      {/* Export Buttons */}
+      {/* Action Buttons */}
       <div className="flex justify-end gap-4 mb-6">
         <button
-          onClick={exportTableToExcel}
+          onClick={() => setShowCreateFD(true)}
           className="flex items-center gap-2 px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md"
+        >
+          <Plus size={18} />
+          Create New FD
+        </button>
+        <button
+          onClick={exportTableToExcel}
+          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md"
         >
           <Download size={18} />
           Export Table Excel
@@ -601,7 +684,7 @@ export default function MemberDashboard() {
         </button>
         <button
           onClick={exportFullDetailsToExcel}
-          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md"
+          className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-md"
         >
           <Download size={18} />
           Export Full Details Excel
@@ -613,7 +696,44 @@ export default function MemberDashboard() {
           <FileText size={18} />
           Export Full Details PDF
         </button>
+        <button
+          onClick={() => exportCompleteLedger('excel')}
+          className="flex items-center gap-2 px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md"
+        >
+          <Download size={18} />
+          Export Complete Ledger Excel
+        </button>
+        <button
+          onClick={() => exportCompleteLedger('pdf')}
+          className="flex items-center gap-2 px-6 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-semibold shadow-md"
+        >
+          <FileText size={18} />
+          Export Complete Ledger PDF
+        </button>
       </div>
+
+      {/* Create FD Modal */}
+      {showCreateFD && memberDoc && (
+        <CreateFD
+          member={memberDoc}
+          onClose={() => setShowCreateFD(false)}
+          onSuccess={() => {
+            // Reload member data after FD creation
+            if (id) {
+              getMemberDetail(id)
+                .then((res) => {
+                  setMemberDoc(res?.data || null);
+                  if (res?.data) {
+                    loadMemberTransactions(res.data);
+                  }
+                })
+                .catch((e) => {
+                  console.error("Failed to reload member detail:", e);
+                });
+            }
+          }}
+        />
+      )}
 
       {/* Full Member Details */}
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -934,6 +1054,18 @@ export default function MemberDashboard() {
                   <td className="p-3 text-gray-800">₹{member.loanOverdueInterest.toLocaleString()}</td>
                 </tr>
               )}
+              {memberDoc?.loanDetails?.time_period && (
+                <tr className="border-b border-gray-200">
+                  <td className="p-3 font-semibold text-gray-700 bg-gray-50">Loan Time Period:</td>
+                  <td className="p-3 text-gray-800">{memberDoc.loanDetails.time_period} months</td>
+                </tr>
+              )}
+              {memberDoc?.loanDetails?.installment_amount && (
+                <tr className="border-b border-gray-200">
+                  <td className="p-3 font-semibold text-gray-700 bg-gray-50">Monthly Installment:</td>
+                  <td className="p-3 text-gray-800">₹{parseFloat(memberDoc.loanDetails.installment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                </tr>
+              )}
               <tr className="border-b border-gray-200">
                 <td className="p-3 font-semibold text-gray-700 bg-gray-50">FD Total:</td>
                 <td className="p-3 text-gray-800">₹{member.fdTotal.toLocaleString()}</td>
@@ -1030,14 +1162,89 @@ export default function MemberDashboard() {
                         <td className="p-3 text-gray-800">₹{member.loanOverdueInterest.toLocaleString()}</td>
                       </tr>
                     )}
+                    {memberDoc?.loanDetails?.time_period && (
+                      <tr className="border-b border-blue-200">
+                        <td className="p-3 font-semibold text-gray-700 bg-blue-100">Loan Time Period:</td>
+                        <td className="p-3 text-gray-800">{memberDoc.loanDetails.time_period} months</td>
+                      </tr>
+                    )}
+                    {memberDoc?.loanDetails?.installment_amount && (
+                      <tr className="border-b border-blue-200">
+                        <td className="p-3 font-semibold text-gray-700 bg-blue-100">Monthly Installment:</td>
+                        <td className="p-3 text-gray-800">₹{parseFloat(memberDoc.loanDetails.installment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    )}
                   </>
                 )}
                 {member.openingYogdan > 0 && (
-                  <tr>
+                  <tr className="border-b border-blue-200">
                     <td className="p-3 font-semibold text-gray-700 bg-blue-100">Opening Yogdan:</td>
                     <td className="p-3 text-gray-800">₹{member.openingYogdan.toLocaleString()}</td>
                   </tr>
                 )}
+              </tbody>
+            </table>
+          </div>
+          
+          {/* Saving Rate Snapshot Section */}
+          {memberDoc?.saving_per_member_snapshot && (
+            <div className="mt-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-3">Saving Rate Snapshot</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                This rate is used for saving demand calculations instead of current group rate.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <tbody>
+                    <tr className="border-b border-blue-200">
+                      <td className="p-3 font-semibold text-gray-700 bg-blue-100 w-1/3">Saving Per Member Snapshot:</td>
+                      <td className="p-3 text-gray-800">₹{memberDoc.saving_per_member_snapshot.toLocaleString()}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* FD Details from FDMaster */}
+      {memberFDs.length > 0 && (
+        <div className="bg-green-50 border-l-4 border-green-500 rounded-lg shadow-md p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">Fixed Deposit Details</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-green-100">
+                  <th className="p-3 text-left font-semibold text-gray-700 border-b border-green-200">Date</th>
+                  <th className="p-3 text-left font-semibold text-gray-700 border-b border-green-200">Amount</th>
+                  <th className="p-3 text-left font-semibold text-gray-700 border-b border-green-200">Time Period</th>
+                  <th className="p-3 text-left font-semibold text-gray-700 border-b border-green-200">Maturity Date</th>
+                  <th className="p-3 text-left font-semibold text-gray-700 border-b border-green-200">Interest</th>
+                  <th className="p-3 text-left font-semibold text-gray-700 border-b border-green-200">Maturity Amount</th>
+                  <th className="p-3 text-left font-semibold text-gray-700 border-b border-green-200">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {memberFDs.map((fd) => (
+                  <tr key={fd._id} className="border-b border-green-200">
+                    <td className="p-3 text-gray-800">{formatDate(fd.date)}</td>
+                    <td className="p-3 text-gray-800">₹{parseFloat(fd.amount || 0).toLocaleString()}</td>
+                    <td className="p-3 text-gray-800">{fd.time_period || "-"} months</td>
+                    <td className="p-3 text-gray-800">{formatDate(fd.maturityDate)}</td>
+                    <td className="p-3 text-gray-800">₹{parseFloat(fd.interestAmount || 0).toLocaleString()}</td>
+                    <td className="p-3 text-gray-800">₹{parseFloat(fd.maturityAmount || 0).toLocaleString()}</td>
+                    <td className="p-3 text-gray-800">
+                      <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                        fd.status === "active" ? "bg-green-200 text-green-800" :
+                        fd.status === "matured" ? "bg-yellow-200 text-yellow-800" :
+                        "bg-gray-200 text-gray-800"
+                      }`}>
+                        {fd.status || "active"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -1120,13 +1327,13 @@ export default function MemberDashboard() {
                       <td className="border border-gray-300 p-3">
                         <span
                           className={`px-2 py-1 rounded text-xs font-semibold ${loan.transactionType === "Loan"
-                              ? "bg-red-100 text-red-800"
-                              : loan.transactionType === "FD"
+                            ? "bg-red-100 text-red-800"
+                            : loan.transactionType === "FD"
                               ? "bg-blue-100 text-blue-800"
                               : loan.transactionType === "Saving"
-                              ? "bg-green-100 text-green-800"
-                              : "bg-gray-100 text-gray-800"
-                          }`}
+                                ? "bg-green-100 text-green-800"
+                                : "bg-gray-100 text-gray-800"
+                            }`}
                         >
                           {loan.transactionType || "N/A"}
                         </span>
@@ -1139,11 +1346,11 @@ export default function MemberDashboard() {
                       <td className="border border-gray-300 p-3">
                         <span
                           className={`px-2 py-1 rounded text-xs ${loan.status === "approved"
-                              ? "bg-green-100 text-green-800"
-                              : loan.status === "rejected"
+                            ? "bg-green-100 text-green-800"
+                            : loan.status === "rejected"
                               ? "bg-red-100 text-red-800"
                               : "bg-yellow-100 text-yellow-800"
-                          }`}
+                            }`}
                         >
                           {loan.status || "Pending"}
                         </span>
@@ -1195,10 +1402,10 @@ export default function MemberDashboard() {
                     const mode = recovery.paymentMode?.cash && recovery.paymentMode?.online
                       ? "Cash & Online"
                       : recovery.paymentMode?.cash
-                      ? "Cash"
-                      : recovery.paymentMode?.online
-                      ? "Online"
-                      : "N/A";
+                        ? "Cash"
+                        : recovery.paymentMode?.online
+                          ? "Online"
+                          : "N/A";
 
                     return (
                       <tr key={recovery.recoveryId || index} className="hover:bg-gray-50">
@@ -1217,11 +1424,11 @@ export default function MemberDashboard() {
                         <td className="border border-gray-300 p-3">
                           <span
                             className={`px-2 py-1 rounded text-xs ${mode === "Cash"
-                                ? "bg-green-100 text-green-800"
-                                : mode === "Online"
+                              ? "bg-green-100 text-green-800"
+                              : mode === "Online"
                                 ? "bg-blue-100 text-blue-800"
                                 : "bg-purple-100 text-purple-800"
-                            }`}
+                              }`}
                           >
                             {mode}
                           </span>

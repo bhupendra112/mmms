@@ -14,6 +14,7 @@ import {
     Settings,
     FileText,
     LogOut,
+    CreditCard,
 } from "lucide-react";
 
 export default function GroupNavbar() {
@@ -39,6 +40,7 @@ export default function GroupNavbar() {
                 { icon: DollarSign, label: "Demand & Recovery", path: "/group/demand-recovery" },
                 { icon: FileText, label: "Group Ledger", path: "/group/ledger" },
                 { icon: DollarSign, label: "Loan Management", path: "/group/loans" },
+                { icon: CreditCard, label: "Payments", path: "/group/payments" },
             ],
         },
     ];

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   User,
   Building2,
@@ -15,33 +15,28 @@ import {
   Download,
   Wifi,
   WifiOff,
+  Plus,
 } from "lucide-react";
 import { Input, Select } from "../../components/forms/FormComponents";
-import {
-  initRecoveryDB,
-  saveRecovery,
-  getRecoveriesByGroup,
-  deleteRecovery,
-  saveGroupPhoto,
-  subscribeToRecoveries,
-} from "../../services/recoveryDB";
 import { exportRecoveryToExcel, exportRecoveryToPDF } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { createApprovalRequest } from "../../services/approvalDB";
-import { registerRecovery } from "../../services/recoveryService";
+import { registerRecovery, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData } from "../../services/recoveryService";
+import { getLoans } from "../../services/loanService";
 import { getGroups } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
 import { isMeetingDay, getNextMeetingDate, formatMeetingDateTime } from "../../utils/meetingDateUtils";
+import CreateFD from "../../components/fd/CreateFD";
 
 export default function DemandRecovery() {
   const { currentGroup, isOnline, isGroupPanel, isGroupLoading } = useGroup();
   const isAdminMode = !isGroupPanel;
-  const [dbReady, setDbReady] = useState(false);
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [allMembers, setAllMembers] = useState([]);
   const [recoveries, setRecoveries] = useState([]);
   const [currentMemberIndex, setCurrentMemberIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
   // Start at step 1 if currentGroup exists (group panel), step 0 if not (admin panel)
   const [currentStep, setCurrentStep] = useState(() => (isAdminMode ? 0 : 1)); // 0: Select Group (admin only), 1: Recovery Entry, 2: Summary & Photo
   const [selectedGroup, setSelectedGroup] = useState(null); // For admin: selected group from list
@@ -53,11 +48,17 @@ export default function DemandRecovery() {
   const [amountBreakup, setAmountBreakup] = useState({
     saving: "",
     loan: "",
-    fd: "",
     interest: "",
     yogdan: "",
+    memFeesSHG: "",
+    memFeesSamiti: "",
+    penalty: "",
     other: "",
+    fd: "",
   });
+  const [totalAmount, setTotalAmount] = useState(""); // Single total amount input for auto-calculation
+  const [autoCalculated, setAutoCalculated] = useState(false); // Track if amounts are auto-calculated
+  const [fdTimePeriod, setFdTimePeriod] = useState("");
   const [paymentMode, setPaymentMode] = useState({
     cash: false,
     online: false,
@@ -65,7 +66,8 @@ export default function DemandRecovery() {
   const [onlineRef, setOnlineRef] = useState("");
   const [screenshot, setScreenshot] = useState(null);
   const [groupPhoto, setGroupPhoto] = useState(null);
-  const subscriptionRef = useRef(null);
+  const [showCreateFD, setShowCreateFD] = useState(false);
+  const [selectedMemberForFD, setSelectedMemberForFD] = useState(null);
 
   // Determine active group: use currentGroup from context if available, otherwise use selectedGroup (admin)
   const activeGroup = currentGroup || selectedGroup;
@@ -76,70 +78,289 @@ export default function DemandRecovery() {
   const nextMeetingDate = activeGroup ? getNextMeetingDate(activeGroup) : null;
   const meetingTime = activeGroup?.raw?.meeting_date_2_time || activeGroup?.meeting_date_2_time || null;
 
-  // Demand summary (dynamic): uses group saving_per_member (if available) + amounts entered in current meeting.
-  // Includes opening balances from existing member financial data
+  // State to store previous recovery data and active loans
+  const [previousRecoveryData, setPreviousRecoveryData] = useState({});
+  const [activeLoans, setActiveLoans] = useState({});
+  const [demandSummaries, setDemandSummaries] = useState({});
+
+  // Load active loans for all members
+  useEffect(() => {
+    if (!activeGroup?.id) return;
+
+    getLoans(activeGroup.id)
+      .then((res) => {
+        const loans = Array.isArray(res?.data) ? res.data : [];
+        const loansByMember = {};
+
+        loans.forEach(loan => {
+          if (loan.transactionType === "Loan" && loan.status === "approved" && loan.memberId) {
+            const memberId = loan.memberId.toString();
+            if (!loansByMember[memberId] || new Date(loan.date) > new Date(loansByMember[memberId].date)) {
+              loansByMember[memberId] = loan;
+            }
+          }
+        });
+
+        setActiveLoans(loansByMember);
+      })
+      .catch((err) => {
+        console.error("Error loading loans:", err);
+        setActiveLoans({});
+      });
+  }, [activeGroup?.id]);
+
+  // Load previous recovery data when member changes
+  useEffect(() => {
+    if (!activeGroup?.id || !allMembers.length || currentMemberIndex < 0) return;
+
+    const member = allMembers[currentMemberIndex];
+    if (!member?.id) return;
+
+    const today = new Date().toLocaleDateString("en-GB");
+    getPreviousRecoveryData(activeGroup.id, member.id, today)
+      .then((res) => {
+        if (res?.success) {
+          setPreviousRecoveryData(prev => ({
+            ...prev,
+            [member.id]: res.data
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error("Error loading previous recovery data:", err);
+      });
+  }, [activeGroup?.id, currentMemberIndex, allMembers]);
+
+  // Demand summary (dynamic): uses new calculation logic with previous demands
   const getDemandSummary = (memberId) => {
     const recovery = recoveries.find((r) => r.memberId === memberId);
     const member = allMembers.find((m) => m.id === memberId);
 
-    // Get opening balances from member data (if existing member)
+    // Use demandDetails from recovery if available (calculated by backend)
+    if (recovery?.demandDetails) {
+      const dd = recovery.demandDetails;
+      return {
+        saving: {
+          prev: dd.saving?.prevDemand || 0,
+          curr: dd.saving?.currDemand || 0,
+          total: dd.saving?.totalDemand || 0,
+          actual: dd.saving?.actualPaid || 0,
+          unpaid: dd.saving?.unpaidDemand || 0,
+          opening: dd.saving?.openingBalance || 0,
+          closing: dd.saving?.closingBalance || 0,
+        },
+        loan: {
+          prev: dd.loan?.prevDemand || 0,
+          curr: dd.loan?.currDemand || 0,
+          total: dd.loan?.totalDemand || 0,
+          actual: dd.loan?.actualPaid || 0,
+          unpaid: dd.loan?.unpaidDemand || 0,
+          opening: dd.loan?.openingBalance || 0,
+          closing: dd.loan?.closingBalance || 0,
+        },
+        interest: {
+          prev: dd.interest?.prevDemand || 0,
+          curr: dd.interest?.currDemand || 0,
+          total: dd.interest?.totalDemand || 0,
+          actual: dd.interest?.actualPaid || 0,
+          unpaid: dd.interest?.unpaidDemand || 0,
+          opening: dd.interest?.openingBalance || 0,
+          closing: dd.interest?.closingBalance || 0,
+        },
+        fd: {
+          prev: 0,
+          curr: 0,
+          total: 0,
+          actual: dd.fd?.actualPaid || 0,
+          unpaid: 0,
+          opening: dd.fd?.openingBalance || 0,
+          closing: dd.fd?.closingBalance || 0,
+        },
+        yogdan: {
+          prev: 0,
+          curr: 0,
+          total: recovery?.amounts?.yogdan || 0,
+          actual: recovery?.amounts?.yogdan || 0,
+          unpaid: 0,
+          opening: member?.openingYogdan || member?.raw?.openingYogdan || 0,
+          closing: (member?.openingYogdan || member?.raw?.openingYogdan || 0) + (recovery?.amounts?.yogdan || 0),
+        },
+        memFeesSHG: {
+          prev: 0,
+          curr: 0,
+          total: recovery?.amounts?.memFeesSHG || 0,
+          actual: recovery?.amounts?.memFeesSHG || 0,
+          unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+        memFeesSamiti: {
+          prev: 0,
+          curr: 0,
+          total: recovery?.amounts?.memFeesSamiti || 0,
+          actual: recovery?.amounts?.memFeesSamiti || 0,
+          unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+        penalty: {
+          prev: 0,
+          curr: 0,
+          total: recovery?.amounts?.penalty || 0,
+          actual: recovery?.amounts?.penalty || 0,
+          unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+        other: {
+          prev: 0,
+          curr: 0,
+          total: (recovery?.amounts?.other1 || 0) + (recovery?.amounts?.other2 || 0) + (recovery?.amounts?.other || 0),
+          actual: (recovery?.amounts?.other1 || 0) + (recovery?.amounts?.other2 || 0) + (recovery?.amounts?.other || 0),
+          unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+      };
+    }
+
+    // Calculate on frontend if demandDetails not available (for display before saving)
+    const prevData = previousRecoveryData[memberId] || {
+      loan: { unpaidDemand: 0, actualPaid: 0 },
+      interest: { unpaidDemand: 0, actualPaid: 0 },
+      saving: { unpaidDemand: 0, actualPaid: 0, totalDemand: 0 },
+    };
+
+    // Get active loan for member
+    const activeLoan = activeLoans[memberId];
+    const loanInstallment = activeLoan?.installment_amount || 0;
+
+    // Get member data
     const openingSaving = member?.openingSaving || member?.raw?.openingSaving || 0;
     const openingLoan = member?.loanDetails?.amount || member?.raw?.loanDetails?.amount || 0;
     const openingFd = member?.fdDetails?.amount || member?.raw?.fdDetails?.amount || 0;
     const openingYogdan = member?.openingYogdan || member?.raw?.openingYogdan || 0;
     const openingInterest = member?.loanDetails?.overdueInterest || member?.raw?.loanDetails?.overdueInterest || 0;
 
-    const savingDue = Number(activeGroup?.raw?.saving_per_member || activeGroup?.saving_per_member || 0) || 0;
+    // Check if member is existing member
+    const isExistingMember = member?.isExistingMember || member?.raw?.isExistingMember || false;
+
+    // Current month demand for saving
+    // For existing members, use snapshot if available, else use current group rate
+    let savingDue = Number(activeGroup?.raw?.saving_per_member || activeGroup?.saving_per_member || 0) || 0;
+    if (isExistingMember && member?.saving_per_member_snapshot) {
+      savingDue = Number(member.saving_per_member_snapshot) || savingDue;
+    }
+
+    // Actual amounts received in this recovery
     const actualSaving = parseFloat(recovery?.amounts?.saving || 0) || 0;
     const actualLoan = parseFloat(recovery?.amounts?.loan || 0) || 0;
     const actualFd = parseFloat(recovery?.amounts?.fd || 0) || 0;
     const actualInterest = parseFloat(recovery?.amounts?.interest || 0) || 0;
     const actualYogdan = parseFloat(recovery?.amounts?.yogdan || 0) || 0;
-    const actualOther = parseFloat(recovery?.amounts?.other || 0) || 0;
+    const actualMemFeesSHG = parseFloat(recovery?.amounts?.memFeesSHG || 0) || 0;
+    const actualMemFeesSamiti = parseFloat(recovery?.amounts?.memFeesSamiti || 0) || 0;
+    const actualPenalty = parseFloat(recovery?.amounts?.penalty || 0) || 0;
+    const actualOther = (parseFloat(recovery?.amounts?.other1 || 0) || 0) +
+      (parseFloat(recovery?.amounts?.other2 || 0) || 0) +
+      (parseFloat(recovery?.amounts?.other || 0) || 0);
 
-    // Calculate closing balances (opening + actual received)
-    const closingSaving = openingSaving + actualSaving;
-    const closingLoan = Math.max(0, openingLoan - actualLoan); // Loan balance decreases with payment
-    const closingFd = openingFd + actualFd; // FD increases with deposit
-    const closingInterest = Math.max(0, openingInterest - actualInterest); // Interest decreases with payment
-    const closingYogdan = openingYogdan + actualYogdan; // Yogdan increases with recovery
+    // Calculate loan demand details
+    // Get monthly installment amount
+    let monthlyInstallment = loanInstallment;
+
+    // For existing members, use member's loanDetails if activeLoan not found
+    if (!activeLoan && openingLoan > 0) {
+      // Try to get installment from member's loanDetails
+      const memberInstallment = member?.loanDetails?.installment_amount || member?.raw?.loanDetails?.installment_amount;
+      if (memberInstallment) {
+        monthlyInstallment = parseFloat(memberInstallment) || 0;
+      } else if (member?.loanDetails?.time_period || member?.raw?.loanDetails?.time_period) {
+        // Calculate from amount and time_period: monthly installment = loan_amount / time_period
+        const timePeriod = member?.loanDetails?.time_period || member?.raw?.loanDetails?.time_period || 0;
+        if (timePeriod > 0) {
+          monthlyInstallment = openingLoan / timePeriod;
+        }
+      }
+    }
+
+    // Check if group has 2 meetings per month
+    const meetingDay1 = activeGroup?.raw?.meeting_date_1_day || activeGroup?.meeting_date_1_day;
+    const meetingDay2 = activeGroup?.raw?.meeting_date_2_day || activeGroup?.meeting_date_2_day;
+    const hasTwoMeetings = meetingDay1 && meetingDay2;
+
+    // If 2 meetings per month, divide monthly installment by 2 for each meeting
+    const loanCurrDemand = hasTwoMeetings ? (monthlyInstallment / 2) : monthlyInstallment;
+
+    const loanPrevDemand = prevData.loan.unpaidDemand || 0;
+    const loanTotalDemand = loanPrevDemand + loanCurrDemand;
+    const loanUnpaidDemand = Math.max(0, loanTotalDemand - actualLoan);
+    // Opening balance = cumulative loan payments (simplified - would need to query all previous recoveries)
+    const loanOpeningBalance = 0; // Will be calculated by backend
+    const loanClosingBalance = loanOpeningBalance + actualLoan;
+
+    // Calculate interest demand details (only for members with active loans)
+    // Use overdue interest directly as current month interest demand
+    // For existing members, show interest if they have loan amount, even without activeLoan
+    const hasLoan = activeLoan || openingLoan > 0;
+    const interestCurrDemand = hasLoan ? openingInterest : 0;
+
+    const interestPrevDemand = prevData.interest.unpaidDemand || 0;
+    const interestTotalDemand = interestPrevDemand + interestCurrDemand;
+    const interestUnpaidDemand = Math.max(0, interestTotalDemand - actualInterest);
+    const interestOpeningBalance = 0; // Will be calculated by backend
+    const interestClosingBalance = interestOpeningBalance + actualInterest;
+
+    // Calculate saving demand details
+    // If previous month paid more than demand, previous demand = 0
+    let savingPrevDemand = 0;
+    if (prevData.saving.actualPaid > prevData.saving.totalDemand) {
+      savingPrevDemand = 0;
+    } else {
+      savingPrevDemand = prevData.saving.unpaidDemand || 0;
+    }
+    const savingCurrDemand = savingDue;
+    const savingTotalDemand = savingPrevDemand + savingCurrDemand;
+    const savingUnpaidDemand = Math.max(0, savingTotalDemand - actualSaving);
+    const savingOpeningBalance = openingSaving; // Simplified - backend will calculate cumulative
+    const savingClosingBalance = savingOpeningBalance + actualSaving;
 
     return {
       saving: {
-        prev: 0,
-        curr: savingDue,
-        total: savingDue,
+        prev: savingPrevDemand,
+        curr: savingCurrDemand,
+        total: savingTotalDemand,
         actual: actualSaving,
-        unpaid: Math.max(savingDue - actualSaving, 0),
-        opening: openingSaving,
-        closing: closingSaving,
+        unpaid: savingUnpaidDemand,
+        opening: savingOpeningBalance,
+        closing: savingClosingBalance,
       },
       loan: {
-        prev: 0,
-        curr: 0,
-        total: actualLoan,
+        prev: loanPrevDemand,
+        curr: loanCurrDemand,
+        total: loanTotalDemand,
         actual: actualLoan,
-        unpaid: Math.max(0, openingLoan - actualLoan),
-        opening: openingLoan,
-        closing: closingLoan,
+        unpaid: loanUnpaidDemand,
+        opening: loanOpeningBalance,
+        closing: loanClosingBalance,
+      },
+      interest: {
+        prev: interestPrevDemand,
+        curr: interestCurrDemand,
+        total: interestTotalDemand,
+        actual: actualInterest,
+        unpaid: interestUnpaidDemand,
+        opening: interestOpeningBalance,
+        closing: interestClosingBalance,
       },
       fd: {
         prev: 0,
         curr: 0,
-        total: actualFd,
+        total: 0,
         actual: actualFd,
         unpaid: 0,
         opening: openingFd,
-        closing: closingFd,
-      },
-      interest: {
-        prev: 0,
-        curr: 0,
-        total: actualInterest,
-        actual: actualInterest,
-        unpaid: Math.max(0, openingInterest - actualInterest),
-        opening: openingInterest,
-        closing: closingInterest,
+        closing: openingFd + actualFd,
       },
       yogdan: {
         prev: 0,
@@ -148,9 +369,44 @@ export default function DemandRecovery() {
         actual: actualYogdan,
         unpaid: 0,
         opening: openingYogdan,
-        closing: closingYogdan,
+        closing: openingYogdan + actualYogdan,
       },
-      other: { prev: 0, curr: 0, total: actualOther, actual: actualOther, unpaid: 0, opening: 0, closing: 0 },
+      memFeesSHG: {
+        prev: 0,
+        curr: 0,
+        total: actualMemFeesSHG,
+        actual: actualMemFeesSHG,
+        unpaid: 0,
+        opening: 0,
+        closing: 0,
+      },
+      memFeesSamiti: {
+        prev: 0,
+        curr: 0,
+        total: actualMemFeesSamiti,
+        actual: actualMemFeesSamiti,
+        unpaid: 0,
+        opening: 0,
+        closing: 0,
+      },
+      penalty: {
+        prev: 0,
+        curr: 0,
+        total: actualPenalty,
+        actual: actualPenalty,
+        unpaid: 0,
+        opening: 0,
+        closing: 0,
+      },
+      other: {
+        prev: 0,
+        curr: 0,
+        total: actualOther,
+        actual: actualOther,
+        unpaid: 0,
+        opening: 0,
+        closing: 0,
+      },
     };
   };
 
@@ -178,18 +434,6 @@ export default function DemandRecovery() {
       })
       .finally(() => setGroupsLoading(false));
   }, [isAdminMode]);
-
-  // Initialize database
-  useEffect(() => {
-    initRecoveryDB()
-      .then(() => {
-        setDbReady(true);
-      })
-      .catch((error) => {
-        console.error("Database initialization error:", error);
-        alert("Database initialization failed. Please refresh the page.");
-      });
-  }, []);
 
   // Initialize members from active group (dynamic)
   useEffect(() => {
@@ -222,31 +466,34 @@ export default function DemandRecovery() {
 
   // Load recoveries when group is loaded
   useEffect(() => {
-    if (activeGroup && dbReady) {
+    if (activeGroup) {
       loadRecoveries();
-
-      // Set up subscription
-      subscribeToRecoveries(activeGroup.id, (data) => {
-        setRecoveries(data);
-      }).then((sub) => {
-        subscriptionRef.current = sub;
-      }).catch((error) => {
-        console.error('Error setting up subscription:', error);
-      });
-
-      return () => {
-        if (subscriptionRef.current) {
-          subscriptionRef.current.unsubscribe();
-          subscriptionRef.current = null;
-        }
-      };
     }
-  }, [activeGroup, dbReady]);
+  }, [activeGroup?.id]);
 
   const loadRecoveries = async () => {
-    if (activeGroup) {
-      const data = await getRecoveriesByGroup(activeGroup.id);
-      setRecoveries(data);
+    if (!activeGroup?.id) return;
+
+    try {
+      setLoading(true);
+      const today = new Date().toLocaleDateString("en-GB");
+      const response = await getRecoveryByDate(activeGroup.id, today);
+
+      if (response?.success && response?.data?.recoveries) {
+        // Convert backend format (recoveries array) to frontend format (flat array)
+        const memberRecoveries = response.data.recoveries.map(rec => ({
+          ...rec,
+          id: rec.memberId, // Use memberId as id for compatibility
+        }));
+        setRecoveries(memberRecoveries);
+      } else {
+        setRecoveries([]);
+      }
+    } catch (error) {
+      console.error("Error loading recoveries:", error);
+      setRecoveries([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -287,8 +534,13 @@ export default function DemandRecovery() {
         const fd = parseFloat(recovery.amounts?.fd || 0);
         const interest = parseFloat(recovery.amounts?.interest || 0);
         const yogdan = parseFloat(recovery.amounts?.yogdan || 0);
-        const other = parseFloat(recovery.amounts?.other || 0);
-        const memberTotal = saving + loan + fd + interest + yogdan + other;
+        const memFeesSHG = parseFloat(recovery.amounts?.memFeesSHG || 0);
+        const memFeesSamiti = parseFloat(recovery.amounts?.memFeesSamiti || 0);
+        const penalty = parseFloat(recovery.amounts?.penalty || 0);
+        const other = (parseFloat(recovery.amounts?.other1 || 0) || 0) +
+          (parseFloat(recovery.amounts?.other2 || 0) || 0) +
+          (parseFloat(recovery.amounts?.other || 0) || 0);
+        const memberTotal = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + penalty + other;
 
         totalAmount += memberTotal;
 
@@ -311,10 +563,107 @@ export default function DemandRecovery() {
     setAttendance("present");
     setRecoveryByOther(false);
     setOtherMemberId("");
-    setAmountBreakup({ saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "" });
+    setAmountBreakup({
+      saving: "",
+      loan: "",
+      interest: "",
+      yogdan: "",
+      memFeesSHG: "",
+      memFeesSamiti: "",
+      penalty: "",
+      other: "",
+      fd: "",
+    });
+    setTotalAmount("");
+    setAutoCalculated(false);
+    setFdTimePeriod("");
     setPaymentMode({ cash: false, online: false });
     setOnlineRef("");
     setScreenshot(null);
+  };
+
+  // Auto-calculate amounts from total
+  const handleTotalAmountChange = (value) => {
+    setTotalAmount(value);
+    const total = parseFloat(value) || 0;
+
+    if (total > 0) {
+      // Get current member's demands
+      const summary = currentMember ? getDemandSummary(currentMember.id) : null;
+      const savingDue = summary?.saving?.total || 0;
+      const loanDue = summary?.loan?.total || 0;
+      const interestDue = summary?.interest?.total || 0;
+
+      // New priority order: Other > Yogdan > Mem Fees SHG > Mem Fees Samiti > Penalty > Interest > Saving > Loan
+      // If extra remains, add to Saving
+      let remaining = total;
+      const calculated = {
+        saving: "",
+        loan: "",
+        interest: "",
+        yogdan: "",
+        memFeesSHG: "",
+        memFeesSamiti: "",
+        penalty: "",
+        other: "",
+        fd: "",
+      };
+
+      // 1. Allocate to Other (optional, no demand - skip for now, will be allocated last if extra)
+      // We'll handle this at the end
+
+      // 2. Allocate to Yogdan (optional, no demand - skip for now)
+
+      // 3. Allocate to Member Fees SHG (yearly, optional, no monthly demand - skip for now)
+
+      // 4. Allocate to Member Fees Samiti (yearly, optional, no monthly demand - skip for now)
+
+      // 5. Allocate to Penalty (optional, no demand - skip for now)
+
+      // 6. Allocate to Interest on Loan (if due)
+      if (interestDue > 0 && remaining > 0) {
+        const interestAmount = Math.min(interestDue, remaining);
+        calculated.interest = interestAmount.toFixed(2);
+        remaining -= interestAmount;
+      }
+
+      // 7. Allocate to Saving (if due)
+      if (savingDue > 0 && remaining > 0) {
+        const savingAmount = Math.min(savingDue, remaining);
+        calculated.saving = savingAmount.toFixed(2);
+        remaining -= savingAmount;
+      }
+
+      // 8. Allocate to Loan (if due)
+      if (loanDue > 0 && remaining > 0) {
+        const loanAmount = Math.min(loanDue, remaining);
+        calculated.loan = loanAmount.toFixed(2);
+        remaining -= loanAmount;
+      }
+
+      // 9. If there's remaining money after meeting all demands, add to Saving
+      if (remaining > 0) {
+        const currentSaving = parseFloat(calculated.saving) || 0;
+        calculated.saving = (currentSaving + remaining).toFixed(2);
+      }
+
+      setAmountBreakup(calculated);
+      setAutoCalculated(true);
+    } else {
+      // Clear all if total is 0 or empty
+      setAmountBreakup({
+        saving: "",
+        loan: "",
+        interest: "",
+        yogdan: "",
+        memFeesSHG: "",
+        memFeesSamiti: "",
+        penalty: "",
+        other: "",
+        fd: "",
+      });
+      setAutoCalculated(false);
+    }
   };
 
   // Handle attendance change
@@ -399,9 +748,9 @@ export default function DemandRecovery() {
     // If absent and no recovery by other, save as absent without recovery
     if (attendance === "absent" && !recoveryByOther) {
       try {
-        const recoveryData = {
-          groupId: activeGroup.id,
-          groupName: activeGroup.name,
+        setLoading(true);
+        const today = new Date().toLocaleDateString("en-GB");
+        await updateMemberRecovery(activeGroup.id, today, {
           memberId: currentMember.id,
           memberCode: currentMember.code,
           memberName: currentMember.name,
@@ -414,19 +763,13 @@ export default function DemandRecovery() {
             fd: 0,
             interest: 0,
             yogdan: 0,
+            memFeesSHG: 0,
+            memFeesSamiti: 0,
+            penalty: 0,
             other: 0,
           },
           paymentMode: { cash: false, online: false },
-          onlineRef: null,
-          screenshot: null,
-          date: new Date().toLocaleDateString("en-GB"),
-        };
-
-        if (currentMemberRecovery) {
-          await deleteRecovery(currentMemberRecovery.id);
-        }
-
-        await saveRecovery(recoveryData);
+        });
         await loadRecoveries();
 
         // Move to next member or summary
@@ -439,9 +782,11 @@ export default function DemandRecovery() {
         return;
       } catch (error) {
         console.error("Error saving recovery:", error);
-        alert("Error saving record");
-        return;
+        alert(error?.response?.data?.message || error?.message || "Error saving record");
+      } finally {
+        setLoading(false);
       }
+      return;
     }
 
     // For present members or absent with recovery by other
@@ -460,8 +805,11 @@ export default function DemandRecovery() {
     const fd = parseFloat(amountBreakup.fd) || 0;
     const interest = parseFloat(amountBreakup.interest) || 0;
     const yogdan = parseFloat(amountBreakup.yogdan) || 0;
+    const memFeesSHG = parseFloat(amountBreakup.memFeesSHG) || 0;
+    const memFeesSamiti = parseFloat(amountBreakup.memFeesSamiti) || 0;
+    const penalty = parseFloat(amountBreakup.penalty) || 0;
     const other = parseFloat(amountBreakup.other) || 0;
-    const total = saving + loan + fd + interest + yogdan + other;
+    const total = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + penalty + other;
 
     if (total === 0) {
       alert("Please enter at least one amount");
@@ -469,9 +817,16 @@ export default function DemandRecovery() {
     }
 
     try {
-      const recoveryData = {
-        groupId: activeGroup.id,
-        groupName: activeGroup.name,
+      // Get opening FD to determine if this is a new FD
+      const openingFd = currentMember?.fdDetails?.amount || currentMember?.raw?.fdDetails?.amount || 0;
+      const isNewFd = openingFd === 0 && fd > 0;
+
+      // Get FD rate snapshot from group if creating new FD
+      const fdRateSnapshot = isNewFd ? (activeGroup?.raw?.fd_rate || activeGroup?.fd_rate || null) : null;
+
+      const today = new Date().toLocaleDateString("en-GB");
+
+      const memberRecovery = {
         memberId: currentMember.id,
         memberCode: currentMember.code,
         memberName: currentMember.name,
@@ -484,19 +839,19 @@ export default function DemandRecovery() {
           fd,
           interest,
           yogdan,
+          memFeesSHG,
+          memFeesSamiti,
+          penalty,
           other,
         },
+        fd_time_period: isNewFd && fdTimePeriod ? parseInt(fdTimePeriod) : null,
+        fd_rate_snapshot: fdRateSnapshot,
         paymentMode,
         onlineRef: paymentMode.online ? onlineRef : null,
         screenshot: screenshot || null,
-        date: new Date().toLocaleDateString("en-GB"),
       };
 
-      if (currentMemberRecovery) {
-        await deleteRecovery(currentMemberRecovery.id);
-      }
-
-      await saveRecovery(recoveryData);
+      await updateMemberRecovery(activeGroup.id, today, memberRecovery);
       await loadRecoveries();
 
       // Move to next member or summary
@@ -526,42 +881,28 @@ export default function DemandRecovery() {
     }
 
     try {
-      // For group panel, create approval request; for admin, save directly to MongoDB
+      setLoading(true);
+      const today = new Date().toLocaleDateString("en-GB");
+
+      // Update group photo in recovery session
+      await updateRecoveryPhoto(activeGroup.id, today, groupPhoto);
+
+      // For group panel, create approval request; for admin, recovery is already saved
       if (currentGroup) {
-        // Group panel: create approval request
+        // Group panel: create approval request for the recovery session
         await createApprovalRequest("recovery", {
-          recoveries,
+          groupId: activeGroup.id,
+          groupName: activeGroup.name,
+          date: today,
           groupPhoto,
           totals,
           memberCount: allMembers.length,
-          date: new Date().toLocaleDateString("en-GB"),
         }, activeGroup.id, activeGroup.name);
         alert("Recovery data submitted for approval!");
       } else {
-        // Admin: directly save to MongoDB
-        await registerRecovery({
-          groupId: activeGroup.id,
-          groupName: activeGroup.name,
-          groupCode: activeGroup.code,
-          recoveries,
-          groupPhoto,
-          totals,
-          memberCount: allMembers.length,
-          date: new Date().toLocaleDateString("en-GB"),
-        });
+        // Admin: recovery data is already saved via updateMemberRecovery
         alert("Recovery data saved successfully!");
       }
-
-      await saveGroupPhoto({
-        groupId: activeGroup.id,
-        groupName: activeGroup.name,
-        photo: groupPhoto,
-        totalCash: totals.totalCash,
-        totalOnline: totals.totalOnline,
-        totalAmount: totals.totalAmount,
-        memberCount: allMembers.length,
-        date: new Date().toLocaleDateString("en-GB"),
-      });
 
       // Reset everything
       setRecoveries([]);
@@ -571,7 +912,9 @@ export default function DemandRecovery() {
       resetForm();
     } catch (error) {
       console.error("Error finalizing:", error);
-      alert("Error");
+      alert(error?.response?.data?.message || error?.message || "Error finalizing recovery");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -583,24 +926,19 @@ export default function DemandRecovery() {
       (r) => r.memberId === allMembers[index].id
     );
     if (memberRecovery) {
-      setAttendance(memberRecovery.attendance);
+      setAttendance(memberRecovery.attendance || "present");
       setRecoveryByOther(memberRecovery.recoveryByOther || false);
       setOtherMemberId(memberRecovery.otherMemberId || "");
       setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "" });
+      setFdTimePeriod(memberRecovery.fd_time_period ? String(memberRecovery.fd_time_period) : "");
       setPaymentMode(memberRecovery.paymentMode || { cash: false, online: false });
       setOnlineRef(memberRecovery.onlineRef || "");
+      if (memberRecovery.screenshot) {
+        setScreenshot(memberRecovery.screenshot);
+      }
     }
   };
 
-  if (!dbReady) {
-    return (
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-8 text-center">
-          <p className="text-blue-600 font-semibold">Loading database...</p>
-        </div>
-      </div>
-    );
-  }
 
   // Group panel: wait for dynamic group to load
   if (isGroupPanel && isGroupLoading) {
@@ -800,10 +1138,43 @@ export default function DemandRecovery() {
           {/* Current Member Recovery Form */}
           {currentMember && currentMemberSummary && (
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                <User size={20} className="text-blue-600" />
-                {currentMember.name} ({currentMember.code})
-              </h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                  <User size={20} className="text-blue-600" />
+                  {currentMember.name} ({currentMember.code})
+                </h3>
+                <button
+                  onClick={() => {
+                    // Get full member data from allMembers
+                    const fullMember = allMembers.find(m => m.id === currentMember.id);
+                    let memberData = null;
+
+                    if (fullMember?.raw) {
+                      // Use raw member data and ensure group is set
+                      memberData = {
+                        ...fullMember.raw,
+                        group: activeGroup?.raw || activeGroup?.id || fullMember.raw.group,
+                      };
+                    } else {
+                      // If raw data not available, construct member data
+                      memberData = {
+                        _id: currentMember.id,
+                        id: currentMember.id,
+                        Member_Id: currentMember.code,
+                        Member_Nm: currentMember.name,
+                        group: activeGroup?.raw || activeGroup?.id,
+                      };
+                    }
+
+                    setSelectedMemberForFD(memberData);
+                    setShowCreateFD(true);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm shadow-md"
+                >
+                  <Plus size={16} />
+                  Create FD
+                </button>
+              </div>
 
               {/* Demand Summary Table */}
               <div className="mb-6 overflow-x-auto">
@@ -822,18 +1193,43 @@ export default function DemandRecovery() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.entries(currentMemberSummary).map(([key, data]) => (
-                      <tr key={key} className="hover:bg-gray-50">
-                        <td className="border p-2 font-medium text-gray-800 capitalize">{key}</td>
-                        <td className="border p-2 text-center text-gray-700">{data.prev === 0 ? "—" : `₹${data.prev}`}</td>
-                        <td className="border p-2 text-center text-gray-700">{data.curr === 0 ? "—" : `₹${data.curr}`}</td>
-                        <td className="border p-2 text-center text-gray-700">{data.total === 0 ? "—" : `₹${data.total}`}</td>
-                        <td className="border p-2 text-center text-gray-700">{data.actual === 0 ? "—" : `₹${data.actual}`}</td>
-                        <td className="border p-2 text-center text-gray-700">{data.unpaid === 0 ? "—" : `₹${data.unpaid}`}</td>
-                        <td className="border p-2 text-center text-gray-700">{data.opening === 0 ? "—" : `₹${data.opening}`}</td>
-                        <td className="border p-2 text-center text-gray-700">{data.closing === 0 ? "—" : `₹${data.closing}`}</td>
-                      </tr>
-                    ))}
+                    {Object.entries(currentMemberSummary)
+                      .filter(([key, data]) => {
+                        // Always show: saving, loan, interest, fd
+                        if (['saving', 'loan', 'interest', 'fd'].includes(key)) {
+                          return true;
+                        }
+                        // Hide these categories if all values are 0: yogdan, memFeesSHG, memFeesSamiti, penalty, other
+                        const hasValue = data.prev > 0 || data.curr > 0 || data.total > 0 ||
+                          data.actual > 0 || data.unpaid > 0 || data.opening > 0 || data.closing > 0;
+                        return hasValue;
+                      })
+                      .map(([key, data]) => {
+                        // Map category keys to display names
+                        const categoryNames = {
+                          saving: "Saving",
+                          loan: "Loan",
+                          interest: "Int on loan",
+                          yogdan: "Yogdan",
+                          memFeesSHG: "Mem. Fees SHG (Yearly)",
+                          memFeesSamiti: "Mem. Fees Samiti (Yearly)",
+                          penalty: "Penalty",
+                          other: "Other",
+                          fd: "FD",
+                        };
+                        return (
+                          <tr key={key} className="hover:bg-gray-50">
+                            <td className="border p-2 font-medium text-gray-800">{categoryNames[key] || key}</td>
+                            <td className="border p-2 text-center text-gray-700">{data.prev === 0 ? "—" : `₹${data.prev}`}</td>
+                            <td className="border p-2 text-center text-gray-700">{data.curr === 0 ? "—" : `₹${data.curr}`}</td>
+                            <td className="border p-2 text-center text-gray-700">{data.total === 0 ? "—" : `₹${data.total}`}</td>
+                            <td className="border p-2 text-center text-gray-700">{data.actual === 0 ? "—" : `₹${data.actual}`}</td>
+                            <td className="border p-2 text-center text-gray-700">{data.unpaid === 0 ? "—" : `₹${data.unpaid}`}</td>
+                            <td className="border p-2 text-center text-gray-700">{data.opening === 0 ? "—" : `₹${data.opening}`}</td>
+                            <td className="border p-2 text-center text-gray-700">{data.closing === 0 ? "—" : `₹${data.closing}`}</td>
+                          </tr>
+                        );
+                      })}
                     <tr className="bg-gray-50 font-semibold">
                       <td className="border p-2 text-gray-800">TOTAL</td>
                       <td className="border p-2 text-center text-gray-800">—</td>
@@ -944,114 +1340,141 @@ export default function DemandRecovery() {
                     Enter Amount
                   </label>
                   <div className="space-y-4">
-                    <Input
-                      label="Savings"
-                      name="saving"
-                      type="number"
-                      value={amountBreakup.saving}
-                      handleChange={(e) =>
-                        setAmountBreakup({ ...amountBreakup, saving: e.target.value })
-                      }
-                      placeholder="Enter amount"
-                    />
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {[
-                        { key: "loan", label: "Loan" },
-                        { key: "fd", label: "FD" },
-                        { key: "interest", label: "Interest" },
-                        { key: "yogdan", label: "Yogdan" },
-                        { key: "other", label: "Other" },
-                      ].map(({ key, label }) => (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => toggleAmountField(key)}
-                          className={`px-4 py-2 rounded-lg font-medium text-sm ${activeAmountFields[key]
-                            ? "bg-blue-600 text-white"
-                            : "bg-gray-100 text-gray-700"
-                            }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                    {/* Total Amount Input for Auto-calculation */}
+                    <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
+                      <Input
+                        label="Total Amount (Auto-calculate)"
+                        name="totalAmount"
+                        type="number"
+                        value={totalAmount}
+                        handleChange={(e) => {
+                          handleTotalAmountChange(e.target.value);
+                        }}
+                        placeholder="Enter total amount to auto-distribute"
+                        step="0.01"
+                        min="0"
+                      />
+                      {autoCalculated && (
+                        <p className="text-xs text-blue-600 mt-2">
+                          ✓ Amounts auto-calculated. You can edit individual amounts below.
+                        </p>
+                      )}
                     </div>
 
+                    {/* Individual Amount Fields - Only show fields with values > 0 */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {activeAmountFields.loan && (
+                      {(parseFloat(amountBreakup.saving) || 0) > 0 && (
                         <Input
-                          label="Loan Amount"
+                          label="Saving"
+                          name="saving"
+                          type="number"
+                          value={amountBreakup.saving}
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, saving: e.target.value });
+                            setAutoCalculated(false); // Mark as manually edited
+                          }}
+                          placeholder="Enter saving amount"
+                          step="0.01"
+                        />
+                      )}
+                      {(parseFloat(amountBreakup.loan) || 0) > 0 && (
+                        <Input
+                          label="Loan"
                           name="loan"
                           type="number"
                           value={amountBreakup.loan}
-                          handleChange={(e) =>
-                            setAmountBreakup({ ...amountBreakup, loan: e.target.value })
-                          }
-                          placeholder="Enter loan amount"
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, loan: e.target.value });
+                            setAutoCalculated(false);
+                          }}
+                          placeholder="Enter loan payment"
+                          step="0.01"
                         />
                       )}
-                      {activeAmountFields.fd && (
+                      {(parseFloat(amountBreakup.interest) || 0) > 0 && (
                         <Input
-                          label="FD Deposit Amount"
-                          name="fd"
-                          type="number"
-                          value={amountBreakup.fd}
-                          handleChange={(e) =>
-                            setAmountBreakup({ ...amountBreakup, fd: e.target.value })
-                          }
-                          placeholder="Enter FD deposit amount"
-                        />
-                      )}
-                      {activeAmountFields.interest && (
-                        <Input
-                          label="Interest Amount"
+                          label="Interest on Loan"
                           name="interest"
                           type="number"
                           value={amountBreakup.interest}
-                          handleChange={(e) =>
-                            setAmountBreakup({ ...amountBreakup, interest: e.target.value })
-                          }
-                          placeholder="Enter interest amount"
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, interest: e.target.value });
+                            setAutoCalculated(false);
+                          }}
+                          placeholder="Enter interest payment"
+                          step="0.01"
                         />
                       )}
-                      {activeAmountFields.yogdan && (
+                      {(parseFloat(amountBreakup.yogdan) || 0) > 0 && (
                         <Input
-                          label="Yogdan Amount"
+                          label="Yogdan (when loan is given)"
                           name="yogdan"
                           type="number"
                           value={amountBreakup.yogdan}
-                          handleChange={(e) =>
-                            setAmountBreakup({ ...amountBreakup, yogdan: e.target.value })
-                          }
-                          placeholder="Enter Yogdan amount"
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, yogdan: e.target.value });
+                            setAutoCalculated(false);
+                          }}
+                          placeholder="Enter yogdan amount"
+                          step="0.01"
                         />
                       )}
-                      {activeAmountFields.other && (
+                      {(parseFloat(amountBreakup.memFeesSHG) || 0) > 0 && (
                         <Input
-                          label="Other Amount"
+                          label="Member Fees SHG (Yearly)"
+                          name="memFeesSHG"
+                          type="number"
+                          value={amountBreakup.memFeesSHG}
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, memFeesSHG: e.target.value });
+                            setAutoCalculated(false);
+                          }}
+                          placeholder="Enter SHG fees"
+                          step="0.01"
+                        />
+                      )}
+                      {(parseFloat(amountBreakup.memFeesSamiti) || 0) > 0 && (
+                        <Input
+                          label="Member Fees Samiti (Yearly)"
+                          name="memFeesSamiti"
+                          type="number"
+                          value={amountBreakup.memFeesSamiti}
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, memFeesSamiti: e.target.value });
+                            setAutoCalculated(false);
+                          }}
+                          placeholder="Enter Samiti fees"
+                          step="0.01"
+                        />
+                      )}
+                      {(parseFloat(amountBreakup.penalty) || 0) > 0 && (
+                        <Input
+                          label="Penalty"
+                          name="penalty"
+                          type="number"
+                          value={amountBreakup.penalty}
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, penalty: e.target.value });
+                            setAutoCalculated(false);
+                          }}
+                          placeholder="Enter penalty amount"
+                          step="0.01"
+                        />
+                      )}
+                      {(parseFloat(amountBreakup.other) || 0) > 0 && (
+                        <Input
+                          label="Other"
                           name="other"
                           type="number"
                           value={amountBreakup.other}
-                          handleChange={(e) =>
-                            setAmountBreakup({ ...amountBreakup, other: e.target.value })
-                          }
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, other: e.target.value });
+                            setAutoCalculated(false);
+                          }}
                           placeholder="Enter other amount"
+                          step="0.01"
                         />
                       )}
-                    </div>
-
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <p className="text-lg font-semibold text-gray-800">
-                        Total: ₹
-                        {(
-                          parseFloat(amountBreakup.saving || 0) +
-                          parseFloat(amountBreakup.loan || 0) +
-                          parseFloat(amountBreakup.fd || 0) +
-                          parseFloat(amountBreakup.interest || 0) +
-                          parseFloat(amountBreakup.yogdan || 0) +
-                          parseFloat(amountBreakup.other || 0)
-                        ).toLocaleString()}
-                      </p>
                     </div>
                   </div>
                 </div>
@@ -1278,6 +1701,42 @@ export default function DemandRecovery() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Create FD Modal */}
+      {showCreateFD && selectedMemberForFD && (
+        <CreateFD
+          member={selectedMemberForFD}
+          onClose={() => {
+            setShowCreateFD(false);
+            setSelectedMemberForFD(null);
+          }}
+          onSuccess={() => {
+            // Reload members to get updated FD data
+            if (activeGroup?.id) {
+              getMembersByGroup(activeGroup.id)
+                .then((res) => {
+                  const list = Array.isArray(res?.data) ? res.data : [];
+                  setAllMembers(
+                    list.map((m) => ({
+                      id: m._id,
+                      code: m.Member_Id,
+                      name: m.Member_Nm,
+                      raw: m,
+                      openingSaving: m.openingSaving || 0,
+                      loanDetails: m.loanDetails || {},
+                      fdDetails: m.fdDetails || {},
+                      openingYogdan: m.openingYogdan || 0,
+                      isExistingMember: m.isExistingMember || false,
+                    }))
+                  );
+                })
+                .catch((e) => {
+                  console.error("Failed to reload members:", e);
+                });
+            }
+          }}
+        />
       )}
     </div>
   );

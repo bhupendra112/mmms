@@ -13,11 +13,6 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Input, Select } from "../../components/forms/FormComponents";
-import {
-    initRecoveryDB,
-    saveRecovery,
-    getRecoveriesByGroup,
-} from "../../services/recoveryDB";
 import { useGroup } from "../../contexts/GroupContext";
 import { createApprovalRequest } from "../../services/approvalDB";
 import { registerLoan } from "../../services/loanService";
@@ -29,7 +24,6 @@ export default function LoanTaking() {
     const isAdminMode = !isGroupPanel;
     const [searchParams] = useSearchParams();
     const preselectGroupId = searchParams.get("groupId");
-    const [dbReady, setDbReady] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState(null); // For admin: selected group from list
     const [groups, setGroups] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
@@ -46,22 +40,27 @@ export default function LoanTaking() {
     const [groupBanks, setGroupBanks] = useState([]);
     const [purpose, setPurpose] = useState("");
     const [amount, setAmount] = useState("");
+    const [timePeriod, setTimePeriod] = useState("");
+    const [installmentAmount, setInstallmentAmount] = useState("");
     const [bachanPathraPhoto, setBachanPathraPhoto] = useState(null);
 
     // Determine active group: use currentGroup from context if available, otherwise use selectedGroup (admin)
     const activeGroup = currentGroup || selectedGroup;
 
-    // Initialize database
+    // Auto-calculate installment amount when amount and time period are entered
     useEffect(() => {
-        initRecoveryDB()
-            .then(() => {
-                setDbReady(true);
-            })
-            .catch((error) => {
-                console.error("Database initialization error:", error);
-                alert("Database initialization failed. Please refresh the page.");
-            });
-    }, []);
+        if (amount && timePeriod) {
+            const loanAmount = parseFloat(amount);
+            const months = parseFloat(timePeriod);
+            if (loanAmount > 0 && months > 0) {
+                const calculatedInstallment = (loanAmount / months).toFixed(2);
+                setInstallmentAmount(calculatedInstallment);
+            }
+        } else if (!amount || !timePeriod) {
+            // Clear installment if amount or time period is cleared
+            setInstallmentAmount("");
+        }
+    }, [amount, timePeriod]);
 
     // Load groups dynamically (admin mode only)
     useEffect(() => {
@@ -156,6 +155,8 @@ export default function LoanTaking() {
         setSelectedBankId("");
         setPurpose("");
         setAmount("");
+        setTimePeriod("");
+        setInstallmentAmount("");
         setBachanPathraPhoto(null);
     };
 
@@ -164,10 +165,12 @@ export default function LoanTaking() {
         if (selectedMember) {
             setTransactionType("");
             setPaymentMode("");
-            setSelectedBankId("");
-            setPurpose("");
-            setAmount("");
-            setBachanPathraPhoto(null);
+                setSelectedBankId("");
+                setPurpose("");
+                setAmount("");
+                setTimePeriod("");
+                setInstallmentAmount("");
+                setBachanPathraPhoto(null);
         }
     }, [selectedMember, allMembers]);
 
@@ -265,6 +268,8 @@ export default function LoanTaking() {
                 bankId: paymentMode === "Bank" ? selectedBankId : null,
                 purpose,
                 amount: parseFloat(amount),
+                time_period: timePeriod ? parseInt(timePeriod) : null,
+                installment_amount: installmentAmount ? parseFloat(installmentAmount) : null,
                 bachanPathraPhoto: bachanPathraPhoto || null,
                 date: new Date().toLocaleDateString("en-GB"),
                 createdAt: Date.now(),
@@ -286,25 +291,17 @@ export default function LoanTaking() {
             setHasAssetsForLoan(null);
             setTransactionType("");
             setPaymentMode("");
-            setSelectedBankId("");
-            setPurpose("");
-            setAmount("");
-            setBachanPathraPhoto(null);
+                setSelectedBankId("");
+                setPurpose("");
+                setAmount("");
+                setTimePeriod("");
+                setInstallmentAmount("");
+                setBachanPathraPhoto(null);
         } catch (error) {
             console.error("Error saving loan:", error);
             alert("Error saving loan transaction");
         }
     };
-
-    if (!dbReady) {
-        return (
-            <div className="max-w-7xl mx-auto p-6">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-8 text-center">
-                    <p className="text-blue-600 font-semibold">Loading database...</p>
-                </div>
-            </div>
-        );
-    }
 
     // Group panel: wait for dynamic group to load
     if (isGroupPanel && isGroupLoading) {
@@ -408,10 +405,12 @@ export default function LoanTaking() {
                                         setSelectedMember(null);
                                         setTransactionType("");
                                         setPaymentMode("");
-                                        setSelectedBankId("");
-                                        setPurpose("");
-                                        setAmount("");
-                                        setBachanPathraPhoto(null);
+                setSelectedBankId("");
+                setPurpose("");
+                setAmount("");
+                setTimePeriod("");
+                setInstallmentAmount("");
+                setBachanPathraPhoto(null);
                                     }
                                 }}
                                 className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
@@ -561,10 +560,12 @@ export default function LoanTaking() {
                                                         setSelectedMember(null);
                                                         setTransactionType("");
                                                         setPaymentMode("");
-                                                        setSelectedBankId("");
-                                                        setPurpose("");
-                                                        setAmount("");
-                                                        setBachanPathraPhoto(null);
+                setSelectedBankId("");
+                setPurpose("");
+                setAmount("");
+                setTimePeriod("");
+                setInstallmentAmount("");
+                setBachanPathraPhoto(null);
                                                     }}
                                                     className="text-sm text-gray-600 hover:text-gray-800"
                                                 >
@@ -671,8 +672,50 @@ export default function LoanTaking() {
                                             </div>
                                         )}
 
-                                        {/* Bachan Pathra Photo */}
+                                        {/* Time Period */}
                                         {amount && (
+                                            <div className="mb-6">
+                                                <Input
+                                                    label="Time Period (Months)"
+                                                    name="timePeriod"
+                                                    type="number"
+                                                    value={timePeriod}
+                                                    handleChange={(e) => setTimePeriod(e.target.value)}
+                                                    placeholder="Enter loan duration in months"
+                                                    min="1"
+                                                />
+                                            </div>
+                                        )}
+
+                                        {/* Installment Amount - Auto-calculated */}
+                                        {timePeriod && amount && (
+                                            <div className="mb-6">
+                                                <div className="mb-2">
+                                                    <label className="block text-sm font-semibold text-gray-700">
+                                                        Installment Amount Per Month (Auto-calculated)
+                                                    </label>
+                                                    <p className="text-xs text-gray-500 mt-1">
+                                                        Calculated: ₹{parseFloat(amount || 0).toLocaleString('en-IN')} ÷ {timePeriod} months = ₹{installmentAmount || "0.00"}
+                                                    </p>
+                                                </div>
+                                                <Input
+                                                    label=""
+                                                    name="installmentAmount"
+                                                    type="number"
+                                                    value={installmentAmount}
+                                                    handleChange={(e) => setInstallmentAmount(e.target.value)}
+                                                    placeholder="Auto-calculated monthly installment"
+                                                    min="0"
+                                                    step="0.01"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    You can manually adjust if needed
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {/* Bachan Pathra Photo */}
+                                        {(amount || timePeriod || installmentAmount) && (
                                             <div className="mb-6">
                                                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                                                     Bachan Pathra Photo (Optional)
@@ -716,10 +759,12 @@ export default function LoanTaking() {
                                                         setSelectedMember(null);
                                                         setTransactionType("");
                                                         setPaymentMode("");
-                                                        setSelectedBankId("");
-                                                        setPurpose("");
-                                                        setAmount("");
-                                                        setBachanPathraPhoto(null);
+                setSelectedBankId("");
+                setPurpose("");
+                setAmount("");
+                setTimePeriod("");
+                setInstallmentAmount("");
+                setBachanPathraPhoto(null);
                                                     }}
                                                     className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
                                                 >
@@ -756,10 +801,12 @@ export default function LoanTaking() {
                                         setSelectedMember(null);
                                         setTransactionType("");
                                         setPaymentMode("");
-                                        setSelectedBankId("");
-                                        setPurpose("");
-                                        setAmount("");
-                                        setBachanPathraPhoto(null);
+                setSelectedBankId("");
+                setPurpose("");
+                setAmount("");
+                setTimePeriod("");
+                setInstallmentAmount("");
+                setBachanPathraPhoto(null);
                                     }
                                 }}
                                 className="flex items-center gap-2 px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"

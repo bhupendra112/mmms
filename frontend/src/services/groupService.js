@@ -99,3 +99,29 @@ export const getBankDetail = async (bankId) => {
         throw err.response ? err.response.data : err;
     }
 };
+
+// -------------------------------------------------------------
+// UPDATE GROUP
+// -------------------------------------------------------------
+export const updateGroup = async (id, data) => {
+    try {
+        const payload = sanitizePayload(data);
+        const res = await httpGroup.put(`/update/${id}`, payload);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+// -------------------------------------------------------------
+// UPDATE BANK DETAIL
+// -------------------------------------------------------------
+export const updateBank = async (bankId, data) => {
+    try {
+        const payload = sanitizePayload(data);
+        const res = await httpGroup.put(`/bank/${bankId}`, payload);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};

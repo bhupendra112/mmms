@@ -25,6 +25,9 @@ export default function CreateGroup() {
         remark: "",
         govt_linked: "",
         govt_project_type: "",
+        saving_rate: "",
+        fd_rate: "",
+        loan_rate: "",
     });
 
     const govtOptions = ["Yes", "No"];
@@ -61,6 +64,9 @@ export default function CreateGroup() {
                 remark: "",
                 govt_linked: "",
                 govt_project_type: "",
+                saving_rate: "",
+                fd_rate: "",
+                loan_rate: "",
             });
         } catch (error) {
             alert(error.message || "Something went wrong!");
@@ -151,7 +157,7 @@ export default function CreateGroup() {
                             max="31"
                             placeholder="Day (1-31)"
                             className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
-                    />
+                        />
                     </div>
                     <div className="flex flex-col">
                         <label className="font-semibold mb-1.5 text-gray-700 text-sm">Meeting Date 2 - Day</label>
@@ -174,7 +180,7 @@ export default function CreateGroup() {
                             value={form.meeting_date_2_time || ""}
                             onChange={handleChange}
                             className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
-                    />
+                        />
                     </div>
                 </FormSection>
 
@@ -227,6 +233,39 @@ export default function CreateGroup() {
                         value={form.Mship_Group}
                         handleChange={handleChange}
                         placeholder="Enter membership group"
+                    />
+                    <Input
+                        type="number"
+                        label="Saving Rate (%)"
+                        name="saving_rate"
+                        value={form.saving_rate}
+                        handleChange={handleChange}
+                        placeholder="Enter saving interest rate percentage"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                    />
+                    <Input
+                        type="number"
+                        label="FD Rate (%)"
+                        name="fd_rate"
+                        value={form.fd_rate}
+                        handleChange={handleChange}
+                        placeholder="Enter Fixed Deposit interest rate percentage"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                    />
+                    <Input
+                        type="number"
+                        label="Loan Rate (%)"
+                        name="loan_rate"
+                        value={form.loan_rate}
+                        handleChange={handleChange}
+                        placeholder="Enter loan interest rate percentage"
+                        step="0.01"
+                        min="0"
+                        max="100"
                     />
                 </FormSection>
 
@@ -301,6 +340,9 @@ export default function CreateGroup() {
                                         remark: "",
                                         govt_linked: "",
                                         govt_project_type: "",
+                                        saving_rate: "",
+                                        fd_rate: "",
+                                        loan_rate: "",
                                     });
                                 }
                             }}

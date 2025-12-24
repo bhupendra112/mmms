@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createBank, getGroupBanks, getGroups } from "../../services/groupService";
-import { Building2, Search, Banknote, Calendar, DollarSign, FileText } from "lucide-react";
+import { Building2, Search, Banknote, Calendar, DollarSign, FileText, Download } from "lucide-react";
 import { Input, Select, FormSection } from "../../components/forms/FormComponents";
 import { useSearchParams } from "react-router-dom";
+import { exportMemberLedger } from "../../services/memberService";
+import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
 
 export default function BankDetails() {
     const [searchParams] = useSearchParams();
@@ -14,6 +16,8 @@ export default function BankDetails() {
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [banks, setBanks] = useState([]);
     const [banksLoading, setBanksLoading] = useState(false);
+    const [exportLoading, setExportLoading] = useState(false);
+    const [dateRange, setDateRange] = useState({ fromDate: "", toDate: "" });
     const [form, setForm] = useState({
         bank_name: "",
         account_no: "",
@@ -83,6 +87,40 @@ export default function BankDetails() {
 
     const handleChange = (e) => {
         setForm({ ...form, [e.target.name]: e.target.value });
+    };
+
+    const handleExportGroupLedger = async (format = 'excel') => {
+        if (!selectedGroup) {
+            alert("Please select a group first");
+            return;
+        }
+
+        try {
+            setExportLoading(true);
+            const filters = {
+                groupId: selectedGroup.id,
+                fromDate: dateRange.fromDate || undefined,
+                toDate: dateRange.toDate || undefined,
+            };
+
+            const response = await exportMemberLedger(filters);
+
+            if (response?.success && response?.data && response.data.length > 0) {
+                const groupName = selectedGroup.name || "Group";
+                if (format === 'excel') {
+                    exportMemberLedgerToExcel(response.data, `${groupName}_All_Members_Ledger`);
+                } else {
+                    exportMemberLedgerToPDF(response.data, `${groupName}_All_Members_Ledger`);
+                }
+            } else {
+                alert("No ledger data found to export");
+            }
+        } catch (error) {
+            console.error("Error exporting ledger:", error);
+            alert("Failed to export ledger. Please try again.");
+        } finally {
+            setExportLoading(false);
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -199,10 +237,15 @@ export default function BankDetails() {
             {/* Existing Banks List */}
             {selectedGroup && (
                 <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                    <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                        <Banknote size={24} className="text-blue-600" />
-                        Existing Bank Accounts ({banks.length})
-                    </h2>
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                            <Banknote size={24} className="text-blue-600" />
+                            Existing Bank Accounts ({banks.length})
+                        </h2>
+
+                        {/* Export Section */}
+
+                    </div>
                     {banksLoading ? (
                         <p className="text-gray-600">Loading bank accounts…</p>
                     ) : banks.length === 0 ? (

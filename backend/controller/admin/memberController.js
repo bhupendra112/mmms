@@ -1,6 +1,6 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
-import { GroupMaster, Member } from "../../model/index.js";
+import { GroupMaster, Member, LoanMaster, RecoveryMaster, FDMaster } from "../../model/index.js";
 
 export const registerMember = async (req, res) => {
     try {
@@ -134,6 +134,12 @@ export const registerMember = async (req, res) => {
             return apiResponse.error(res, "Valid group_id/group_code/Group_Name is required", 400);
         }
 
+        // For existing members, capture saving_per_member snapshot from group
+        if (payload.isExistingMember) {
+            // Capture saving_per_member snapshot for existing members
+            payload.saving_per_member_snapshot = groupDoc.saving_per_member || null;
+        }
+
         // Create new Member
         const member = await Member.create({
             ...payload,
@@ -178,6 +184,327 @@ export const getMemberDetail = async (req, res) => {
         if (!member) return apiResponse.error(res, "Member not found", 404);
         return apiResponse.success(res, "Member detail fetched successfully", member);
     } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Helper function to calculate member ledger
+const calculateMemberLedger = async (member, fromDate, toDate) => {
+    const entries = [];
+    const memberId = member._id.toString();
+    const groupId = member.group?._id || member.group;
+    
+    // Initialize running balances
+    let runningSavings = member.openingSaving || 0;
+    let runningLoan = member.loanDetails?.amount || 0;
+    let runningFD = member.fdDetails?.amount || 0;
+    let runningInterest = member.loanDetails?.overdueInterest || 0;
+    let runningYogdan = member.openingYogdan || 0;
+    
+    // Date range filter
+    let dateFilter = {};
+    if (fromDate || toDate) {
+        dateFilter = {};
+        if (fromDate) {
+            const from = new Date(fromDate);
+            from.setHours(0, 0, 0, 0);
+            dateFilter.$gte = from;
+        }
+        if (toDate) {
+            const to = new Date(toDate);
+            to.setHours(23, 59, 59, 999);
+            dateFilter.$lte = to;
+        }
+    }
+    
+    // Add opening balance entry if member is existing member
+    if (member.isExistingMember) {
+        const openingDate = member.Dt_Join || member.createdAt || new Date();
+        
+        // Opening Saving entry
+        if (member.openingSaving > 0) {
+            entries.push({
+                date: openingDate,
+                receipt: "Opening",
+                savingsDeposit: member.openingSaving,
+                savingsWithdraw: 0,
+                savingsBalance: runningSavings,
+                loanPaid: 0,
+                loanRecovered: 0,
+                loanBalance: runningLoan,
+                fdDeposit: member.fdDetails?.amount || 0,
+                fdWithdraw: 0,
+                fdBalance: runningFD,
+                interestDue: member.loanDetails?.overdueInterest || 0,
+                interestPaid: 0,
+                yogdan: member.openingYogdan || 0,
+                other: 0,
+            });
+        }
+        
+        // FD entry (if different date from opening)
+        if (member.fdDetails?.amount > 0 && member.fdDetails?.date && 
+            new Date(member.fdDetails.date).getTime() !== new Date(openingDate).getTime()) {
+            entries.push({
+                date: member.fdDetails.date,
+                receipt: "FD Opening",
+                savingsDeposit: 0,
+                savingsWithdraw: 0,
+                savingsBalance: runningSavings,
+                loanPaid: 0,
+                loanRecovered: 0,
+                loanBalance: runningLoan,
+                fdDeposit: member.fdDetails.amount,
+                fdWithdraw: 0,
+                fdBalance: runningFD,
+                interestDue: runningInterest,
+                interestPaid: 0,
+                yogdan: 0,
+                other: 0,
+            });
+        }
+        
+        // Loan entry (if different date from opening)
+        if (member.loanDetails?.amount > 0 && member.loanDetails?.loanDate && 
+            new Date(member.loanDetails.loanDate).getTime() !== new Date(openingDate).getTime()) {
+            entries.push({
+                date: member.loanDetails.loanDate,
+                receipt: "Loan Taken",
+                savingsDeposit: 0,
+                savingsWithdraw: 0,
+                savingsBalance: runningSavings,
+                loanPaid: 0,
+                loanRecovered: 0,
+                loanBalance: runningLoan,
+                fdDeposit: 0,
+                fdWithdraw: 0,
+                fdBalance: runningFD,
+                interestDue: runningInterest,
+                interestPaid: 0,
+                yogdan: 0,
+                other: 0,
+            });
+        }
+    }
+    
+    // Fetch loans
+    const loanFilter = { memberId: memberId };
+    if (Object.keys(dateFilter).length > 0) {
+        loanFilter.date = dateFilter;
+    }
+    const loans = await LoanMaster.find(loanFilter).sort({ date: 1 }).lean();
+    
+    // Add loan transactions
+    loans.forEach((loan) => {
+        const loanDate = loan.date || loan.createdAt;
+        const amount = parseFloat(loan.amount || 0);
+        
+        if (loan.transactionType === "Loan") {
+            runningLoan += amount;
+            entries.push({
+                date: loanDate,
+                receipt: `Loan - ${loan.purpose || "N/A"}`,
+                savingsDeposit: 0,
+                savingsWithdraw: 0,
+                savingsBalance: runningSavings,
+                loanPaid: 0,
+                loanRecovered: 0,
+                loanBalance: runningLoan,
+                fdDeposit: 0,
+                fdWithdraw: 0,
+                fdBalance: runningFD,
+                interestDue: runningInterest,
+                interestPaid: 0,
+                yogdan: 0,
+                other: 0,
+            });
+        } else if (loan.transactionType === "Saving") {
+            runningSavings += amount;
+            entries.push({
+                date: loanDate,
+                receipt: `Saving - ${loan.purpose || "N/A"}`,
+                savingsDeposit: amount,
+                savingsWithdraw: 0,
+                savingsBalance: runningSavings,
+                loanPaid: 0,
+                loanRecovered: 0,
+                loanBalance: runningLoan,
+                fdDeposit: 0,
+                fdWithdraw: 0,
+                fdBalance: runningFD,
+                interestDue: runningInterest,
+                interestPaid: 0,
+                yogdan: 0,
+                other: 0,
+            });
+        }
+    });
+    
+    // Fetch FDs from FDMaster
+    const fdFilter = { memberId: memberId };
+    if (Object.keys(dateFilter).length > 0) {
+        fdFilter.date = dateFilter;
+    }
+    const fds = await FDMaster.find(fdFilter).sort({ date: 1 }).lean();
+    
+    // Add FD transactions
+    fds.forEach((fd) => {
+        const fdDate = fd.date || fd.createdAt;
+        const amount = parseFloat(fd.amount || 0);
+        
+        if (amount > 0) {
+            runningFD += amount;
+            entries.push({
+                date: fdDate,
+                receipt: `FD - ${fd.status || "Active"}`,
+                savingsDeposit: 0,
+                savingsWithdraw: 0,
+                savingsBalance: runningSavings,
+                loanPaid: 0,
+                loanRecovered: 0,
+                loanBalance: runningLoan,
+                fdDeposit: amount,
+                fdWithdraw: 0,
+                fdBalance: runningFD,
+                interestDue: runningInterest,
+                interestPaid: 0,
+                yogdan: 0,
+                other: 0,
+            });
+        }
+    });
+    
+    // Fetch recoveries
+    const recoveryFilter = { groupId: groupId };
+    if (Object.keys(dateFilter).length > 0) {
+        recoveryFilter.date = dateFilter;
+    }
+    const recoveries = await RecoveryMaster.find(recoveryFilter).sort({ date: 1 }).lean();
+    
+    // Add recovery transactions
+    recoveries.forEach((recovery) => {
+        if (!recovery.recoveries || !Array.isArray(recovery.recoveries)) return;
+        
+        const memberRecovery = recovery.recoveries.find(
+            r => r.memberId?.toString() === memberId || r.memberId === memberId
+        );
+        
+        if (memberRecovery) {
+            const recoveryDate = recovery.date;
+            const amounts = memberRecovery.amounts || {};
+            const saving = parseFloat(amounts.saving || 0);
+            const loan = parseFloat(amounts.loan || 0);
+            const fd = parseFloat(amounts.fd || 0);
+            const interest = parseFloat(amounts.interest || 0);
+            const yogdan = parseFloat(amounts.yogdan || 0);
+            const other = parseFloat(amounts.other || 0);
+            
+            runningSavings += saving;
+            runningLoan = Math.max(0, runningLoan - loan);
+            runningFD += fd;
+            runningInterest = Math.max(0, runningInterest - interest);
+            runningYogdan += yogdan;
+            
+            entries.push({
+                date: recoveryDate,
+                receipt: "Recovery",
+                savingsDeposit: saving,
+                savingsWithdraw: 0,
+                savingsBalance: runningSavings,
+                loanPaid: loan,
+                loanRecovered: loan,
+                loanBalance: runningLoan,
+                fdDeposit: fd,
+                fdWithdraw: 0,
+                fdBalance: runningFD,
+                interestDue: runningInterest + interest,
+                interestPaid: interest,
+                yogdan: yogdan,
+                other: other,
+            });
+        }
+    });
+    
+    // Sort by date
+    entries.sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    // Calculate summary
+    const summary = {
+        totalSavingsDeposit: entries.reduce((sum, e) => sum + (e.savingsDeposit || 0), 0),
+        totalSavingsWithdraw: entries.reduce((sum, e) => sum + (e.savingsWithdraw || 0), 0),
+        totalLoanPaid: entries.reduce((sum, e) => sum + (e.loanPaid || 0), 0),
+        totalLoanRecovered: entries.reduce((sum, e) => sum + (e.loanRecovered || 0), 0),
+        totalFdDeposit: entries.reduce((sum, e) => sum + (e.fdDeposit || 0), 0),
+        totalFdWithdraw: entries.reduce((sum, e) => sum + (e.fdWithdraw || 0), 0),
+        totalInterestPaid: entries.reduce((sum, e) => sum + (e.interestPaid || 0), 0),
+        totalYogdan: entries.reduce((sum, e) => sum + (e.yogdan || 0), 0),
+        totalOther: entries.reduce((sum, e) => sum + (e.other || 0), 0),
+        openingSavings: member.openingSaving || 0,
+        openingLoan: member.loanDetails?.amount || 0,
+        openingFD: member.fdDetails?.amount || 0,
+        openingInterest: member.loanDetails?.overdueInterest || 0,
+        openingYogdan: member.openingYogdan || 0,
+        closingSavings: runningSavings,
+        closingLoan: runningLoan,
+        closingFD: runningFD,
+        closingInterest: runningInterest,
+        closingYogdan: runningYogdan,
+    };
+    
+    return {
+        entries,
+        summary,
+    };
+};
+
+// Export member ledger
+export const exportMemberLedger = async (req, res) => {
+    try {
+        const { memberId, groupId, fromDate, toDate } = req.query;
+        
+        // Build member filter
+        const memberFilter = {};
+        if (memberId) {
+            memberFilter._id = memberId;
+        }
+        if (groupId) {
+            memberFilter.group = groupId;
+        }
+        
+        // Fetch members
+        const members = await Member.find(memberFilter)
+            .populate("group", "group_name group_code")
+            .lean();
+        
+        if (!members || members.length === 0) {
+            return apiResponse.error(res, "No members found", 404);
+        }
+        
+        // Calculate ledger for each member
+        const ledgerData = [];
+        for (const member of members) {
+            const ledger = await calculateMemberLedger(member, fromDate, toDate);
+            
+            ledgerData.push({
+                memberInfo: {
+                    id: member._id,
+                    code: member.Member_Id,
+                    name: member.Member_Nm,
+                    fatherName: member.F_H_Name || member.F_H_FatherName,
+                    village: member.Village,
+                    groupName: member.group?.group_name || member.Group_Name,
+                    groupCode: member.group?.group_code,
+                    joiningDate: member.Dt_Join || member.createdAt,
+                    isExistingMember: member.isExistingMember || false,
+                },
+                ledger: ledger.entries,
+                summary: ledger.summary,
+            });
+        }
+        
+        return apiResponse.success(res, "Member ledger exported successfully", ledgerData);
+    } catch (error) {
+        console.error("Error exporting member ledger:", error);
         return apiResponse.error(res, error.message, 500);
     }
 };

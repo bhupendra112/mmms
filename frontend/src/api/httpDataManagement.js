@@ -8,7 +8,8 @@ const getApiOrigin = () => {
         return new URL(raw).origin;
     } catch {
         const match = raw.match(/^(https?:\/\/[^/]+)/i);
-        return match ? match[1] : "http://localhost:8080";
+        // Use environment variable or default to production URL
+        return match ? match[1] : (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
     }
 };
 

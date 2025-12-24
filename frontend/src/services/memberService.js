@@ -49,4 +49,14 @@ export const getMemberDetail = async (id) => {
   return res.data;
 };
 
+export const exportMemberLedger = async (filters = {}) => {
+  const params = {};
+  if (filters.memberId) params.memberId = filters.memberId;
+  if (filters.groupId) params.groupId = filters.groupId;
+  if (filters.fromDate) params.fromDate = filters.fromDate;
+  if (filters.toDate) params.toDate = filters.toDate;
+  
+  const res = await httpMember.get("/export-ledger", { params });
+  return res.data;
+};
 

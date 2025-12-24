@@ -6,6 +6,8 @@ import loanRouter from "./loanRouter.js"
 import recoveryRouter from "./recoveryRouter.js"
 import groupAuthRouter from "./groupAuthRouter.js"
 import dataManagementRouter from "./dataManagementRouter.js"
+import fdRouter from "./fdRouter.js"
+import paymentRouter from "./paymentRouter.js"
 
 const router = express.Router();
 
@@ -18,6 +20,8 @@ const routeArray = [
     { path: "/recovery", route: recoveryRouter },
     { path: "/group-auth", route: groupAuthRouter },
     { path: "/data-management", route: dataManagementRouter },
+    { path: "/fd", route: fdRouter },
+    { path: "/payment", route: paymentRouter },
 ];
 
 // ✅ Register routes

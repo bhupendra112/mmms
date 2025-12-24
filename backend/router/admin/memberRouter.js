@@ -1,7 +1,8 @@
 import express from "express";
 import { registerMemberSchema } from "../../validation/adminValidation.js";
-import { getMemberDetail, listMembers, listMembersByGroup, registerMember } from "../../controller/admin/memberController.js";
+import { getMemberDetail, listMembers, listMembersByGroup, registerMember, exportMemberLedger } from "../../controller/admin/memberController.js";
 import upload from "../../config/multerConfig.js";
+import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
 
@@ -15,6 +16,10 @@ router.get("/by-group/:groupId", (req, res) => {
 
 router.get("/detail/:id", (req, res) => {
     return getMemberDetail(req, res);
+});
+
+router.get("/export-ledger", authAdmin, (req, res) => {
+    return exportMemberLedger(req, res);
 });
 
 // Handle file uploads with multer - using fields to handle multiple optional files

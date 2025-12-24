@@ -26,6 +26,9 @@ const LoanMasterSchema = new mongoose.Schema({
     },
     purpose: { type: String },
     amount: { type: Number, required: true },
+    time_period: { type: Number }, // Loan duration in months
+    installment_amount: { type: Number }, // Monthly installment amount
+    loan_rate_snapshot: { type: Number }, // Snapshot of loan_rate from group at time of loan creation
     bachanPathraPhoto: { type: String }, // base64 or URL
     date: { type: Date, required: true },
 

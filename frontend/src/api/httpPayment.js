@@ -8,24 +8,26 @@ const getApiOrigin = () => {
         return new URL(raw).origin;
     } catch {
         const match = raw.match(/^(https?:\/\/[^/]+)/i);
-        // Use environment variable or default to production URL
-        return match ? match[1] : (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
+        return match ? match[1] : "http://localhost:8080";
     }
 };
 
-const httpGroup = axios.create({
-    baseURL: `${getApiOrigin()}/api/admin/group`,
+const httpPayment = axios.create({
+    baseURL: `${getApiOrigin()}/api/admin/payment`,
     headers: { "Content-Type": "application/json" },
 });
 
-httpGroup.interceptors.request.use(
+// Request interceptor - add token
+httpPayment.interceptors.request.use(
     createRequestInterceptor(getAuthToken),
     (error) => Promise.reject(error)
 );
 
-httpGroup.interceptors.response.use(
+// Response interceptor
+httpPayment.interceptors.response.use(
     (res) => res,
     createErrorInterceptor(true) // true = isAdmin
 );
 
-export default httpGroup;
+export default httpPayment;
+

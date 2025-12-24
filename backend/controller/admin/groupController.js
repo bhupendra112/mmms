@@ -260,3 +260,97 @@ export const getBankDetail = async (req, res) => {
         return apiResponse.error(res, error.message, 500);
     }
 };
+
+// ------------------------------------------------------------------
+// PUT: UPDATE GROUP
+// ------------------------------------------------------------------
+export const updateGroup = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return apiResponse.error(res, "Group id is required", 400);
+        }
+
+        const group = await GroupMaster.findById(id);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        // If group_code is being updated, check for duplicates
+        if (req.body.group_code && req.body.group_code !== group.group_code) {
+            const exists = await GroupMaster.findOne({ group_code: req.body.group_code });
+            if (exists) {
+                return apiResponse.error(res, "Group code already exists", 400);
+            }
+        }
+
+        // Update group
+        const updatedGroup = await GroupMaster.findByIdAndUpdate(
+            id,
+            { $set: req.body },
+            { new: true, runValidators: true }
+        ).populate("bankmaster").populate("bankmasters").lean();
+
+        return apiResponse.success(res, "Group updated successfully", updatedGroup);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// PUT: UPDATE BANK DETAIL
+// ------------------------------------------------------------------
+export const updateBankDetail = async (req, res) => {
+    try {
+        const { bankId } = req.params;
+        if (!bankId) {
+            return apiResponse.error(res, "Bank id is required", 400);
+        }
+
+        const bank = await BankMaster.findById(bankId);
+        if (!bank) {
+            return apiResponse.error(res, "Bank not found", 404);
+        }
+
+        // If account_no is being updated, check for duplicates
+        if (req.body.account_no && req.body.account_no !== bank.account_no) {
+            const exists = await BankMaster.findOne({ account_no: req.body.account_no });
+            if (exists) {
+                return apiResponse.error(res, "Account number already exists", 400);
+            }
+        }
+
+        // Update bank
+        const updatedBank = await BankMaster.findByIdAndUpdate(
+            bankId,
+            { $set: req.body },
+            { new: true, runValidators: true }
+        ).lean();
+
+        // If group_id changed, update group references
+        if (req.body.group_id && req.body.group_id !== bank.group_id?.toString()) {
+            // Remove from old group
+            if (bank.group_id) {
+                await GroupMaster.findByIdAndUpdate(
+                    bank.group_id,
+                    {
+                        $pull: { bankmasters: bankId },
+                        $unset: { bankmaster: bank.group_id === bankId ? "" : undefined }
+                    }
+                );
+            }
+            // Add to new group
+            await GroupMaster.findByIdAndUpdate(
+                req.body.group_id,
+                {
+                    $addToSet: { bankmasters: bankId },
+                    $set: { bankmaster: bankId } // Set as primary
+                }
+            );
+        }
+
+        return apiResponse.success(res, "Bank updated successfully", updatedBank);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};

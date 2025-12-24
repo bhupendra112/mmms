@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Building2, Users, Banknote, TrendingUp } from "lucide-react";
+import { Building2, Users, Banknote, TrendingUp, Download, FileText } from "lucide-react";
 import { getDashboardStatistics } from "../../services/dataManagementService";
+import { exportMemberLedger } from "../../services/memberService";
+import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
 
 export default function AdminDashboard() {
     const [stats, setStats] = useState([
@@ -35,6 +37,35 @@ export default function AdminDashboard() {
     ]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [exportLoading, setExportLoading] = useState(false);
+    const [dateRange, setDateRange] = useState({ fromDate: "", toDate: "" });
+
+    const handleExportAllMembers = async (format = 'excel') => {
+        try {
+            setExportLoading(true);
+            const filters = {
+                fromDate: dateRange.fromDate || undefined,
+                toDate: dateRange.toDate || undefined,
+            };
+
+            const response = await exportMemberLedger(filters);
+
+            if (response?.success && response?.data && response.data.length > 0) {
+                if (format === 'excel') {
+                    exportMemberLedgerToExcel(response.data, `All_Members_Ledger_All_Groups`);
+                } else {
+                    exportMemberLedgerToPDF(response.data, `All_Members_Ledger_All_Groups`);
+                }
+            } else {
+                alert("No ledger data found to export");
+            }
+        } catch (error) {
+            console.error("Error exporting ledger:", error);
+            alert("Failed to export ledger. Please try again.");
+        } finally {
+            setExportLoading(false);
+        }
+    };
 
     useEffect(() => {
         loadDashboardStats();
@@ -135,6 +166,9 @@ export default function AdminDashboard() {
                             );
                         })}
                     </div>
+
+                    {/* Export All Members Ledger Section */}
+
                 </>
             )}
 

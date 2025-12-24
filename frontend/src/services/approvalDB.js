@@ -69,7 +69,9 @@ export const initApprovalDB = async () => {
             });
         } catch (addError) {
             // Collections might already exist, check if they're accessible
-            console.warn("Collections might already exist:", addError.message);
+            if (import.meta.env.DEV) {
+                console.warn("Collections might already exist:", addError.message);
+            }
         }
 
         // Wait a moment for collections to be fully initialized
@@ -147,7 +149,9 @@ export const getAllApprovals = async (groupId = null) => {
         }
 
         if (!approvalDB || !approvalDB.approvals) {
-            console.warn("Approval database not ready, returning empty array");
+            if (import.meta.env.DEV) {
+                console.warn("Approval database not ready, returning empty array");
+            }
             return [];
         }
 
@@ -249,7 +253,9 @@ export const getUnsyncedApprovals = async () => {
         }
 
         if (!approvalDB || !approvalDB.approvals) {
-            console.warn("Approval database not ready, returning empty array");
+            if (import.meta.env.DEV) {
+                console.warn("Approval database not ready, returning empty array");
+            }
             return [];
         }
 

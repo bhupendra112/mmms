@@ -4,7 +4,7 @@ import { User, IdCard, Building2, DollarSign, GraduationCap, MapPin, Users } fro
 import { Input, Select, TextArea, FormSection, FileInput } from "../components/forms/FormComponents";
 import { createApprovalRequest } from "../services/approvalDB";
 import { useGroup } from "../contexts/GroupContext";
-import { getGroups } from "../services/groupService";
+import { getGroups, getGroupDetail } from "../services/groupService";
 import { registerMember as registerMemberApi } from "../services/memberService";
 
 export default function MemberRegistration() {
@@ -65,8 +65,11 @@ export default function MemberRegistration() {
       amount: "",
       loanDate: "",
       overdueInterest: "",
+      time_period: "",
+      installment_amount: "",
     },
     openingYogdan: "",
+    saving_per_member_snapshot: "",
   });
 
   // Load groups list for admin mode (for dynamic group selection)
@@ -104,6 +107,64 @@ export default function MemberRegistration() {
       group_id: currentGroup.id || "",
     }));
   }, [currentGroup]);
+
+  // Auto-populate saving_per_member_snapshot when isExistingMember is checked and group is selected
+  useEffect(() => {
+    if (!form.isExistingMember || !form.group_id) return;
+    
+    const loadGroupSavingRate = async () => {
+      try {
+        const groupRes = await getGroupDetail(form.group_id);
+        const group = groupRes?.data;
+        
+        if (group) {
+          setForm((prev) => ({
+            ...prev,
+            saving_per_member_snapshot: group.saving_per_member || "",
+          }));
+        }
+      } catch (err) {
+        console.error("Error loading group saving rate:", err);
+      }
+    };
+    
+    loadGroupSavingRate();
+  }, [form.isExistingMember, form.group_id]);
+
+  // Calculate installment amount when loan amount and time period are entered
+  useEffect(() => {
+    if (form.loanDetails.amount && form.loanDetails.time_period) {
+      const loanAmount = parseFloat(form.loanDetails.amount || 0);
+      const months = parseFloat(form.loanDetails.time_period || 0);
+      
+      if (loanAmount > 0 && months > 0) {
+        const calculatedInstallment = (loanAmount / months).toFixed(2);
+        setForm((prev) => ({
+          ...prev,
+          loanDetails: {
+            ...prev.loanDetails,
+            installment_amount: calculatedInstallment,
+          },
+        }));
+      } else {
+        setForm((prev) => ({
+          ...prev,
+          loanDetails: {
+            ...prev.loanDetails,
+            installment_amount: "",
+          },
+        }));
+      }
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        loanDetails: {
+          ...prev.loanDetails,
+          installment_amount: "",
+        },
+      }));
+    }
+  }, [form.loanDetails.amount, form.loanDetails.time_period]);
 
   const groupOptions = useMemo(() => {
     return groups.map((g) => ({
@@ -246,8 +307,9 @@ export default function MemberRegistration() {
         isExistingMember: false,
         openingSaving: "",
         fdDetails: { date: "", maturityDate: "", amount: "", interest: "" },
-        loanDetails: { amount: "", loanDate: "", overdueInterest: "" },
+                    loanDetails: { amount: "", loanDate: "", overdueInterest: "", time_period: "", installment_amount: "" },
         openingYogdan: "",
+                    saving_per_member_snapshot: "",
       });
     } catch (error) {
       console.error("Error submitting member registration:", error);
@@ -693,6 +755,42 @@ export default function MemberRegistration() {
               handleChange={handleChange}
               placeholder="Enter overdue interest"
             />
+            <Input
+              type="number"
+              label="Time Period (Months)"
+              name="loanDetails.time_period"
+              value={form.loanDetails.time_period}
+              handleChange={handleChange}
+              placeholder="Enter loan duration in months"
+            />
+            {form.loanDetails.amount && form.loanDetails.time_period && (
+              <div className="md:col-span-2">
+                <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg">
+                  <p className="text-sm text-gray-700">
+                    <strong>Calculated Installment:</strong> ₹
+                    {(
+                      parseFloat(form.loanDetails.amount || 0) /
+                      parseFloat(form.loanDetails.time_period || 1)
+                    ).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}{" "}
+                    per month
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Formula: ₹{parseFloat(form.loanDetails.amount || 0).toLocaleString("en-IN")} ÷{" "}
+                    {form.loanDetails.time_period} months = ₹
+                    {(
+                      parseFloat(form.loanDetails.amount || 0) /
+                      parseFloat(form.loanDetails.time_period || 1)
+                    ).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </p>
+                </div>
+              </div>
+            )}
 
             <Input
               type="number"
@@ -707,6 +805,21 @@ export default function MemberRegistration() {
                 This is a one-time opening balance. Future Yogdan will be tracked in the recovery system.
               </p>
             </div>
+
+            <div className="md:col-span-2">
+              <h3 className="text-lg font-semibold text-gray-800 mb-3 mt-4">Saving Rate Snapshot</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                This rate is captured from the group at the time of registration. It will be used for saving demand calculations instead of current group rate.
+              </p>
+            </div>
+            <Input
+              type="number"
+              label="Saving Per Member Snapshot"
+              name="saving_per_member_snapshot"
+              value={form.saving_per_member_snapshot}
+              handleChange={handleChange}
+              placeholder="Auto-filled from group saving per member"
+            />
           </FormSection>
         )}
 
@@ -756,8 +869,9 @@ export default function MemberRegistration() {
                     isExistingMember: false,
                     openingSaving: "",
                     fdDetails: { date: "", maturityDate: "", amount: "", interest: "" },
-                    loanDetails: { amount: "", loanDate: "", overdueInterest: "" },
+                    loanDetails: { amount: "", loanDate: "", overdueInterest: "", time_period: "", installment_amount: "" },
                     openingYogdan: "",
+                    saving_per_member_snapshot: "",
                   });
                 }
               }}

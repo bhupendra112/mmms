@@ -98,3 +98,6 @@ echo "   - Frontend: /var/www/mmms/frontend/dist"
 echo "   - Backend API: Running on port 8080 (or your configured port)"
 echo ""
 
+
+
+

@@ -15,6 +15,7 @@ import AdminLoanTaking from "./screens/admin/LoanTaking";
 import AdminLoanManagement from "./screens/admin/LoanManagement";
 import AdminSettings from "./screens/admin/AdminSettings";
 import ApprovalManagement from "./screens/admin/ApprovalManagement";
+import AdminPaymentManagement from "./screens/admin/PaymentManagement";
 
 // Group Components
 import GroupNavbar from "./components/group/GroupNavbar";
@@ -22,6 +23,7 @@ import GroupDashboard from "./screens/group/GroupDashboard";
 import DemandRecoveryGroup from "./screens/group/DemandRecovery";
 import LoanTaking from "./screens/group/LoanTaking";
 import LoanManagement from "./screens/group/LoanManagement";
+import GroupPaymentManagement from "./screens/group/PaymentManagement";
 
 // Legacy Components (keeping for backward compatibility)
 import Navbar from "./components/Navbar";
@@ -62,6 +64,7 @@ function App() {
             <Route path="loan-taking" element={<AdminLoanTaking />} />
             <Route path="loan-management" element={<AdminLoanManagement />} />
             <Route path="approvals" element={<ApprovalManagement />} />
+            <Route path="payments" element={<AdminPaymentManagement />} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 
@@ -84,6 +87,7 @@ function App() {
             <Route path="ledger" element={<GroupLedger />} />
             <Route path="loans" element={<LoanManagement />} />
             <Route path="loan-taking" element={<LoanTaking />} />
+            <Route path="payments" element={<GroupPaymentManagement />} />
           </Route>
 
           {/* Auth Routes (No Layout) */}

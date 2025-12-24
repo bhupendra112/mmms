@@ -46,6 +46,8 @@ const recoverySchema = {
                 other: { type: 'number' },
             },
         },
+        fd_time_period: { type: 'number' }, // Time period in months for new FD
+        fd_rate_snapshot: { type: 'number' }, // Snapshot of fd_rate from group at time of FD creation
         paymentMode: {
             type: 'object',
             properties: {
@@ -123,51 +125,49 @@ export async function initRecoveryDB() {
     }
 
     try {
+        // Remove existing database if it exists (to fix schema issues)
+        try {
+            const Dexie = (await import('dexie')).default;
+            await Dexie.delete('recoverydb');
+        } catch (deleteError) {
+            // Ignore errors if database doesn't exist
+            if (import.meta.env.DEV) {
+                console.log('No existing database to delete or delete failed:', deleteError.message);
+            }
+        }
+
         // Create database
         const db = await createRxDatabase({
             name: 'recoverydb',
             storage: getRxStorageDexie(),
-            ignoreDuplicate: true,
         });
 
         if (!db) {
             throw new Error('Failed to create database');
         }
 
-        // Add collections - RxDB 15 returns collections and adds them to db
-        let collections;
-        try {
-            collections = await db.addCollections({
-                recoveries: {
-                    schema: recoverySchema,
-                },
-                groupPhotos: {
-                    schema: groupPhotoSchema,
-                },
-            });
-        } catch (addError) {
-            // If collections already exist, they should be on db object
-            console.warn('Collections might already exist, checking db object:', addError.message);
+        // Add collections - RxDB 15 returns collections object
+        const collections = await db.addCollections({
+            recoveries: {
+                schema: recoverySchema,
+            },
+            groupPhotos: {
+                schema: groupPhotoSchema,
+            },
+        });
+
+        // Verify collections were created
+        if (!collections || !collections.recoveries || !collections.groupPhotos) {
+            throw new Error('Collections not returned from addCollections');
         }
 
-        // In RxDB 15, collections are automatically added to db object as read-only properties
-        // They are also returned from addCollections
-        // Collections are accessible via db.recoveries and db.groupPhotos (read-only getters)
-        // Wait a moment for collections to be fully initialized
-        await new Promise(resolve => setTimeout(resolve, 50));
-
-        // Verify collections are accessible (they should be read-only properties on db)
-        if (!db.recoveries || !db.groupPhotos) {
-            // Log for debugging
-            console.error('Collections not found:', {
-                hasCollections: !!collections,
-                hasRecoveriesInCollections: !!collections?.recoveries,
-                hasPhotosInCollections: !!collections?.groupPhotos,
-                hasDbRecoveries: !!db.recoveries,
-                hasDbPhotos: !!db.groupPhotos,
-                dbKeys: db ? Object.keys(db) : 'no db',
-            });
-            throw new Error('Collections not accessible after addCollections');
+        // In RxDB 15, collections are returned from addCollections
+        // They should also be available on db object, but ensure they are
+        if (!db.recoveries) {
+            db.recoveries = collections.recoveries;
+        }
+        if (!db.groupPhotos) {
+            db.groupPhotos = collections.groupPhotos;
         }
 
         recoveryDB = db;

@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Users, Search, Plus, Building2 } from "lucide-react";
+import { Users, Search, Plus, Building2, Download, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { getGroups } from "../../services/groupService";
-import { getMembersByGroup } from "../../services/memberService";
+import { getMembersByGroup, exportMemberLedger } from "../../services/memberService";
+import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
 
 export default function AdminMembers() {
     const [searchTerm, setSearchTerm] = useState("");
@@ -11,6 +12,73 @@ export default function AdminMembers() {
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [members, setMembers] = useState([]);
     const [membersLoading, setMembersLoading] = useState(false);
+    const [exportLoading, setExportLoading] = useState(false);
+    const [dateRange, setDateRange] = useState({ fromDate: "", toDate: "" });
+
+    const handleExportMember = async (memberId, format = 'excel') => {
+        try {
+            setExportLoading(true);
+            const filters = {
+                memberId: memberId,
+                fromDate: dateRange.fromDate || undefined,
+                toDate: dateRange.toDate || undefined,
+            };
+            
+            const response = await exportMemberLedger(filters);
+            
+            if (response?.success && response?.data && response.data.length > 0) {
+                const memberData = response.data[0];
+                const memberCode = memberData.memberInfo?.code || "Member";
+                
+                if (format === 'excel') {
+                    exportMemberLedgerToExcel([memberData], `Member_${memberCode}_Ledger`);
+                } else {
+                    exportMemberLedgerToPDF([memberData], `Member_${memberCode}_Ledger`);
+                }
+            } else {
+                alert("No ledger data found to export");
+            }
+        } catch (error) {
+            console.error("Error exporting ledger:", error);
+            alert("Failed to export ledger. Please try again.");
+        } finally {
+            setExportLoading(false);
+        }
+    };
+
+    const handleBulkExport = async (format = 'excel') => {
+        if (!selectedGroup?.id) {
+            alert("Please select a group first");
+            return;
+        }
+        
+        try {
+            setExportLoading(true);
+            const filters = {
+                groupId: selectedGroup.id,
+                fromDate: dateRange.fromDate || undefined,
+                toDate: dateRange.toDate || undefined,
+            };
+            
+            const response = await exportMemberLedger(filters);
+            
+            if (response?.success && response?.data && response.data.length > 0) {
+                const groupName = selectedGroup.name || "Group";
+                if (format === 'excel') {
+                    exportMemberLedgerToExcel(response.data, `${groupName}_All_Members_Ledger`);
+                } else {
+                    exportMemberLedgerToPDF(response.data, `${groupName}_All_Members_Ledger`);
+                }
+            } else {
+                alert("No ledger data found to export");
+            }
+        } catch (error) {
+            console.error("Error exporting ledger:", error);
+            alert("Failed to export ledger. Please try again.");
+        } finally {
+            setExportLoading(false);
+        }
+    };
 
     useEffect(() => {
         setGroupsLoading(true);
@@ -119,6 +187,49 @@ export default function AdminMembers() {
                             Add Member
                         </Link>
                     </div>
+                    
+                    {/* Date Range and Bulk Export */}
+                    <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                        <h3 className="text-sm font-semibold text-gray-700 mb-3">Export Options</h3>
+                        <div className="flex items-center gap-4 mb-3">
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">From Date</label>
+                                <input
+                                    type="date"
+                                    value={dateRange.fromDate}
+                                    onChange={(e) => setDateRange(prev => ({ ...prev, fromDate: e.target.value }))}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">To Date</label>
+                                <input
+                                    type="date"
+                                    value={dateRange.toDate}
+                                    onChange={(e) => setDateRange(prev => ({ ...prev, toDate: e.target.value }))}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                />
+                            </div>
+                            <div className="flex items-end gap-2">
+                                <button
+                                    onClick={() => handleBulkExport('excel')}
+                                    disabled={exportLoading}
+                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+                                >
+                                    <Download size={16} />
+                                    {exportLoading ? "Exporting..." : "Export All (Excel)"}
+                                </button>
+                                <button
+                                    onClick={() => handleBulkExport('pdf')}
+                                    disabled={exportLoading}
+                                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm disabled:opacity-50"
+                                >
+                                    <FileText size={16} />
+                                    {exportLoading ? "Exporting..." : "Export All (PDF)"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
 
                     {membersLoading ? (
                         <div className="text-center py-12 text-gray-500">
@@ -133,7 +244,7 @@ export default function AdminMembers() {
                                         <th className="border p-3 text-left font-semibold text-gray-700">Code</th>
                                         <th className="border p-3 text-left font-semibold text-gray-700">Name</th>
                                         <th className="border p-3 text-left font-semibold text-gray-700">Village</th>
-                                        <th className="border p-3 text-left font-semibold text-gray-700">Actions</th>
+                                        <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -143,12 +254,30 @@ export default function AdminMembers() {
                                             <td className="border p-3 text-gray-800">{member.Member_Nm}</td>
                                             <td className="border p-3 text-gray-600">{member.Village || "-"}</td>
                                             <td className="border p-3">
-                                                <Link
-                                                    to={`/admin/members/${member._id}`}
-                                                    className="text-blue-600 hover:text-blue-800 mr-3"
-                                                >
-                                                    View
-                                                </Link>
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <Link
+                                                        to={`/admin/members/${member._id}`}
+                                                        className="text-blue-600 hover:text-blue-800 text-sm"
+                                                    >
+                                                        View
+                                                    </Link>
+                                                    <button
+                                                        onClick={() => handleExportMember(member._id, 'excel')}
+                                                        disabled={exportLoading}
+                                                        className="bg-green-600 text-white px-2 py-1 rounded text-sm disabled:opacity-50"
+                                                        title="Export Ledger (Excel)"
+                                                    >
+                                                        <Download size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleExportMember(member._id, 'pdf')}
+                                                        disabled={exportLoading}
+                                                        className="bg-red-600 text-white px-2 py-1 rounded text-sm disabled:opacity-50"
+                                                        title="Export Ledger (PDF)"
+                                                    >
+                                                        <FileText size={14} />
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}

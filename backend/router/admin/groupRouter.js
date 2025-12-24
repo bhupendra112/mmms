@@ -1,11 +1,11 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, addBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail } from "../../controller/admin/groupController.js";
+import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
 
-router.post("/register-group", async (req, res) => {
+router.post("/register-group", authAdmin, async (req, res) => {
     const { error } = registerGroupSchema.validate(req.body);
 
     if (error) {
@@ -17,36 +17,39 @@ router.post("/register-group", async (req, res) => {
 
     return registerGroup(req, res);
 });
-router.get("/test", (req, res) => {
-    res.send("api is correctly working ")
-})
+// UPDATE GROUP
+router.put("/update/:id", authAdmin, updateGroup);
+
 // LIST ALL GROUPS
-router.get("/list", (req, res) => {
+router.get("/list", authAdmin, (req, res) => {
     return listGroups(req, res);
 });
 
 // LIST BANKS FOR A GROUP (multiple banks)
-router.get("/:groupId/banks", (req, res) => {
+router.get("/:groupId/banks", authAdmin, (req, res) => {
     return listBanksByGroup(req, res);
 });
 
 // GROUP DETAIL BY CODE (useful for group panel)
-router.get("/by-code/:group_code", (req, res) => {
+router.get("/by-code/:group_code", authAdmin, (req, res) => {
     return getGroupByCode(req, res);
 });
 
 // GROUP DETAIL BY ID
-router.get("/detail/:id", (req, res) => {
+router.get("/detail/:id", authAdmin, (req, res) => {
     return getGroupDetail(req, res);
 });
 
 // ADD BANK WITHOUT VALIDATION
-router.post("/add-bank", (req, res) => {
+router.post("/add-bank", authAdmin, (req, res) => {
     return addBankDetail(req, res);
 });
 
+// UPDATE BANK DETAIL
+router.put("/bank/:bankId", authAdmin, updateBankDetail);
+
 // GET BANK DETAIL WITH TRANSACTIONS
-router.get("/bank/:bankId", (req, res) => {
+router.get("/bank/:bankId", authAdmin, (req, res) => {
     return getBankDetail(req, res);
 });
 

@@ -67,6 +67,7 @@ export const registerLoan = async (req, res) => {
             groupId: groupDoc._id,
             groupName: payload.groupName || groupDoc.group_name,
             groupCode: payload.groupCode || groupDoc.group_code,
+            loan_rate_snapshot: groupDoc.loan_rate || null, // Store rate snapshot
             status: "approved", // Admin actions are directly approved
             createdBy: req.user?.id || "admin",
         });

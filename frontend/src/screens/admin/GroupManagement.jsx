@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X } from "lucide-react";
+import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
-import { getGroupBanks, getGroups, getGroupDetail, getBankDetail } from "../../services/groupService";
-import { getMembersByGroup } from "../../services/memberService";
+import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, updateGroup, updateBank } from "../../services/groupService";
+import { getMembersByGroup, exportMemberLedger } from "../../services/memberService";
 import { getLoans } from "../../services/loanService";
 import { getRecoveries } from "../../services/recoveryService";
+import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
 
 export default function GroupManagement() {
     const [searchTerm, setSearchTerm] = useState("");
@@ -32,6 +33,14 @@ export default function GroupManagement() {
         totalRecovery: 0,
         loading: false,
     });
+    const [exportLoading, setExportLoading] = useState(false);
+    const [dateRange, setDateRange] = useState({ fromDate: "", toDate: "" });
+    const [showEditGroupModal, setShowEditGroupModal] = useState(false);
+    const [showEditBankModal, setShowEditBankModal] = useState(false);
+    const [editingBank, setEditingBank] = useState(null);
+    const [editGroupForm, setEditGroupForm] = useState({});
+    const [editBankForm, setEditBankForm] = useState({});
+    const [saving, setSaving] = useState(false);
 
     const mapGroupToUI = (g) => {
         if (!g) return null;
@@ -52,7 +61,7 @@ export default function GroupManagement() {
                     branch: bank.branch_name,
                 }
                 : null,
-            members: [], // TODO: will be loaded when member APIs are wired
+            members: [],
             // Finance will be calculated dynamically
         };
     };
@@ -139,6 +148,124 @@ export default function GroupManagement() {
             alert("Failed to load bank details");
         } finally {
             setBankDetailLoading(false);
+        }
+    };
+
+    const handleExportGroupLedger = async (format = 'excel') => {
+        // Check if group is selected - selectedGroup is the ID, selectedGroupData has the full object
+        const groupId = selectedGroup || selectedGroupData?.id;
+        if (!groupId) {
+            alert("Please select a group first");
+            return;
+        }
+
+        try {
+            setExportLoading(true);
+            const filters = {
+                groupId: groupId,
+                fromDate: dateRange.fromDate || undefined,
+                toDate: dateRange.toDate || undefined,
+            };
+
+            const response = await exportMemberLedger(filters);
+
+            if (response?.success && response?.data && response.data.length > 0) {
+                const groupName = selectedGroupData?.name || "Group";
+                if (format === 'excel') {
+                    exportMemberLedgerToExcel(response.data, `${groupName}_All_Members_Ledger`);
+                } else {
+                    exportMemberLedgerToPDF(response.data, `${groupName}_All_Members_Ledger`);
+                }
+            } else {
+                alert("No ledger data found to export");
+            }
+        } catch (error) {
+            console.error("Error exporting ledger:", error);
+            alert("Failed to export ledger. Please try again.");
+        } finally {
+            setExportLoading(false);
+        }
+    };
+
+    const handleEditGroup = () => {
+        if (!selectedGroupRaw) return;
+        setEditGroupForm({
+            group_name: selectedGroupRaw.group_name || "",
+            group_code: selectedGroupRaw.group_code || "",
+            cluster_name: selectedGroupRaw.cluster_name || "",
+            village: selectedGroupRaw.village || "",
+            no_members: selectedGroupRaw.no_members || "",
+            formation_date: selectedGroupRaw.formation_date ? new Date(selectedGroupRaw.formation_date).toISOString().split('T')[0] : "",
+            saving_per_member: selectedGroupRaw.saving_per_member || "",
+            membership_fees: selectedGroupRaw.membership_fees || "",
+            mitan_name: selectedGroupRaw.mitan_name || "",
+            meeting_date_1_day: selectedGroupRaw.meeting_date_1_day || "",
+            meeting_date_2_day: selectedGroupRaw.meeting_date_2_day || "",
+            meeting_date_2_time: selectedGroupRaw.meeting_date_2_time || "",
+            govt_linked: selectedGroupRaw.govt_linked || "No",
+            govt_project_type: selectedGroupRaw.govt_project_type || "",
+            other: selectedGroupRaw.other || "",
+            remark: selectedGroupRaw.remark || "",
+        });
+        setShowEditGroupModal(true);
+    };
+
+    const handleSaveGroup = async () => {
+        if (!selectedGroup) {
+            alert("Please select a group first");
+            return;
+        }
+        try {
+            setSaving(true);
+            await updateGroup(selectedGroup, editGroupForm);
+            alert("Group updated successfully");
+            setShowEditGroupModal(false);
+            // Reload group details
+            await loadGroupDetail(selectedGroup);
+        } catch (error) {
+            console.error("Error updating group:", error);
+            alert(error?.response?.data?.message || "Failed to update group");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleEditBank = (bank) => {
+        setEditingBank(bank);
+        setEditBankForm({
+            bank_name: bank.bank_name || "",
+            account_no: bank.account_no || "",
+            branch_name: bank.branch_name || "",
+            ifsc: bank.ifsc || "",
+            account_type: bank.account_type || "Saving",
+            opening_balance: bank.opening_balance || "",
+            ac_open_date: bank.ac_open_date ? new Date(bank.ac_open_date).toISOString().split('T')[0] : "",
+            govt_linked: bank.govt_linked || "No",
+            govt_project_type: bank.govt_project_type || "",
+        });
+        setShowEditBankModal(true);
+    };
+
+    const handleSaveBank = async () => {
+        if (!editingBank?._id) {
+            alert("Bank ID is missing");
+            return;
+        }
+        try {
+            setSaving(true);
+            await updateBank(editingBank._id, editBankForm);
+            alert("Bank updated successfully");
+            setShowEditBankModal(false);
+            setEditingBank(null);
+            // Reload banks
+            if (selectedGroup) {
+                await loadGroupBanks(selectedGroup);
+            }
+        } catch (error) {
+            console.error("Error updating bank:", error);
+            alert(error?.response?.data?.message || "Failed to update bank");
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -321,13 +448,13 @@ export default function GroupManagement() {
                                         <h2 className="text-2xl font-bold text-gray-800">{selectedGroupData.name}</h2>
                                         <p className="text-gray-600">Code: {selectedGroupData.code} | Village: {selectedGroupData.village}</p>
                                     </div>
-                                    <Link
-                                        to={`/admin/create-group?edit=${selectedGroupData.id}`}
+                                    <button
+                                        onClick={handleEditGroup}
                                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
                                     >
                                         <Edit size={16} />
                                         Edit Group
-                                    </Link>
+                                    </button>
                                 </div>
                                 {detailLoading && (
                                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
@@ -524,13 +651,57 @@ export default function GroupManagement() {
                                 <div className="bg-white rounded-lg shadow-md p-6">
                                     <div className="flex items-center justify-between mb-4">
                                         <h3 className="text-xl font-semibold text-gray-800">Group Members</h3>
-                                        <Link
-                                            to={`/admin/member-registration?groupId=${selectedGroupData.id}`}
-                                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                                        >
-                                            <Plus size={16} />
-                                            Add Member
-                                        </Link>
+                                        <div className="flex items-center gap-2">
+                                            <Link
+                                                to={`/admin/member-registration?groupId=${selectedGroupData.id}`}
+                                                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                            >
+                                                <Plus size={16} />
+                                                Add Member
+                                            </Link>
+                                        </div>
+                                    </div>
+
+                                    {/* Date Range Filter and Export Buttons */}
+                                    <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                                        <div className="flex items-center gap-4 mb-3">
+                                            <div className="flex-1">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">From Date</label>
+                                                <input
+                                                    type="date"
+                                                    value={dateRange.fromDate}
+                                                    onChange={(e) => setDateRange(prev => ({ ...prev, fromDate: e.target.value }))}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                                />
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">To Date</label>
+                                                <input
+                                                    type="date"
+                                                    value={dateRange.toDate}
+                                                    onChange={(e) => setDateRange(prev => ({ ...prev, toDate: e.target.value }))}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => handleExportGroupLedger('excel')}
+                                                disabled={exportLoading}
+                                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+                                            >
+                                                <Download size={16} />
+                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (Excel)"}
+                                            </button>
+                                            <button
+                                                onClick={() => handleExportGroupLedger('pdf')}
+                                                disabled={exportLoading}
+                                                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm disabled:opacity-50"
+                                            >
+                                                <FileText size={16} />
+                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (PDF)"}
+                                            </button>
+                                        </div>
                                     </div>
                                     {membersLoading && (
                                         <p className="text-gray-600 mb-4">Loading members…</p>
@@ -542,7 +713,6 @@ export default function GroupManagement() {
                                                     <th className="border p-3 text-left font-semibold text-gray-700">Code</th>
                                                     <th className="border p-3 text-left font-semibold text-gray-700">Name</th>
                                                     <th className="border p-3 text-center font-semibold text-gray-700">Status</th>
-                                                    <th className="border p-3 text-right font-semibold text-gray-700">Balance</th>
                                                     <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
                                                 </tr>
                                             </thead>
@@ -556,7 +726,6 @@ export default function GroupManagement() {
                                                                 Active
                                                             </span>
                                                         </td>
-                                                        <td className="border p-3 text-right text-gray-800">₹0</td>
                                                         <td className="border p-3 text-center">
                                                             <Link
                                                                 to={`/admin/members/${member._id}`}
@@ -569,7 +738,7 @@ export default function GroupManagement() {
                                                 ))}
                                                 {!membersLoading && groupMembers.length === 0 && (
                                                     <tr>
-                                                        <td className="border p-3 text-center text-gray-600" colSpan={5}>
+                                                        <td className="border p-3 text-center text-gray-600" colSpan={4}>
                                                             No members found for this group.
                                                         </td>
                                                     </tr>
@@ -616,13 +785,22 @@ export default function GroupManagement() {
                                                             <td className="border p-3 text-gray-600">{b.account_type}</td>
                                                             <td className="border p-3 text-gray-600">{b.branch_name || "-"}</td>
                                                             <td className="border p-3 text-center">
-                                                                <button
-                                                                    onClick={() => handleViewBank(b._id)}
-                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm mx-auto"
-                                                                >
-                                                                    <Eye size={14} />
-                                                                    View
-                                                                </button>
+                                                                <div className="flex items-center gap-2 justify-center">
+                                                                    <button
+                                                                        onClick={() => handleEditBank(b)}
+                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                                                    >
+                                                                        <Edit size={14} />
+                                                                        Edit
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleViewBank(b._id)}
+                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                    >
+                                                                        <Eye size={14} />
+                                                                        View
+                                                                    </button>
+                                                                </div>
                                                             </td>
                                                         </tr>
                                                     ))}
@@ -663,6 +841,49 @@ export default function GroupManagement() {
                                                 <DollarSign size={16} />
                                                 Manage Recovery
                                             </Link>
+                                        </div>
+                                    </div>
+
+                                    {/* Export Section */}
+                                    <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Export All Members Ledger</h4>
+                                        <div className="flex items-center gap-4 mb-3">
+                                            <div className="flex-1">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">From Date</label>
+                                                <input
+                                                    type="date"
+                                                    value={dateRange.fromDate}
+                                                    onChange={(e) => setDateRange(prev => ({ ...prev, fromDate: e.target.value }))}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                                />
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">To Date</label>
+                                                <input
+                                                    type="date"
+                                                    value={dateRange.toDate}
+                                                    onChange={(e) => setDateRange(prev => ({ ...prev, toDate: e.target.value }))}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => handleExportGroupLedger('excel')}
+                                                disabled={exportLoading}
+                                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+                                            >
+                                                <Download size={16} />
+                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (Excel)"}
+                                            </button>
+                                            <button
+                                                onClick={() => handleExportGroupLedger('pdf')}
+                                                disabled={exportLoading}
+                                                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm disabled:opacity-50"
+                                            >
+                                                <FileText size={16} />
+                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (PDF)"}
+                                            </button>
                                         </div>
                                     </div>
                                     {financeData.loading ? (
@@ -983,6 +1204,217 @@ export default function GroupManagement() {
                                     <p className="text-gray-600">Bank details not found</p>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Group Modal */}
+            {showEditGroupModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">Edit Group</h3>
+                            <button
+                                onClick={() => setShowEditGroupModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Group Name *</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.group_name || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, group_name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Group Code *</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.group_code || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, group_code: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Village</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.village || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, village: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Cluster Name</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.cluster_name || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, cluster_name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Saving Per Member</label>
+                                    <input
+                                        type="number"
+                                        value={editGroupForm.saving_per_member || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, saving_per_member: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Membership Fees</label>
+                                    <input
+                                        type="number"
+                                        value={editGroupForm.membership_fees || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, membership_fees: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Meeting Date 1 (Day)</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="31"
+                                        value={editGroupForm.meeting_date_1_day || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, meeting_date_1_day: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Meeting Date 2 (Day)</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="31"
+                                        value={editGroupForm.meeting_date_2_day || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, meeting_date_2_day: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleSaveGroup}
+                                    disabled={saving}
+                                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                    {saving ? "Saving..." : "Save Changes"}
+                                </button>
+                                <button
+                                    onClick={() => setShowEditGroupModal(false)}
+                                    className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Bank Modal */}
+            {showEditBankModal && editingBank && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">Edit Bank Account</h3>
+                            <button
+                                onClick={() => {
+                                    setShowEditBankModal(false);
+                                    setEditingBank(null);
+                                }}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Bank Name *</label>
+                                    <input
+                                        type="text"
+                                        value={editBankForm.bank_name || ""}
+                                        onChange={(e) => setEditBankForm({ ...editBankForm, bank_name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Account Number *</label>
+                                    <input
+                                        type="text"
+                                        value={editBankForm.account_no || ""}
+                                        onChange={(e) => setEditBankForm({ ...editBankForm, account_no: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">IFSC Code</label>
+                                    <input
+                                        type="text"
+                                        value={editBankForm.ifsc || ""}
+                                        onChange={(e) => setEditBankForm({ ...editBankForm, ifsc: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Branch Name</label>
+                                    <input
+                                        type="text"
+                                        value={editBankForm.branch_name || ""}
+                                        onChange={(e) => setEditBankForm({ ...editBankForm, branch_name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Account Type *</label>
+                                    <select
+                                        value={editBankForm.account_type || "Saving"}
+                                        onChange={(e) => setEditBankForm({ ...editBankForm, account_type: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="Saving">Saving</option>
+                                        <option value="CC">CC</option>
+                                        <option value="FD">FD</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Opening Balance</label>
+                                    <input
+                                        type="number"
+                                        value={editBankForm.opening_balance || ""}
+                                        onChange={(e) => setEditBankForm({ ...editBankForm, opening_balance: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleSaveBank}
+                                    disabled={saving}
+                                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                    {saving ? "Saving..." : "Save Changes"}
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowEditBankModal(false);
+                                        setEditingBank(null);
+                                    }}
+                                    className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -73,8 +73,12 @@ const MemberSchema = new mongoose.Schema({
         amount: { type: Number, default: 0 },
         loanDate: { type: Date },
         overdueInterest: { type: Number, default: 0 },
+        time_period: { type: Number }, // Loan duration in months
+        installment_amount: { type: Number }, // Monthly installment amount (calculated: amount / time_period)
     },
     openingYogdan: { type: Number, default: 0 }, // One-time opening balance, future tracked in recovery
+    // Rate snapshot for existing members (to use historical saving rate instead of current group rate)
+    saving_per_member_snapshot: { type: Number }, // Snapshot of saving_per_member from group
 }, {
     timestamps: true,
 });

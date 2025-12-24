@@ -44,6 +44,11 @@ const GroupMasterSchema = new mongoose.Schema({
     // Group login fields
     loginEnabled: { type: Boolean, default: true },
     lastLoginAt: { type: Date },
+
+    // Financial rates
+    saving_rate: { type: Number }, // Rate for saving (interest rate percentage)
+    fd_rate: { type: Number }, // Fixed Deposit interest rate percentage
+    loan_rate: { type: Number }, // Loan interest rate percentage
 }, { timestamps: true });
 
 export default mongoose.model("GroupMaster", GroupMasterSchema);

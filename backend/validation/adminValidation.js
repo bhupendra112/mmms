@@ -66,8 +66,11 @@ export const registerMemberSchema = Joi.object({
         amount: Joi.number().optional(),
         loanDate: Joi.date().optional(),
         overdueInterest: Joi.number().optional(),
+        time_period: Joi.number().min(1).optional(),
+        installment_amount: Joi.number().optional(),
     }).optional(),
     openingYogdan: Joi.number().optional(),
+    saving_per_member_snapshot: Joi.number().optional(),
 }).or("group_id", "group_code", "Group_Name");
 
 // ======================
@@ -94,7 +97,10 @@ export const registerGroupSchema = Joi.object({
     remark: Joi.string().optional(),
     govt_linked: Joi.string().valid("Yes", "No").optional(),
     govt_project_type: Joi.string().valid("NRLM", "Other", "").optional(),
-    bankmaster: Joi.string().optional()
+    bankmaster: Joi.string().optional(),
+    saving_rate: Joi.number().min(0).max(100).optional(),
+    fd_rate: Joi.number().min(0).max(100).optional(),
+    loan_rate: Joi.number().min(0).max(100).optional()
 });
 
 
@@ -127,6 +133,23 @@ export const addBankValidationSchema = Joi.object({
     govt_project_type: Joi.string().valid("NRLM", "Other", "").optional(),
 
     group_id: Joi.string().optional(),
+});
+
+// ======================
+// UPDATE GROUP VALIDATION (same as register but all optional except id)
+// ======================
+export const updateGroupSchema = registerGroupSchema.keys({
+    group_name: Joi.string().optional(),
+    group_code: Joi.string().optional(),
+});
+
+// ======================
+// UPDATE BANK VALIDATION
+// ======================
+export const updateBankValidationSchema = addBankValidationSchema.keys({
+    bank_name: Joi.string().optional(),
+    account_no: Joi.string().optional(),
+    account_type: Joi.string().valid("Saving", "CC", "FD").optional(),
 });
 
 // ======================

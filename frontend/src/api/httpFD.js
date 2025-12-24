@@ -13,19 +13,22 @@ const getApiOrigin = () => {
     }
 };
 
-const httpGroup = axios.create({
-    baseURL: `${getApiOrigin()}/api/admin/group`,
+const httpFD = axios.create({
+    baseURL: `${getApiOrigin()}/api/admin/fd`,
     headers: { "Content-Type": "application/json" },
 });
 
-httpGroup.interceptors.request.use(
+// Request interceptor - add token
+httpFD.interceptors.request.use(
     createRequestInterceptor(getAuthToken),
     (error) => Promise.reject(error)
 );
 
-httpGroup.interceptors.response.use(
+// Response interceptor
+httpFD.interceptors.response.use(
     (res) => res,
     createErrorInterceptor(true) // true = isAdmin
 );
 
-export default httpGroup;
+export default httpFD;
+

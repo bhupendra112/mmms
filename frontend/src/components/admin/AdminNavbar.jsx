@@ -15,6 +15,7 @@ import {
     DollarSign,
     CheckCircle,
     LogOut,
+    CreditCard,
 } from "lucide-react";
 import { useAdmin } from "../../contexts/AdminContext";
 
@@ -90,6 +91,12 @@ export default function AdminNavbar() {
                     label: "Approvals",
                     path: "/admin/approvals",
                     description: "Manage approval requests"
+                },
+                {
+                    icon: CreditCard,
+                    label: "Payments",
+                    path: "/admin/payments",
+                    description: "Process FD maturity and savings withdrawal payments"
                 },
             ],
         },
