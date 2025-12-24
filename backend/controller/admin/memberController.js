@@ -4,6 +4,13 @@ import { GroupMaster, Member, LoanMaster, RecoveryMaster, FDMaster } from "../..
 
 export const registerMember = async (req, res) => {
     try {
+        // Log request for debugging (only in development)
+        if (process.env.NODE_ENV !== 'production') {
+            console.log('Member registration request received');
+            console.log('Body keys:', Object.keys(req.body || {}));
+            console.log('Files:', req.files ? Object.keys(req.files) : 'No files');
+        }
+
         const payload = req.body || {};
 
         // Handle file uploads - multer adds files to req.files
@@ -140,17 +147,55 @@ export const registerMember = async (req, res) => {
             payload.saving_per_member_snapshot = groupDoc.saving_per_member || null;
         }
 
+        // Parse loanDetails time_period and installment_amount if they exist
+        if (payload.loanDetails && typeof payload.loanDetails === 'object') {
+            if (payload.loanDetails.time_period !== undefined && payload.loanDetails.time_period !== null && payload.loanDetails.time_period !== '') {
+                const timePeriodValue = Number(payload.loanDetails.time_period);
+                if (!isNaN(timePeriodValue)) {
+                    payload.loanDetails.time_period = timePeriodValue;
+                }
+            }
+            if (payload.loanDetails.installment_amount !== undefined && payload.loanDetails.installment_amount !== null && payload.loanDetails.installment_amount !== '') {
+                const installmentValue = Number(payload.loanDetails.installment_amount);
+                if (!isNaN(installmentValue)) {
+                    payload.loanDetails.installment_amount = installmentValue;
+                }
+            }
+        }
+
         // Create new Member
-        const member = await Member.create({
+        const memberData = {
             ...payload,
             group: groupDoc._id,
             Group_Name: payload.Group_Name || groupDoc.group_name,
-        });
+        };
+
+        // Log before creating (only in development)
+        if (process.env.NODE_ENV !== 'production') {
+            console.log('Creating member with data:', {
+                Member_Id: memberData.Member_Id,
+                Member_Nm: memberData.Member_Nm,
+                group: memberData.group,
+                hasLoanDetails: !!memberData.loanDetails,
+                hasFdDetails: !!memberData.fdDetails,
+            });
+        }
+
+        const member = await Member.create(memberData);
 
         return apiResponse.success(res, message.MEMBER_REGISTERED, member);
 
     } catch (error) {
-        return apiResponse.error(res, error.message, 500);
+        // Enhanced error logging
+        console.error('Member registration error:', error);
+        if (error.name === 'ValidationError') {
+            const validationErrors = Object.values(error.errors || {}).map(err => err.message).join(', ');
+            return apiResponse.error(res, `Validation error: ${validationErrors}`, 400);
+        }
+        if (error.name === 'MongoServerError' && error.code === 11000) {
+            return apiResponse.error(res, 'Member with this ID already exists', 400);
+        }
+        return apiResponse.error(res, error.message || 'Failed to register member', 500);
     }
 };
 
