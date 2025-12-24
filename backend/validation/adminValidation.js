@@ -136,21 +136,59 @@ export const addBankValidationSchema = Joi.object({
 });
 
 // ======================
-// UPDATE GROUP VALIDATION (same as register but all optional except id)
+// UPDATE GROUP VALIDATION (all fields optional)
 // ======================
-export const updateGroupSchema = registerGroupSchema.keys({
+export const updateGroupSchema = Joi.object({
     group_name: Joi.string().optional(),
     group_code: Joi.string().optional(),
-});
+    cluster_name: Joi.string().optional(),
+    village: Joi.string().optional(),
+    no_members: Joi.number().optional(),
+    formation_date: Joi.date().optional(),
+    cluster: Joi.string().optional(),
+    saving_per_member: Joi.number().optional(),
+    Mship_Group: Joi.string().optional(),
+    membership_fees: Joi.number().optional(),
+    mitan_name: Joi.string().optional(),
+    meeting_date_1_day: Joi.number().integer().min(1).max(31).optional(),
+    meeting_date_2_day: Joi.number().integer().min(1).max(31).optional(),
+    meeting_date_2_time: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).optional(),
+    sahyog_rashi: Joi.string().optional(),
+    shar_capital: Joi.string().optional(),
+    other: Joi.string().optional(),
+    remark: Joi.string().optional(),
+    govt_linked: Joi.string().valid("Yes", "No").optional(),
+    govt_project_type: Joi.string().valid("NRLM", "Other", "").optional(),
+    bankmaster: Joi.string().optional(),
+    saving_rate: Joi.number().min(0).max(100).optional(),
+    fd_rate: Joi.number().min(0).max(100).optional(),
+    loan_rate: Joi.number().min(0).max(100).optional()
+}).min(1); // At least one field is required for update
 
 // ======================
-// UPDATE BANK VALIDATION
+// UPDATE BANK VALIDATION (all fields optional)
 // ======================
-export const updateBankValidationSchema = addBankValidationSchema.keys({
+export const updateBankValidationSchema = Joi.object({
     bank_name: Joi.string().optional(),
     account_no: Joi.string().optional(),
+    branch_name: Joi.string().optional(),
+    ifsc: Joi.string().optional(),
+    short_name: Joi.string().optional(),
+    ac_open_date: Joi.date().optional(),
     account_type: Joi.string().valid("Saving", "CC", "FD").optional(),
-});
+    opening_balance: Joi.number().optional(),
+    open_indicator: Joi.string().optional(),
+    cc_limit: Joi.number().optional(),
+    dp_limit: Joi.number().optional(),
+    open_bal_curr: Joi.number().optional(),
+    fd_mat_dt: Joi.date().allow(null).optional(),
+    open_ind_curr: Joi.string().optional(),
+    flg_acclosed: Joi.string().optional(),
+    acclosed_dt: Joi.date().allow(null).optional(),
+    govt_linked: Joi.string().valid("Yes", "No").optional(),
+    govt_project_type: Joi.string().valid("NRLM", "Other", "").optional(),
+    group_id: Joi.string().optional(),
+}).min(1); // At least one field is required for update
 
 // ======================
 // GROUP LOGIN VALIDATION

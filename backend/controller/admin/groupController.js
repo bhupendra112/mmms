@@ -1,7 +1,7 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import { BankMaster, GroupMaster, Member, LoanMaster, RecoveryMaster } from "../../model/index.js";
-import { addBankValidationSchema } from "../../validation/adminValidation.js";
+import { addBankValidationSchema, updateGroupSchema, updateBankValidationSchema } from "../../validation/adminValidation.js";
 
 export const registerGroup = async (req, res) => {
     try {
@@ -271,6 +271,12 @@ export const updateGroup = async (req, res) => {
             return apiResponse.error(res, "Group id is required", 400);
         }
 
+        // Validate request body
+        const { error } = updateGroupSchema.validate(req.body);
+        if (error) {
+            return apiResponse.error(res, error.details[0].message, 400);
+        }
+
         const group = await GroupMaster.findById(id);
         if (!group) {
             return apiResponse.error(res, "Group not found", 404);
@@ -278,7 +284,7 @@ export const updateGroup = async (req, res) => {
 
         // If group_code is being updated, check for duplicates
         if (req.body.group_code && req.body.group_code !== group.group_code) {
-            const exists = await GroupMaster.findOne({ group_code: req.body.group_code });
+            const exists = await GroupMaster.findOne({ group_code: req.body.group_code, _id: { $ne: id } });
             if (exists) {
                 return apiResponse.error(res, "Group code already exists", 400);
             }
@@ -307,6 +313,12 @@ export const updateBankDetail = async (req, res) => {
             return apiResponse.error(res, "Bank id is required", 400);
         }
 
+        // Validate request body
+        const { error } = updateBankValidationSchema.validate(req.body);
+        if (error) {
+            return apiResponse.error(res, error.details[0].message, 400);
+        }
+
         const bank = await BankMaster.findById(bankId);
         if (!bank) {
             return apiResponse.error(res, "Bank not found", 404);
@@ -314,7 +326,7 @@ export const updateBankDetail = async (req, res) => {
 
         // If account_no is being updated, check for duplicates
         if (req.body.account_no && req.body.account_no !== bank.account_no) {
-            const exists = await BankMaster.findOne({ account_no: req.body.account_no });
+            const exists = await BankMaster.findOne({ account_no: req.body.account_no, _id: { $ne: bankId } });
             if (exists) {
                 return apiResponse.error(res, "Account number already exists", 400);
             }
@@ -328,20 +340,27 @@ export const updateBankDetail = async (req, res) => {
         ).lean();
 
         // If group_id changed, update group references
-        if (req.body.group_id && req.body.group_id !== bank.group_id?.toString()) {
-            // Remove from old group
-            if (bank.group_id) {
-                await GroupMaster.findByIdAndUpdate(
-                    bank.group_id,
-                    {
-                        $pull: { bankmasters: bankId },
-                        $unset: { bankmaster: bank.group_id === bankId ? "" : undefined }
+        const oldGroupId = bank.group_id?.toString();
+        const newGroupId = req.body.group_id?.toString();
+
+        if (newGroupId && newGroupId !== oldGroupId) {
+            // Remove from old group if it exists
+            if (oldGroupId) {
+                const oldGroup = await GroupMaster.findById(oldGroupId);
+                if (oldGroup) {
+                    // If this bank was the primary bankmaster, unset it
+                    const updateQuery = {
+                        $pull: { bankmasters: bankId }
+                    };
+                    if (oldGroup.bankmaster && oldGroup.bankmaster.toString() === bankId) {
+                        updateQuery.$unset = { bankmaster: "" };
                     }
-                );
+                    await GroupMaster.findByIdAndUpdate(oldGroupId, updateQuery);
+                }
             }
             // Add to new group
             await GroupMaster.findByIdAndUpdate(
-                req.body.group_id,
+                newGroupId,
                 {
                     $addToSet: { bankmasters: bankId },
                     $set: { bankmaster: bankId } // Set as primary

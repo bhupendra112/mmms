@@ -25,20 +25,21 @@ router.get("/list", authAdmin, (req, res) => {
     return listGroups(req, res);
 });
 
-// LIST BANKS FOR A GROUP (multiple banks)
-router.get("/:groupId/banks", authAdmin, (req, res) => {
-    return listBanksByGroup(req, res);
-});
-
-// GROUP DETAIL BY CODE (useful for group panel)
+// GROUP DETAIL BY CODE (must come before :groupId route)
 router.get("/by-code/:group_code", authAdmin, (req, res) => {
     return getGroupByCode(req, res);
 });
 
-// GROUP DETAIL BY ID
+// GROUP DETAIL BY ID (must come before :groupId route)
 router.get("/detail/:id", authAdmin, (req, res) => {
     return getGroupDetail(req, res);
 });
+
+// LIST BANKS FOR A GROUP (multiple banks) - must be last to avoid route conflicts
+router.get("/:groupId/banks", authAdmin, (req, res) => {
+    return listBanksByGroup(req, res);
+});
+
 
 // ADD BANK WITHOUT VALIDATION
 router.post("/add-bank", authAdmin, (req, res) => {
