@@ -48,10 +48,24 @@ app.use(
 app.use(express.json({ limit: '50mb' })); // Increased limit to 50MB for large image payloads
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Determine uploads directory (same logic as multer config)
+// Use environment variable for uploads directory, or default to backend/uploads
+// For production with nginx, set UPLOADS_DIR in .env (e.g., /var/www/mmms/uploads)
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, "uploads");
+
 // Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
+    // Set proper permissions for web server
+    if (process.platform !== 'win32') {
+        try {
+            fs.chmodSync(uploadsDir, 0o755);
+        } catch (err) {
+            if (process.env.NODE_ENV === 'production') {
+                console.warn('Warning: Could not set uploads directory permissions:', err.message);
+            }
+        }
+    }
 }
 
 // Middleware to set CORS headers for static files
