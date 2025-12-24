@@ -307,7 +307,7 @@ export default function MemberDashboard() {
     memberFDs.forEach((fd) => {
       const fdDate = fd.date || fd.createdAt;
       const amount = parseFloat(fd.amount || 0);
-      
+
       if (amount > 0) {
         runningFD += amount;
         fdFromFDMaster.add(fd._id);
@@ -1185,7 +1185,7 @@ export default function MemberDashboard() {
               </tbody>
             </table>
           </div>
-          
+
           {/* Saving Rate Snapshot Section */}
           {memberDoc?.saving_per_member_snapshot && (
             <div className="mt-6">
@@ -1235,11 +1235,10 @@ export default function MemberDashboard() {
                     <td className="p-3 text-gray-800">₹{parseFloat(fd.interestAmount || 0).toLocaleString()}</td>
                     <td className="p-3 text-gray-800">₹{parseFloat(fd.maturityAmount || 0).toLocaleString()}</td>
                     <td className="p-3 text-gray-800">
-                      <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                        fd.status === "active" ? "bg-green-200 text-green-800" :
-                        fd.status === "matured" ? "bg-yellow-200 text-yellow-800" :
-                        "bg-gray-200 text-gray-800"
-                      }`}>
+                      <span className={`px-2 py-1 rounded text-xs font-semibold ${fd.status === "active" ? "bg-green-200 text-green-800" :
+                          fd.status === "matured" ? "bg-yellow-200 text-yellow-800" :
+                            "bg-gray-200 text-gray-800"
+                        }`}>
                         {fd.status || "active"}
                       </span>
                     </td>
