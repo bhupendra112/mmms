@@ -138,3 +138,5 @@ sudo setsebool -P httpd_read_user_content 1
 sudo chcon -R -t httpd_sys_content_t /var/www/mmms/uploads
 ```
 
+
+

@@ -73,3 +73,5 @@ echo "2. Restart backend: pm2 restart mmms-backend"
 echo "3. Reload nginx: sudo systemctl reload nginx"
 echo "4. Test file access: curl -I https://mmms.online/uploads/members/[filename]"
 
+
+
