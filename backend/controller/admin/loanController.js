@@ -223,6 +223,10 @@ export const approveLoan = async (req, res) => {
     try {
         const { id } = req.params;
 
+        if (!id) {
+            return apiResponse.error(res, "Loan ID is required", 400);
+        }
+
         const loan = await LoanMaster.findById(id);
         if (!loan) {
             return apiResponse.error(res, "Loan not found", 404);
@@ -232,17 +236,33 @@ export const approveLoan = async (req, res) => {
             return apiResponse.error(res, `Loan is already ${loan.status}`, 400);
         }
 
-        // Update loan status
-        loan.status = "approved";
-        loan.approvedBy = req.user?.id || "admin";
-        loan.approvedAt = new Date();
-        await loan.save();
-
         // Get group document
         const group = await GroupMaster.findById(loan.groupId);
         if (!group) {
             return apiResponse.error(res, "Group not found", 404);
         }
+
+        // Validate balance before approving
+        const loanAmount = parseFloat(loan.amount || 0);
+        if (loan.paymentMode === "Bank" && loan.bankId) {
+            const balanceInfo = await BankMaster.calculateAvailableBalance(loan.bankId);
+            const availableBalance = balanceInfo.availableBalance || 0;
+            if (availableBalance < loanAmount) {
+                return apiResponse.error(res, `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${loanAmount.toFixed(2)}`, 400);
+            }
+        } else if (loan.paymentMode === "Cash") {
+            await group.recalculateCashBalance();
+            const cashBalance = group.current_cash_balance || 0;
+            if (cashBalance < loanAmount) {
+                return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${loanAmount.toFixed(2)}`, 400);
+            }
+        }
+
+        // Update loan status
+        loan.status = "approved";
+        loan.approvedBy = req.user?.id || "admin";
+        loan.approvedAt = new Date();
+        await loan.save();
 
         // Create bank transaction record if payment mode is Bank
         if (loan.paymentMode === "Bank" && loan.bankId) {
@@ -280,7 +300,7 @@ export const approveLoan = async (req, res) => {
 
         return apiResponse.success(res, "Loan approved successfully", loan);
     } catch (error) {
-        return apiResponse.error(res, error.message, 500);
+        return apiResponse.error(res, error.message || "Failed to approve loan", 500);
     }
 };
 
@@ -289,6 +309,10 @@ export const rejectLoan = async (req, res) => {
     try {
         const { id } = req.params;
         const { reason } = req.body;
+
+        if (!id) {
+            return apiResponse.error(res, "Loan ID is required", 400);
+        }
 
         const loan = await LoanMaster.findById(id);
         if (!loan) {
