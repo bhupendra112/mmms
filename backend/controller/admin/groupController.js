@@ -1,19 +1,32 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import { BankMaster, GroupMaster, Member, LoanMaster, RecoveryMaster } from "../../model/index.js";
+import BankTransaction from "../../model/BankTransaction.js";
+import CashTransaction from "../../model/CashTransaction.js";
 import { addBankValidationSchema, updateGroupSchema, updateBankValidationSchema } from "../../validation/adminValidation.js";
 
 export const registerGroup = async (req, res) => {
     try {
         const {
             group_name,
-            group_code
+            group_code,
+            village,
+            cluster_name
         } = req.body;
 
-        // Check if group exists
-        const exists = await GroupMaster.findOne({ group_code });
+        // Check if group exists with same code in same village/cluster
+        // Uniqueness is based on group_code + village (or cluster_name if village is not provided)
+        const query = { group_code };
+        if (village) {
+            query.village = village;
+        } else if (cluster_name) {
+            query.cluster_name = cluster_name;
+        }
+
+        const exists = await GroupMaster.findOne(query);
         if (exists) {
-            return apiResponse.error(res, message.GROUP_EXISTS, 400);
+            const location = village || cluster_name || 'this location';
+            return apiResponse.error(res, `Group with code "${group_code}" already exists in ${location}`, 400);
         }
 
         // Create new group
@@ -60,6 +73,10 @@ export const addBankDetail = async (req, res) => {
         }
 
         // Create bank record (store full payload as-is)
+        // Initialize current_balance with opening_balance if provided
+        if (payload.opening_balance !== undefined && payload.current_balance === undefined) {
+            payload.current_balance = payload.opening_balance || 0;
+        }
         const newBank = await BankMaster.create(payload);
 
         // Link bankmaster(s) to group if group_id provided
@@ -95,7 +112,29 @@ export const listBanksByGroup = async (req, res) => {
         const group = await GroupMaster.findById(groupId).lean();
         if (!group) return apiResponse.error(res, "Group not found", 404);
 
+        // Get banks for the group
         const banks = await BankMaster.find({ group_id: groupId }).sort({ createdAt: -1 }).lean();
+
+        // Calculate current balance and available balance for each bank
+        for (const bank of banks) {
+            try {
+                const currentBalance = await BankMaster.calculateCurrentBalance(bank._id);
+                bank.current_balance = currentBalance;
+
+                // Calculate available balance (current - pending debits + pending credits)
+                const balanceInfo = await BankMaster.calculateAvailableBalance(bank._id);
+                bank.available_balance = balanceInfo.availableBalance;
+                bank.pending_debits = balanceInfo.pendingDebits;
+                bank.pending_credits = balanceInfo.pendingCredits;
+            } catch (error) {
+                console.error(`Error calculating balance for bank ${bank._id}:`, error);
+                bank.current_balance = bank.opening_balance || 0;
+                bank.available_balance = bank.opening_balance || 0;
+                bank.pending_debits = 0;
+                bank.pending_credits = 0;
+            }
+        }
+
         return apiResponse.success(res, "Banks fetched successfully", banks);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
@@ -152,12 +191,27 @@ export const getGroupDetail = async (req, res) => {
 export const getGroupByCode = async (req, res) => {
     try {
         const { group_code } = req.params;
+        const { village, cluster_name } = req.query; // Optional filters to disambiguate
+
         if (!group_code) {
             return apiResponse.error(res, "group_code is required", 400);
         }
 
-        let group = await GroupMaster.findOne({ group_code }).populate("bankmaster").populate("bankmasters").lean();
+        // Build query - if village or cluster_name provided, use them to find specific group
+        const query = { group_code };
+        if (village) {
+            query.village = village;
+        } else if (cluster_name) {
+            query.cluster_name = cluster_name;
+        }
+
+        let group = await GroupMaster.findOne(query).populate("bankmaster").populate("bankmasters").lean();
         if (!group) {
+            // If no village/cluster specified and not found, check if multiple groups exist
+            const count = await GroupMaster.countDocuments({ group_code });
+            if (count > 1) {
+                return apiResponse.error(res, `Multiple groups found with code "${group_code}". Please specify village or cluster_name.`, 400);
+            }
             return apiResponse.error(res, "Group not found", 404);
         }
 
@@ -190,66 +244,58 @@ export const getBankDetail = async (req, res) => {
             return apiResponse.error(res, "Bank not found", 404);
         }
 
-        // Get group ID if available
-        const groupId = bank.group_id;
+        // Calculate current balance and available balance
+        try {
+            const currentBalance = await BankMaster.calculateCurrentBalance(bankId);
+            bank.current_balance = currentBalance;
 
-        // Get transactions related to this bank (filter by bankId - show all transactions with this bankId, regardless of payment mode)
-        let transactions = [];
-        if (groupId) {
-            // Get all loans/transactions for this group that are associated with this specific bank
-            // Include both Cash and Bank payment modes if bankId is set
-            const loanTransactions = await LoanMaster.find({
-                groupId: groupId,
-                bankId: bankId,
-                status: "approved"
-            }).sort({ date: -1, createdAt: -1 }).lean();
-
-            // Get all recoveries for this group that are online payments
-            const recoveryTransactions = await RecoveryMaster.find({
-                groupId: groupId,
-                status: "approved",
-                "totals.totalOnline": { $gt: 0 }
-            }).sort({ date: -1, createdAt: -1 }).lean();
-
-            // Format loan transactions
-            transactions = loanTransactions.map(tx => ({
-                id: tx._id,
-                type: "Loan",
-                transactionType: tx.transactionType,
-                date: tx.date,
-                amount: tx.amount,
-                paymentMode: tx.paymentMode,
-                purpose: tx.purpose,
-                memberName: tx.memberName || "Group Loan",
-                memberCode: tx.memberCode || "",
-                isGroupLoan: tx.isGroupLoan,
-                createdAt: tx.createdAt
-            }));
-
-            // Format recovery transactions
-            recoveryTransactions.forEach(rec => {
-                rec.recoveries.forEach(memberRec => {
-                    if (memberRec.paymentMode && memberRec.paymentMode.online && memberRec.total > 0) {
-                        transactions.push({
-                            id: `${rec._id}_${memberRec.memberId}`,
-                            type: "Recovery",
-                            transactionType: "Recovery",
-                            date: rec.date,
-                            amount: memberRec.total,
-                            paymentMode: "Bank",
-                            purpose: "Recovery",
-                            memberName: memberRec.memberName,
-                            memberCode: memberRec.memberCode,
-                            isGroupLoan: false,
-                            createdAt: rec.createdAt
-                        });
-                    }
-                });
-            });
-
-            // Sort all transactions by date (newest first)
-            transactions.sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt));
+            // Calculate available balance (current - pending debits + pending credits)
+            const balanceInfo = await BankMaster.calculateAvailableBalance(bankId);
+            bank.available_balance = balanceInfo.availableBalance;
+            bank.pending_debits = balanceInfo.pendingDebits;
+            bank.pending_credits = balanceInfo.pendingCredits;
+        } catch (error) {
+            console.error(`Error calculating balance for bank ${bankId}:`, error);
+            bank.current_balance = bank.opening_balance || 0;
+            bank.available_balance = bank.opening_balance || 0;
+            bank.pending_debits = 0;
+            bank.pending_credits = 0;
         }
+
+        // Get transactions from BankTransaction model for this bank
+        const bankTransactions = await BankTransaction.find({
+            bankId: bankId
+        })
+            .sort({ date: -1, createdAt: -1 })
+            .lean();
+
+        // Format transactions and categorize as incoming/outgoing
+        const transactions = bankTransactions.map(tx => {
+            // Determine if transaction is credit (incoming) or debit (outgoing)
+            // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
+            // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
+            const isCredit = tx.transactionType === "recovery" ||
+                tx.transactionType === "fd" ||
+                tx.transactionType === "cash_to_bank";
+
+            return {
+                _id: tx._id,
+                id: tx._id.toString(),
+                date: tx.date,
+                transactionType: tx.transactionType,
+                amount: tx.amount,
+                description: tx.description,
+                onlineRef: tx.onlineRef,
+                memberName: tx.memberName || "-",
+                memberCode: tx.memberCode || "",
+                status: tx.status,
+                isCredit: isCredit,
+                direction: isCredit ? "incoming" : "outgoing",
+                createdAt: tx.createdAt,
+                receipt: tx.receipt,
+                receiptFileName: tx.receiptFileName
+            };
+        });
 
         return apiResponse.success(res, "Bank detail fetched successfully", {
             bank,
@@ -257,6 +303,71 @@ export const getBankDetail = async (req, res) => {
             transactionCount: transactions.length
         });
     } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// GET: CASH TRANSACTIONS FOR A GROUP
+// ------------------------------------------------------------------
+export const getCashTransactions = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        if (!groupId) {
+            return apiResponse.error(res, "groupId is required", 400);
+        }
+
+        // Verify group exists
+        const group = await GroupMaster.findById(groupId);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        // Get current cash balance
+        await group.recalculateCashBalance();
+        const currentCashBalance = group.current_cash_balance || 0;
+
+        // Get all cash transactions for this group
+        const cashTransactions = await CashTransaction.find({
+            groupId: groupId
+        })
+            .sort({ date: -1, createdAt: -1 })
+            .lean();
+
+        // Format transactions and categorize as incoming/outgoing
+        const transactions = cashTransactions.map(tx => {
+            // Determine if transaction is credit (incoming) or debit (outgoing)
+            // Credits: recovery (money collected from members), fd (FD created - member gives money to group), bank_to_cash (bank converted to cash)
+            // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members), other (cash to bank)
+            const isCredit = tx.transactionType === "recovery" ||
+                tx.transactionType === "fd" ||
+                tx.transactionType === "bank_to_cash";
+
+            return {
+                _id: tx._id,
+                id: tx._id.toString(),
+                date: tx.date,
+                transactionType: tx.transactionType,
+                amount: tx.amount,
+                description: tx.description,
+                memberName: tx.memberName || "-",
+                memberCode: tx.memberCode || "",
+                status: tx.status,
+                isCredit: isCredit,
+                direction: isCredit ? "incoming" : "outgoing",
+                createdAt: tx.createdAt,
+                receipt: tx.receipt,
+                receiptFileName: tx.receiptFileName
+            };
+        });
+
+        return apiResponse.success(res, "Cash transactions fetched successfully", {
+            currentCashBalance,
+            transactions,
+            transactionCount: transactions.length
+        });
+    } catch (error) {
+        console.error("Error fetching cash transactions:", error);
         return apiResponse.error(res, error.message, 500);
     }
 };
@@ -282,11 +393,26 @@ export const updateGroup = async (req, res) => {
             return apiResponse.error(res, "Group not found", 404);
         }
 
-        // If group_code is being updated, check for duplicates
+        // If group_code is being updated, check for duplicates in same village/cluster
         if (req.body.group_code && req.body.group_code !== group.group_code) {
-            const exists = await GroupMaster.findOne({ group_code: req.body.group_code, _id: { $ne: id } });
+            const village = req.body.village !== undefined ? req.body.village : group.village;
+            const cluster_name = req.body.cluster_name !== undefined ? req.body.cluster_name : group.cluster_name;
+
+            const query = {
+                group_code: req.body.group_code,
+                _id: { $ne: id }
+            };
+
+            if (village) {
+                query.village = village;
+            } else if (cluster_name) {
+                query.cluster_name = cluster_name;
+            }
+
+            const exists = await GroupMaster.findOne(query);
             if (exists) {
-                return apiResponse.error(res, "Group code already exists", 400);
+                const location = village || cluster_name || 'this location';
+                return apiResponse.error(res, `Group code "${req.body.group_code}" already exists in ${location}`, 400);
             }
         }
 
@@ -369,6 +495,170 @@ export const updateBankDetail = async (req, res) => {
         }
 
         return apiResponse.success(res, "Bank updated successfully", updatedBank);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Charge Management Endpoints
+
+// Add a new charge to a group
+export const addGroupCharge = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { name, amount, type, startDate, frequency, isActive } = req.body;
+
+        if (!groupId) {
+            return apiResponse.error(res, "groupId is required", 400);
+        }
+
+        if (!name || !amount || !type || !startDate) {
+            return apiResponse.error(res, "name, amount, type, and startDate are required", 400);
+        }
+
+        if (type === "recurring" && !frequency) {
+            return apiResponse.error(res, "frequency is required for recurring charges", 400);
+        }
+
+        if (!["one-time", "recurring"].includes(type)) {
+            return apiResponse.error(res, "type must be 'one-time' or 'recurring'", 400);
+        }
+
+        if (type === "recurring" && !["yearly", "monthly"].includes(frequency)) {
+            return apiResponse.error(res, "frequency must be 'yearly' or 'monthly' for recurring charges", 400);
+        }
+
+        const group = await GroupMaster.findById(groupId);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        const newCharge = {
+            name,
+            amount: parseFloat(amount),
+            type,
+            startDate: new Date(startDate),
+            frequency: type === "recurring" ? frequency : undefined,
+            isActive: isActive !== undefined ? isActive : true,
+            createdAt: new Date(),
+            updatedAt: new Date()
+        };
+
+        if (!group.charges) {
+            group.charges = [];
+        }
+
+        group.charges.push(newCharge);
+        await group.save();
+
+        return apiResponse.success(res, "Charge added successfully", group.charges[group.charges.length - 1]);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Update a charge in a group
+export const updateGroupCharge = async (req, res) => {
+    try {
+        const { groupId, chargeId } = req.params;
+        const { name, amount, type, startDate, frequency, isActive } = req.body;
+
+        if (!groupId || !chargeId) {
+            return apiResponse.error(res, "groupId and chargeId are required", 400);
+        }
+
+        const group = await GroupMaster.findById(groupId);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        if (!group.charges || group.charges.length === 0) {
+            return apiResponse.error(res, "No charges found for this group", 404);
+        }
+
+        const chargeIndex = group.charges.findIndex(c => c._id.toString() === chargeId);
+        if (chargeIndex === -1) {
+            return apiResponse.error(res, "Charge not found", 404);
+        }
+
+        const charge = group.charges[chargeIndex];
+
+        // Update fields if provided
+        if (name !== undefined) charge.name = name;
+        if (amount !== undefined) charge.amount = parseFloat(amount);
+        if (type !== undefined) {
+            if (!["one-time", "recurring"].includes(type)) {
+                return apiResponse.error(res, "type must be 'one-time' or 'recurring'", 400);
+            }
+            charge.type = type;
+        }
+        if (startDate !== undefined) charge.startDate = new Date(startDate);
+        if (frequency !== undefined) {
+            if (charge.type === "recurring" && !["yearly", "monthly"].includes(frequency)) {
+                return apiResponse.error(res, "frequency must be 'yearly' or 'monthly' for recurring charges", 400);
+            }
+            charge.frequency = charge.type === "recurring" ? frequency : undefined;
+        }
+        if (isActive !== undefined) charge.isActive = isActive;
+        charge.updatedAt = new Date();
+
+        await group.save();
+
+        return apiResponse.success(res, "Charge updated successfully", charge);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Delete a charge from a group
+export const deleteGroupCharge = async (req, res) => {
+    try {
+        const { groupId, chargeId } = req.params;
+
+        if (!groupId || !chargeId) {
+            return apiResponse.error(res, "groupId and chargeId are required", 400);
+        }
+
+        const group = await GroupMaster.findById(groupId);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        if (!group.charges || group.charges.length === 0) {
+            return apiResponse.error(res, "No charges found for this group", 404);
+        }
+
+        const chargeIndex = group.charges.findIndex(c => c._id.toString() === chargeId);
+        if (chargeIndex === -1) {
+            return apiResponse.error(res, "Charge not found", 404);
+        }
+
+        group.charges.splice(chargeIndex, 1);
+        await group.save();
+
+        return apiResponse.success(res, "Charge deleted successfully", { chargeId });
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Get all charges for a group
+export const getGroupCharges = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+
+        if (!groupId) {
+            return apiResponse.error(res, "groupId is required", 400);
+        }
+
+        const group = await GroupMaster.findById(groupId).select("charges");
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        const charges = group.charges || [];
+
+        return apiResponse.success(res, "Charges fetched successfully", charges);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

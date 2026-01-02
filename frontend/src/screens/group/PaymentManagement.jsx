@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { DollarSign, Calendar, Banknote, Search, Filter, CheckCircle, XCircle, Clock, Eye } from "lucide-react";
+import { DollarSign, Calendar, Banknote, Search, Filter, CheckCircle, XCircle, Clock, Eye, Wallet, CreditCard } from "lucide-react";
 import { Input, Select, FormSection } from "../../components/forms/FormComponents";
 import { useGroup } from "../../contexts/GroupContext";
 import { 
@@ -10,6 +10,7 @@ import {
 } from "../../services/paymentService";
 import { getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
+import { getCashAmount } from "../../services/cashAmount";
 
 export default function PaymentManagement() {
     const { currentGroup, isGroupLoading } = useGroup();
@@ -21,6 +22,7 @@ export default function PaymentManagement() {
     const [maturedFDs, setMaturedFDs] = useState([]);
     const [selectedFD, setSelectedFD] = useState(null);
     const [fdPaymentAmount, setFdPaymentAmount] = useState("");
+    const [fdPaymentMode, setFdPaymentMode] = useState("Bank"); // "Cash" or "Bank"
     const [fdBankId, setFdBankId] = useState("");
     const [fdRemarks, setFdRemarks] = useState("");
 
@@ -28,12 +30,14 @@ export default function PaymentManagement() {
     const [membersWithSavings, setMembersWithSavings] = useState([]);
     const [selectedMember, setSelectedMember] = useState(null);
     const [savingsAmount, setSavingsAmount] = useState("");
+    const [savingsPaymentMode, setSavingsPaymentMode] = useState("Bank"); // "Cash" or "Bank"
     const [savingsBankId, setSavingsBankId] = useState("");
     const [savingsRemarks, setSavingsRemarks] = useState("");
 
     // Common State
     const [banks, setBanks] = useState([]);
     const [banksLoading, setBanksLoading] = useState(false);
+    const [groupCashBalance, setGroupCashBalance] = useState(0);
 
     // Payment History Tab State
     const [payments, setPayments] = useState([]);
@@ -47,6 +51,7 @@ export default function PaymentManagement() {
     useEffect(() => {
         if (currentGroup?.id && !isGroupLoading) {
             loadBanks(currentGroup.id);
+            loadCashBalance(currentGroup.id);
             if (activeTab === "fd_maturity") {
                 loadMaturedFDs();
             } else if (activeTab === "saving_withdrawal") {
@@ -57,18 +62,40 @@ export default function PaymentManagement() {
         }
     }, [currentGroup, isGroupLoading, activeTab]);
 
+    const loadCashBalance = async (groupId) => {
+        if (!groupId) return;
+        try {
+            const res = await getCashAmount(groupId);
+            const balance = res?.data?.groupCashBalance || res?.data?.cashAmount || 0;
+            setGroupCashBalance(balance);
+        } catch (err) {
+            console.error("Error loading cash balance:", err);
+            setGroupCashBalance(0);
+        }
+    };
+
     const loadBanks = async (groupId) => {
         if (!groupId) return;
         setBanksLoading(true);
         try {
             const res = await getGroupBanks(groupId);
             const list = Array.isArray(res?.data) ? res.data : [];
-            setBanks(list.map(b => ({
-                id: b._id,
-                name: b.bank_name,
-                accountNo: b.account_no,
-                display: `${b.bank_name} - ${b.account_no}`,
-            })));
+            setBanks(list.map(b => {
+                const availableBalance = b.available_balance !== undefined
+                    ? b.available_balance
+                    : (b.current_balance !== undefined
+                        ? b.current_balance
+                        : (b.opening_balance || 0));
+                return {
+                    id: b._id,
+                    name: b.bank_name,
+                    accountNo: b.account_no,
+                    display: `${b.bank_name} - ${b.account_no} [Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`,
+                    available_balance: availableBalance,
+                    current_balance: b.current_balance,
+                    opening_balance: b.opening_balance,
+                };
+            }));
         } catch (err) {
             console.error("Error loading banks:", err);
             setBanks([]);
@@ -172,13 +199,36 @@ export default function PaymentManagement() {
             alert("Please select an FD");
             return;
         }
-        if (!fdBankId) {
+        if (fdPaymentMode === "Bank" && !fdBankId) {
             alert("Please select a bank");
             return;
         }
         if (!fdPaymentAmount || parseFloat(fdPaymentAmount) <= 0) {
             alert("Please enter a valid payment amount");
             return;
+        }
+
+        // Validate balance
+        const paymentAmount = parseFloat(fdPaymentAmount);
+        if (fdPaymentMode === "Cash") {
+            if (groupCashBalance < paymentAmount) {
+                alert(`Insufficient cash balance. Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${paymentAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                return;
+            }
+        } else if (fdPaymentMode === "Bank" && fdBankId) {
+            const selectedBank = banks.find(b => (b.id || b._id) === fdBankId);
+            if (selectedBank) {
+                const availableBalance = selectedBank.available_balance !== undefined
+                    ? selectedBank.available_balance
+                    : (selectedBank.current_balance !== undefined
+                        ? selectedBank.current_balance
+                        : 0);
+
+                if (availableBalance < paymentAmount) {
+                    alert(`Insufficient bank balance. Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${paymentAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                    return;
+                }
+            }
         }
 
         setLoading(true);
@@ -188,7 +238,8 @@ export default function PaymentManagement() {
                 groupId: currentGroup.id,
                 paymentType: "fd_maturity",
                 amount: parseFloat(fdPaymentAmount),
-                bankId: fdBankId,
+                paymentMode: fdPaymentMode,
+                bankId: fdPaymentMode === "Bank" ? fdBankId : null,
                 fdId: selectedFD.id,
                 remarks: fdRemarks,
             };
@@ -199,8 +250,13 @@ export default function PaymentManagement() {
                 // Reset form
                 setSelectedFD(null);
                 setFdPaymentAmount("");
+                setFdPaymentMode("Bank");
                 setFdBankId("");
                 setFdRemarks("");
+                // Reload cash balance
+                loadCashBalance(currentGroup.id);
+                // Reload banks to refresh balance display
+                loadBanks(currentGroup.id);
                 // Reload data
                 loadMaturedFDs();
                 if (activeTab !== "history") {
@@ -223,7 +279,7 @@ export default function PaymentManagement() {
             alert("Please select a member");
             return;
         }
-        if (!savingsBankId) {
+        if (savingsPaymentMode === "Bank" && !savingsBankId) {
             alert("Please select a bank");
             return;
         }
@@ -236,6 +292,29 @@ export default function PaymentManagement() {
             return;
         }
 
+        // Validate balance
+        const paymentAmount = parseFloat(savingsAmount);
+        if (savingsPaymentMode === "Cash") {
+            if (groupCashBalance < paymentAmount) {
+                alert(`Insufficient cash balance. Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${paymentAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                return;
+            }
+        } else if (savingsPaymentMode === "Bank" && savingsBankId) {
+            const selectedBank = banks.find(b => (b.id || b._id) === savingsBankId);
+            if (selectedBank) {
+                const availableBalance = selectedBank.available_balance !== undefined
+                    ? selectedBank.available_balance
+                    : (selectedBank.current_balance !== undefined
+                        ? selectedBank.current_balance
+                        : 0);
+
+                if (availableBalance < paymentAmount) {
+                    alert(`Insufficient bank balance. Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${paymentAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                    return;
+                }
+            }
+        }
+
         setLoading(true);
         try {
             const paymentData = {
@@ -243,7 +322,8 @@ export default function PaymentManagement() {
                 groupId: currentGroup.id,
                 paymentType: "saving_withdrawal",
                 amount: parseFloat(savingsAmount),
-                bankId: savingsBankId,
+                paymentMode: savingsPaymentMode,
+                bankId: savingsPaymentMode === "Bank" ? savingsBankId : null,
                 remarks: savingsRemarks,
             };
 
@@ -253,8 +333,13 @@ export default function PaymentManagement() {
                 // Reset form
                 setSelectedMember(null);
                 setSavingsAmount("");
+                setSavingsPaymentMode("Bank");
                 setSavingsBankId("");
                 setSavingsRemarks("");
+                // Reload cash balance
+                loadCashBalance(currentGroup.id);
+                // Reload banks to refresh balance display
+                loadBanks(currentGroup.id);
                 // Reload data
                 loadMembersWithSavings();
                 if (activeTab !== "history") {
@@ -440,15 +525,41 @@ export default function PaymentManagement() {
                                             Member: <strong>{selectedFD.memberName}</strong> | 
                                             Amount: <strong>{formatCurrency(selectedFD.maturityAmount)}</strong>
                                         </p>
+                                        {fdPaymentMode === "Cash" && (
+                                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                                                <p className="text-sm text-blue-800">
+                                                    <Wallet className="inline mr-1" size={16} />
+                                                    <strong>Cash Balance:</strong> ₹{groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                     <Select
-                                        label="Select Bank"
-                                        name="bankId"
-                                        value={fdBankId}
-                                        options={banks.map(b => ({ value: b.id, label: b.display }))}
-                                        handleChange={(e) => setFdBankId(e.target.value)}
+                                        label="Payment Mode"
+                                        name="paymentMode"
+                                        value={fdPaymentMode}
+                                        options={[
+                                            { value: "Cash", label: "Cash" },
+                                            { value: "Bank", label: "Bank" },
+                                        ]}
+                                        handleChange={(e) => {
+                                            setFdPaymentMode(e.target.value);
+                                            if (e.target.value === "Cash") {
+                                                setFdBankId("");
+                                            }
+                                        }}
                                         required
                                     />
+                                    {fdPaymentMode === "Bank" && (
+                                        <Select
+                                            label="Select Bank"
+                                            name="bankId"
+                                            value={fdBankId}
+                                            options={banks.map(b => ({ value: b.id, label: b.display }))}
+                                            handleChange={(e) => setFdBankId(e.target.value)}
+                                            required
+                                        />
+                                    )}
                                     <Input
                                         label="Payment Amount"
                                         name="amount"
@@ -470,7 +581,7 @@ export default function PaymentManagement() {
                                     <div className="col-span-2">
                                         <button
                                             onClick={handleCreateFDPayment}
-                                            disabled={loading || !fdBankId || !fdPaymentAmount}
+                                            disabled={loading || (fdPaymentMode === "Bank" && !fdBankId) || !fdPaymentAmount}
                                             className="w-full bg-blue-600 text-white py-2.5 px-4 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                                         >
                                             {loading ? "Creating..." : "Create Payment Request"}
@@ -539,15 +650,41 @@ export default function PaymentManagement() {
                                             Member: <strong>{selectedMember.name}</strong> | 
                                             Available: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
                                         </p>
+                                        {savingsPaymentMode === "Cash" && (
+                                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                                                <p className="text-sm text-blue-800">
+                                                    <Wallet className="inline mr-1" size={16} />
+                                                    <strong>Cash Balance:</strong> ₹{groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                     <Select
-                                        label="Select Bank"
-                                        name="bankId"
-                                        value={savingsBankId}
-                                        options={banks.map(b => ({ value: b.id, label: b.display }))}
-                                        handleChange={(e) => setSavingsBankId(e.target.value)}
+                                        label="Payment Mode"
+                                        name="paymentMode"
+                                        value={savingsPaymentMode}
+                                        options={[
+                                            { value: "Cash", label: "Cash" },
+                                            { value: "Bank", label: "Bank" },
+                                        ]}
+                                        handleChange={(e) => {
+                                            setSavingsPaymentMode(e.target.value);
+                                            if (e.target.value === "Cash") {
+                                                setSavingsBankId("");
+                                            }
+                                        }}
                                         required
                                     />
+                                    {savingsPaymentMode === "Bank" && (
+                                        <Select
+                                            label="Select Bank"
+                                            name="bankId"
+                                            value={savingsBankId}
+                                            options={banks.map(b => ({ value: b.id, label: b.display }))}
+                                            handleChange={(e) => setSavingsBankId(e.target.value)}
+                                            required
+                                        />
+                                    )}
                                     <Input
                                         label="Withdrawal Amount"
                                         name="amount"
@@ -569,7 +706,7 @@ export default function PaymentManagement() {
                                     <div className="col-span-2">
                                         <button
                                             onClick={handleCreateSavingsPayment}
-                                            disabled={loading || !savingsBankId || !savingsAmount}
+                                            disabled={loading || (savingsPaymentMode === "Bank" && !savingsBankId) || !savingsAmount}
                                             className="w-full bg-blue-600 text-white py-2.5 px-4 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                                         >
                                             {loading ? "Creating..." : "Create Withdrawal Request"}

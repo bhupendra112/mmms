@@ -2,9 +2,14 @@ import React, { useState } from "react";
 import { createGroup } from "../../services/groupService";
 import { PlusCircle, Building2, Users, Calendar, DollarSign, FileText } from "lucide-react";
 import { Input, Select, TextArea, FormSection } from "../../components/forms/FormComponents";
+import Loader, { OverlayLoader } from "../../components/common/Loader";
+import ErrorMessage from "../../components/common/ErrorMessage";
+import { useApiCall } from "../../hooks/useApiCall";
 
 export default function CreateGroup() {
-    const [loading, setLoading] = useState(false);
+    const { loading, error, execute, clearError } = useApiCall({
+        defaultErrorMessage: "Failed to create group. Please try again.",
+    });
     const [form, setForm] = useState({
         group_name: "",
         group_code: "",
@@ -39,9 +44,9 @@ export default function CreateGroup() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        try {
-            setLoading(true);
-            await createGroup(form);
+        const result = await execute(() => createGroup(form));
+        
+        if (result.success) {
             alert("Group created successfully! You can add bank details later from 'Bank for Group' section.");
             // Reset form
             setForm({
@@ -68,10 +73,6 @@ export default function CreateGroup() {
                 fd_rate: "",
                 loan_rate: "",
             });
-        } catch (error) {
-            alert(error.message || "Something went wrong!");
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -87,12 +88,14 @@ export default function CreateGroup() {
                 </p>
             </div>
 
-            {loading && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                    <p className="text-center text-lg text-blue-600 font-bold">Creating Group...</p>
+            {error && error.shouldShow && (
+                <div className="mb-6">
+                    <ErrorMessage error={error} onDismiss={clearError} />
                 </div>
             )}
 
+            <div className="relative">
+                <OverlayLoader loading={loading} message="Creating group..." />
             <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Basic Group Information */}
                 <FormSection title="Basic Group Information" icon={Building2}>
@@ -360,6 +363,7 @@ export default function CreateGroup() {
                     </div>
                 </div>
             </form>
+            </div>
         </div>
     );
 }

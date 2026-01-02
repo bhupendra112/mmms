@@ -1,5 +1,5 @@
 import express from "express";
-import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData } from "../../controller/admin/recoveryController.js";
+import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails } from "../../controller/admin/recoveryController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const Router = express.Router();
@@ -18,6 +18,9 @@ Router.get("/by-date", authAdmin, getRecoveryByDate);
 
 // Get previous recovery data for a member
 Router.get("/previous-data", authAdmin, getPreviousRecoveryData);
+
+// Get demand details for a member (without requiring recovery session)
+Router.get("/demand-details", authAdmin, getDemandDetails);
 
 // List recoveries
 Router.get("/list", authAdmin, listRecoveries);

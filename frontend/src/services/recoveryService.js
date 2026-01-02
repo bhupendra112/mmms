@@ -65,3 +65,9 @@ export const getPreviousRecoveryData = async (groupId, memberId, date) => {
   return res.data;
 };
 
+export const getDemandDetails = async (groupId, memberId, date) => {
+  const params = { groupId, memberId, date };
+  const res = await httpRecovery.get("/demand-details", { params });
+  return res.data;
+};
+

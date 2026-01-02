@@ -1,5 +1,8 @@
 import React, { useState } from "react";
 import { createGroup, createBank } from "../services/groupService";
+import Loader, { OverlayLoader } from "../components/common/Loader";
+import ErrorMessage from "../components/common/ErrorMessage";
+import { useApiCall } from "../hooks/useApiCall";
 
 // --------------------------------------------------------
 // MAIN COMPONENT
@@ -9,35 +12,39 @@ export default function GroupBankMaster() {
   const [groupData, setGroupData] = useState({});
   const [bankData, setBankData] = useState({});
 
-  const [loading, setLoading] = useState(false);
+  const { loading, error, execute, clearError } = useApiCall({
+    defaultErrorMessage: "Failed to save group and bank details. Please try again.",
+  });
 
   const finalSubmit = async (bankForm) => {
-    try {
-      setLoading(true);
-
+    const result = await execute(async () => {
       // STEP 1: STORE GROUP
       const groupRes = await createGroup(groupData);
-
       const groupId = groupRes?.data?._id;
+      
       if (!groupId) {
-        alert("Group created but no ID returned");
-        return;
+        throw new Error("Group created but no ID returned");
       }
 
       // STEP 2: STORE BANK (with group_id)
       const bankPayload = {
         ...bankForm,
         group_id: groupId,
+        // Set open_bal_curr to same value as opening_balance (they are the same)
+        open_bal_curr: bankForm.opening_balance || bankForm.open_bal_curr || null,
+        // Set open_ind_curr to same value as open_indicator (they are the same)
+        open_ind_curr: bankForm.open_indicator || bankForm.open_ind_curr || null,
       };
 
       await createBank(bankPayload);
+      return { groupId };
+    });
 
+    if (result.success) {
       alert("Group & Bank Saved Successfully!");
-      setLoading(false);
       setStep(1);
-    } catch (error) {
-      setLoading(false);
-      alert(error.message || "Something went wrong!");
+      setGroupData({});
+      setBankData({});
     }
   };
 
@@ -45,10 +52,14 @@ export default function GroupBankMaster() {
     <div className="p-6 max-w-6xl mx-auto">
       <h1 className="text-3xl font-bold text-center mb-6">Group & Bank Master</h1>
 
-      {loading && (
-        <p className="text-center text-lg text-blue-600 font-bold">Saving...</p>
+      {error && error.shouldShow && (
+        <div className="mb-6">
+          <ErrorMessage error={error} onDismiss={clearError} />
+        </div>
       )}
 
+      <div className="relative">
+        <OverlayLoader loading={loading} message="Saving group and bank details..." />
       {step === 1 ? (
         <GroupMasterForm
           defaultValues={groupData}
@@ -64,6 +75,7 @@ export default function GroupBankMaster() {
           onSubmitAll={finalSubmit}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -260,11 +272,7 @@ function BankMasterForm({ onSubmitAll, onBack, defaultValues }) {
 
       <Input label="CC Limit" name="cc_limit" value={form.cc_limit} handleChange={handleChange} />
       <Input label="DP Limit" name="dp_limit" value={form.dp_limit} handleChange={handleChange} />
-
-      <Input label="Open Balance Current" name="open_bal_curr" value={form.open_bal_curr} handleChange={handleChange} />
       <Input type="date" label="FD Maturity Date" name="fd_mat_dt" value={form.fd_mat_dt} handleChange={handleChange} />
-
-      <Input label="Open Indicator Current" name="open_ind_curr" value={form.open_ind_curr} handleChange={handleChange} />
       <Input label="A/C Closed?" name="flg_acclosed" value={form.flg_acclosed} handleChange={handleChange} />
       <Input type="date" label="A/C Closed Date" name="acclosed_dt" value={form.acclosed_dt} handleChange={handleChange} />
 

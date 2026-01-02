@@ -5,10 +5,11 @@ import { exportToExcel, exportToPDF } from "../utils/exportUtils";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { getMemberDetail, exportMemberLedger } from "../services/memberService";
+import { getMemberDetail, exportMemberLedger, getMemberFinancialLedger } from "../services/memberService";
 import { getLoans } from "../services/loanService";
 import { getRecoveries } from "../services/recoveryService";
 import { getFDsByMember } from "../services/fdService";
+import { getPayments } from "../services/paymentService";
 import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
 import CreateFD from "../components/fd/CreateFD";
 
@@ -45,8 +46,12 @@ export default function MemberDashboard() {
   const [memberLoans, setMemberLoans] = useState([]);
   const [memberRecoveries, setMemberRecoveries] = useState([]);
   const [memberFDs, setMemberFDs] = useState([]);
+  const [memberPayments, setMemberPayments] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [imageErrors, setImageErrors] = useState({});
+  const [ledgerData, setLedgerData] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState("");
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -66,6 +71,7 @@ export default function MemberDashboard() {
         // After member is loaded, fetch transactions
         if (res?.data) {
           loadMemberTransactions(res.data);
+          loadFinancialLedger();
         }
       })
       .catch((e) => {
@@ -76,6 +82,39 @@ export default function MemberDashboard() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // Load financial ledger when date filters change
+  useEffect(() => {
+    if (id && memberDoc) {
+      loadFinancialLedger();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromDate, toDate]);
+
+  const loadFinancialLedger = async () => {
+    if (!id) return;
+    
+    try {
+      setLedgerLoading(true);
+      setLedgerError("");
+      const filters = {};
+      if (fromDate) filters.fromDate = fromDate;
+      if (toDate) filters.toDate = toDate;
+      
+      const response = await getMemberFinancialLedger(id, filters);
+      if (response?.success && response?.data?.ledger) {
+        setLedgerData(response.data.ledger || []);
+      } else {
+        setLedgerData([]);
+      }
+    } catch (error) {
+      console.error("Error loading financial ledger:", error);
+      setLedgerError(String(error || "Failed to load financial ledger"));
+      setLedgerData([]);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
   const loadMemberTransactions = async (memberData) => {
     if (!memberData?.group) return;
 
@@ -85,11 +124,12 @@ export default function MemberDashboard() {
       const memberId = memberData._id || id;
       const memberCode = memberData.Member_Id;
 
-      // Fetch loans, recoveries, and FDs for the member
-      const [loansRes, recoveriesRes, fdsRes] = await Promise.all([
+      // Fetch loans, recoveries, FDs, and payments for the member
+      const [loansRes, recoveriesRes, fdsRes, paymentsRes] = await Promise.all([
         getLoans(groupId).catch(() => ({ success: false, data: [] })),
         getRecoveries(groupId).catch(() => ({ success: false, data: [] })),
         getFDsByMember(memberId).catch(() => ({ success: false, data: [] })),
+        getPayments({ memberId }).catch(() => ({ success: false, data: [] })),
       ]);
 
       // Filter loans by memberId or memberCode
@@ -133,6 +173,20 @@ export default function MemberDashboard() {
       // Set FDs from FDMaster
       const fds = fdsRes?.data || [];
       setMemberFDs(Array.isArray(fds) ? fds : []);
+
+      // Filter payments by memberId and only include approved/completed payments
+      const payments = paymentsRes?.data || [];
+      const filteredPayments = Array.isArray(payments)
+        ? payments.filter(
+          (payment) =>
+            (payment.memberId === memberId ||
+              payment.memberId === id ||
+              payment.memberId?._id === memberId ||
+              payment.memberId?._id === id) &&
+            (payment.status === "approved" || payment.status === "completed")
+        )
+        : [];
+      setMemberPayments(filteredPayments);
     } catch (error) {
       console.error("Error loading member transactions:", error);
     } finally {
@@ -148,36 +202,107 @@ export default function MemberDashboard() {
     const loanDetails = memberDoc?.loanDetails || {};
     const openingYogdan = memberDoc?.openingYogdan || 0;
 
+    // Calculate current balances from transactions
+    // Start with opening balances
+    let currentSavings = openingSaving;
+    let currentLoan = loanDetails?.amount || 0;
+    let currentFD = fdDetails?.amount || 0;
+    let currentInterest = loanDetails?.overdueInterest || 0;
+    let lastRecoveryDate = null;
+
+
+    // Add savings from recoveries
+    memberRecoveries.forEach((recovery, idx) => {
+      const amounts = recovery.amounts || {};
+      const savingAmt = parseFloat(amounts.saving || 0);
+      const loanAmt = parseFloat(amounts.loan || 0);
+      const fdAmt = parseFloat(amounts.fd || 0);
+      const interestAmt = parseFloat(amounts.interest || 0);
+
+      currentSavings += savingAmt;
+      currentLoan = Math.max(0, currentLoan - loanAmt);
+      currentFD += fdAmt;
+      currentInterest = Math.max(0, currentInterest - interestAmt);
+
+      // Track last recovery date
+      const recoveryDate = recovery.recoveryDate || recovery.date;
+      if (recoveryDate) {
+        const date = new Date(recoveryDate);
+        if (!lastRecoveryDate || date > lastRecoveryDate) {
+          lastRecoveryDate = date;
+        }
+      }
+    });
+
+    // Add savings from loan transactions (if transactionType is "Saving")
+    memberLoans.forEach((loan) => {
+      if (loan.transactionType === "Saving") {
+        currentSavings += parseFloat(loan.amount || 0);
+      } else if (loan.transactionType === "Loan") {
+        currentLoan += parseFloat(loan.amount || 0);
+      } else if (loan.transactionType === "FD") {
+        currentFD += parseFloat(loan.amount || 0);
+      }
+    });
+
+    // Add FDs from FDMaster
+    memberFDs.forEach((fd) => {
+      currentFD += parseFloat(fd.amount || fd.principal || 0);
+    });
+
+    // Subtract payments (savings withdrawals and FD maturities)
+    memberPayments.forEach((payment) => {
+      const amount = parseFloat(payment.amount || 0);
+      if (payment.paymentType === "saving_withdrawal") {
+        currentSavings = Math.max(0, currentSavings - amount);
+      } else if (payment.paymentType === "fd_maturity") {
+        currentFD = Math.max(0, currentFD - amount);
+      }
+    });
+
     return {
       code: memberDoc?.Member_Id || "-",
       name: memberDoc?.Member_Nm || "-",
       fatherName: memberDoc?.F_H_Name || memberDoc?.F_H_FatherName || "-",
       village: memberDoc?.Village || "-",
       joiningDate: memberDoc?.Dt_Join || "",
-      // Financial fields from existing member data
+      // Financial fields - opening balances
       openingBalance: openingSaving,
-      savingsTotal: openingSaving, // Opening saving is the initial savings total
-      loanOutstanding: loanDetails?.amount || 0,
+      // Financial fields - current balances (calculated from transactions)
+      savingsTotal: currentSavings, // Current total savings (opening + all deposits)
+      loanOutstanding: currentLoan, // Current outstanding loan (opening + loans taken - loans recovered)
       loanDate: loanDetails?.loanDate || null,
       loanOverdueInterest: loanDetails?.overdueInterest || 0,
-      fdTotal: fdDetails?.amount || 0,
+      fdTotal: currentFD, // Current total FD (opening + all FD deposits)
       fdDate: fdDetails?.date || null,
       fdMaturityDate: fdDetails?.maturityDate || null,
       fdInterest: fdDetails?.interest || 0,
-      interestPending: loanDetails?.overdueInterest || 0,
+      interestPending: currentInterest, // Current pending interest (opening - interest paid)
       openingYogdan: openingYogdan,
       isExistingMember: isExisting,
-      lastRecoveryDate: "",
+      lastRecoveryDate: lastRecoveryDate,
     };
-  }, [memberDoc]);
+  }, [memberDoc, memberRecoveries, memberLoans, memberFDs, memberPayments]);
 
-  // Create ledger entries from existing member financial data and actual transactions
+  // Use ledger data from API instead of calculating on frontend
   const ledger = useMemo(() => {
+    // Return ledger data from API, or empty array if not loaded yet
+    return ledgerData || [];
+  }, [ledgerData]);
+
+  // OLD LEDGER CALCULATION - KEPT FOR REFERENCE BUT NOT USED
+  // This complex calculation is now done on the backend
+  const ledger_OLD = useMemo(() => {
     const entries = [];
+    // Start with opening balances only (not the calculated totals which include transactions)
+    const openingFD = memberDoc?.fdDetails?.amount || 0;
+    const openingLoan = memberDoc?.loanDetails?.amount || 0;
     let runningSavings = member.openingBalance || 0;
-    let runningLoan = member.loanOutstanding || 0;
-    let runningFD = member.fdTotal || 0;
+    let runningLoan = openingLoan; // Start with opening loan only, not member.loanOutstanding (which includes memberLoans)
+    let runningFD = openingFD; // Start with opening FD only, not member.fdTotal (which includes memberFDs)
     let runningInterest = member.loanOverdueInterest || 0;
+    let cumulativeLoanPaid = 0; // Track cumulative total loan paid
+
 
     // Track FDs from FDMaster to avoid double counting with member.fdDetails
     const fdFromFDMaster = new Set();
@@ -194,10 +319,10 @@ export default function MemberDashboard() {
           savingsDeposit: member.openingBalance,
           savingsWithdraw: 0,
           savingsBalance: runningSavings,
-          loanPaid: 0,
-          loanRecovered: 0,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far (0 at opening)
+          loanRecovered: 0, // No recovery at opening
           loanBalance: runningLoan,
-          fdDeposit: member.fdTotal,
+          fdDeposit: openingFD, // Use openingFD, not member.fdTotal
           fdWithdraw: 0,
           fdBalance: runningFD,
           interestDue: member.loanOverdueInterest,
@@ -206,17 +331,17 @@ export default function MemberDashboard() {
       }
 
       // FD entry (if different date from opening)
-      if (member.fdTotal > 0 && member.fdDate && member.fdDate !== openingDate) {
+      if (openingFD > 0 && member.fdDate && member.fdDate !== openingDate) {
         entries.push({
           date: member.fdDate,
           receipt: "FD Opening",
           savingsDeposit: 0,
           savingsWithdraw: 0,
           savingsBalance: runningSavings,
-          loanPaid: 0,
-          loanRecovered: 0,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far
+          loanRecovered: 0, // No recovery at FD opening
           loanBalance: runningLoan,
-          fdDeposit: member.fdTotal,
+          fdDeposit: openingFD, // Use openingFD, not member.fdTotal
           fdWithdraw: 0,
           fdBalance: runningFD,
           interestDue: runningInterest,
@@ -225,16 +350,16 @@ export default function MemberDashboard() {
       }
 
       // Loan entry (if different date from opening)
-      if (member.loanOutstanding > 0 && member.loanDate && member.loanDate !== openingDate) {
+      if (openingLoan > 0 && member.loanDate && member.loanDate !== openingDate) {
         entries.push({
           date: member.loanDate,
           receipt: "Loan Taken",
           savingsDeposit: 0,
           savingsWithdraw: 0,
           savingsBalance: runningSavings,
-          loanPaid: 0,
-          loanRecovered: 0,
-          loanBalance: runningLoan,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far (0 at this point)
+          loanRecovered: 0, // Loan taken, not recovered yet
+          loanBalance: runningLoan, // Outstanding loan balance (opening loan)
           fdDeposit: 0,
           fdWithdraw: 0,
           fdBalance: runningFD,
@@ -257,8 +382,8 @@ export default function MemberDashboard() {
           savingsDeposit: 0,
           savingsWithdraw: 0,
           savingsBalance: runningSavings,
-          loanPaid: 0,
-          loanRecovered: 0,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far
+          loanRecovered: 0, // Loan taken, not recovered
           loanBalance: runningLoan,
           fdDeposit: 0,
           fdWithdraw: 0,
@@ -274,8 +399,8 @@ export default function MemberDashboard() {
           savingsDeposit: 0,
           savingsWithdraw: 0,
           savingsBalance: runningSavings,
-          loanPaid: 0,
-          loanRecovered: 0,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far
+          loanRecovered: 0, // No loan recovery in FD entry
           loanBalance: runningLoan,
           fdDeposit: amount,
           fdWithdraw: 0,
@@ -291,8 +416,8 @@ export default function MemberDashboard() {
           savingsDeposit: amount,
           savingsWithdraw: 0,
           savingsBalance: runningSavings,
-          loanPaid: 0,
-          loanRecovered: 0,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far
+          loanRecovered: 0, // No loan recovery in saving entry
           loanBalance: runningLoan,
           fdDeposit: 0,
           fdWithdraw: 0,
@@ -317,8 +442,8 @@ export default function MemberDashboard() {
           savingsDeposit: 0,
           savingsWithdraw: 0,
           savingsBalance: runningSavings,
-          loanPaid: 0,
-          loanRecovered: 0,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far
+          loanRecovered: 0, // No loan recovery in FD entry
           loanBalance: runningLoan,
           fdDeposit: amount,
           fdWithdraw: 0,
@@ -330,9 +455,11 @@ export default function MemberDashboard() {
     });
 
     // Add recovery transactions
-    memberRecoveries.forEach((recovery) => {
+    memberRecoveries.forEach((recovery, idx) => {
       const recoveryDate = recovery.recoveryDate || recovery.date;
       const amounts = recovery.amounts || {};
+
+
       const saving = parseFloat(amounts.saving || 0);
       const loan = parseFloat(amounts.loan || 0);
       const fd = parseFloat(amounts.fd || 0);
@@ -340,31 +467,174 @@ export default function MemberDashboard() {
       const yogdan = parseFloat(amounts.yogdan || 0);
       const other = parseFloat(amounts.other || 0);
 
+
+      const beforeBalances = { runningSavings, runningLoan, runningFD, runningInterest, cumulativeLoanPaid };
       runningSavings += saving;
-      runningLoan = Math.max(0, runningLoan - loan);
+      // Update loan balance: subtract loan recovery amount
+      const loanBeforeRecovery = runningLoan;
+      const loanAmount = isNaN(loan) ? 0 : loan;
+
+      // Store cumulative BEFORE adding this recovery (for loanPaid display)
+      const cumulativeLoanPaidBefore = cumulativeLoanPaid;
+
+      runningLoan = Math.max(0, runningLoan - loanAmount);
+
+      // Update cumulative loan paid AFTER storing the before value
+      cumulativeLoanPaid += loanAmount;
+
       runningFD += fd;
+      // Update interest: subtract interest paid
+      // Interest due should show the total interest due (before payment) + interest paid in this recovery
+      // This way it shows the full interest amount that was due
+      const interestBeforeRecovery = runningInterest;
+      const interestDueForThisRecovery = interest; // Interest paid in this recovery
+      const totalInterestDue = interestBeforeRecovery + interestDueForThisRecovery; // Total interest due before this payment
       runningInterest = Math.max(0, runningInterest - interest);
 
-      entries.push({
+      // Ensure interest amount is a number
+      const interestAmount = isNaN(interest) ? 0 : interest;
+
+
+      const entry = {
         date: recoveryDate,
         receipt: "Recovery",
         savingsDeposit: saving,
         savingsWithdraw: 0,
         savingsBalance: runningSavings,
-        loanPaid: loan,
-        loanRecovered: loan,
-        loanBalance: runningLoan,
+        loanPaid: cumulativeLoanPaidBefore, // Cumulative total loan paid BEFORE this recovery
+        loanRecovered: loanAmount, // Amount recovered from member in this transaction
+        loanBalance: runningLoan, // Remaining loan balance after recovery
         fdDeposit: fd,
         fdWithdraw: 0,
         fdBalance: runningFD,
-        interestDue: runningInterest + interest,
-        interestPaid: interest,
-      });
+        interestDue: totalInterestDue, // Total interest due (before payment) - shows full interest amount
+        interestPaid: interestAmount, // Interest paid in this recovery
+      };
+
+      entries.push(entry);
+    });
+
+    // Add payment transactions (FD maturity and savings withdrawal)
+    memberPayments.forEach((payment) => {
+      const paymentDate = payment.paymentDate || payment.createdAt;
+      const amount = parseFloat(payment.amount || 0);
+      const paymentType = payment.paymentType;
+
+      if (paymentType === "saving_withdrawal") {
+        // Savings withdrawal reduces savings balance
+        runningSavings = Math.max(0, runningSavings - amount);
+        entries.push({
+          date: paymentDate,
+          receipt: "Savings Withdrawal",
+          savingsDeposit: 0,
+          savingsWithdraw: amount,
+          savingsBalance: runningSavings,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far
+          loanRecovered: 0, // No loan recovery in payment entry
+          loanBalance: runningLoan,
+          fdDeposit: 0,
+          fdWithdraw: 0,
+          fdBalance: runningFD,
+          interestDue: runningInterest,
+          interestPaid: 0,
+        });
+      } else if (paymentType === "fd_maturity") {
+        // FD maturity reduces FD balance
+        runningFD = Math.max(0, runningFD - amount);
+        entries.push({
+          date: paymentDate,
+          receipt: "FD Maturity",
+          savingsDeposit: 0,
+          savingsWithdraw: 0,
+          savingsBalance: runningSavings,
+          loanPaid: cumulativeLoanPaid, // Cumulative total paid so far
+          loanRecovered: 0, // No loan recovery in payment entry
+          loanBalance: runningLoan,
+          fdDeposit: 0,
+          fdWithdraw: amount,
+          fdBalance: runningFD,
+          interestDue: runningInterest,
+          interestPaid: 0,
+        });
+      }
     });
 
     // Sort by date
-    return entries.sort((a, b) => new Date(a.date) - new Date(b.date));
-  }, [member, memberDoc, memberLoans, memberRecoveries, memberFDs]);
+    const sortedEntries = entries.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Recalculate ALL running balances in chronological order
+    // This is necessary because entries were processed in a different order
+    let recalcSavings = member.openingBalance || 0;
+    let recalcLoan = openingLoan;
+    let recalcFD = openingFD;
+    let recalcInterest = member.loanOverdueInterest || 0;
+    // NOTE: UI "General Loan" columns:
+    // - Paid: total loan DISBURSED (given to member) cumulative
+    // - Recovered: amount recovered in the current transaction (for "Recovery" rows)
+    let cumulativeLoanDisbursed = 0;
+    let cumulativeLoanRecovered = 0;
+
+    sortedEntries.forEach((entry) => {
+
+      // Process entry based on receipt type - use deposit/withdraw amounts, not stored balances
+      if (entry.receipt === "Opening" || entry.receipt === "FD Opening") {
+        // Opening balance entries
+        if (entry.savingsDeposit > 0) {
+          recalcSavings = entry.savingsDeposit;
+        }
+        if (entry.fdDeposit > 0) {
+          recalcFD = entry.fdDeposit;
+        }
+        // Don't repeat Paid on non-loan rows
+        entry.loanPaid = 0;
+      } else if (entry.receipt === "Loan Taken" || entry.receipt.startsWith("Loan -")) {
+        // Loan taken - calculate amount from balance difference
+        const loanAmount = entry.loanBalance - recalcLoan;
+        if (loanAmount > 0) {
+          recalcLoan += loanAmount;
+        } else {
+          recalcLoan = entry.loanBalance; // Use the entry's balance directly
+        }
+        // "Paid" should reflect loan disbursed
+        cumulativeLoanDisbursed += Math.max(0, loanAmount);
+        entry.loanPaid = cumulativeLoanDisbursed;
+      } else if (entry.receipt.startsWith("FD -")) {
+        // FD deposit
+        recalcFD += entry.fdDeposit;
+        // Don't repeat Paid on non-loan rows
+        entry.loanPaid = 0;
+      } else if (entry.receipt === "Recovery") {
+        // Recovery - add savings deposit, subtract loan recovered, add FD deposit, subtract interest paid
+        recalcSavings += entry.savingsDeposit || 0;
+        const loanRecovered = entry.loanRecovered || 0;
+        // "Paid" stays as total disbursed; "Recovered" is per-transaction
+        entry.loanPaid = cumulativeLoanDisbursed;
+        cumulativeLoanRecovered += loanRecovered;
+
+        recalcLoan = Math.max(0, recalcLoan - loanRecovered);
+        recalcFD += entry.fdDeposit || 0;
+        recalcInterest = Math.max(0, recalcInterest - (entry.interestPaid || 0));
+      } else if (entry.receipt === "Savings Withdrawal") {
+        // Savings withdrawal - subtract from savings
+        recalcSavings = Math.max(0, recalcSavings - (entry.savingsWithdraw || 0));
+        // Don't repeat Paid on non-loan rows
+        entry.loanPaid = 0;
+      } else if (entry.receipt === "FD Maturity") {
+        // FD maturity - subtract from FD
+        recalcFD = Math.max(0, recalcFD - (entry.fdWithdraw || 0));
+        // Don't repeat Paid on non-loan rows
+        entry.loanPaid = 0;
+      }
+
+      // Update entry balances
+      entry.savingsBalance = recalcSavings;
+      entry.loanBalance = recalcLoan;
+      entry.fdBalance = recalcFD;
+      entry.interestDue = recalcInterest;
+    });
+
+    return sortedEntries;
+  }, [member, memberDoc, memberLoans, memberRecoveries, memberFDs, memberPayments]);
 
   // Format date to dd/mm/yyyy
   const formatDate = (dateString) => {
@@ -376,8 +646,9 @@ export default function MemberDashboard() {
     return `${day}/${month}/${year}`;
   };
 
-  // DATE FILTER FUNCTION
+  // DATE FILTER FUNCTION - Note: Date filtering is now done on backend, but we keep this for client-side filtering if needed
   const filterByDate = (data) => {
+    if (!data || data.length === 0) return [];
     return data.filter((item) => {
       const itemDate = new Date(item.date);
       const from = fromDate ? new Date(fromDate) : null;
@@ -390,25 +661,42 @@ export default function MemberDashboard() {
     });
   };
 
-  const filteredLedger = filterByDate(ledger);
+  // Filter ledger - backend already filters by date, but we can apply additional client-side filtering if needed
+  const filteredLedger = useMemo(() => {
+    return filterByDate(ledger);
+  }, [ledger, fromDate, toDate]);
 
   // Export table to Excel
   const exportTableToExcel = () => {
-    const data = filteredLedger.map((row) => ({
-      Date: formatDate(row.date),
-      Receipt: row.receipt,
-      "Savings Deposit": row.savingsDeposit,
-      "Savings Withdraw": row.savingsWithdraw,
-      "Savings Balance": row.savingsBalance,
-      "Loan Paid": row.loanPaid,
-      "Loan Recovered": row.loanRecovered,
-      "Loan Balance": row.loanBalance,
-      "FD Deposit": row.fdDeposit,
-      "FD Withdraw": row.fdWithdraw,
-      "FD Balance": row.fdBalance,
-      "Interest Due": row.interestDue,
-      "Interest Paid": row.interestPaid,
-    }));
+    const data = filteredLedger.map((row) => {
+      const chargesTotal = row.charges ? 
+        Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
+      const chargesDetails = row.charges && Object.keys(row.charges).length > 0
+        ? Object.entries(row.charges)
+            .filter(([_, amount]) => parseFloat(amount) > 0)
+            .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+            .join(", ")
+        : "";
+      
+      return {
+        Date: formatDate(row.date),
+        Receipt: row.receipt,
+        "Savings Deposit": row.savingsDeposit || 0,
+        "Savings Withdraw": row.savingsWithdraw || 0,
+        "Savings Balance": row.savingsBalance || 0,
+        "Loan Paid": row.loanPaid || 0,
+        "Loan Recovered": row.loanRecovered || 0,
+        "Loan Balance": row.loanBalance || 0,
+        "FD Deposit": row.fdDeposit || 0,
+        "FD Withdraw": row.fdWithdraw || 0,
+        "FD Balance": row.fdBalance || 0,
+        "Interest Due": row.interestDue || 0,
+        "Interest Paid": row.interestPaid || 0,
+        "Yogdan": row.yogdan || 0,
+        "Charges Total": chargesTotal,
+        "Charges Details": chargesDetails,
+      };
+    });
 
     exportToExcel(data, `Member_${member.code}_Transactions_${new Date().toISOString().split("T")[0]}`);
   };
@@ -429,23 +717,40 @@ export default function MemberDashboard() {
       "FD Balance",
       "Interest Due",
       "Interest Paid",
+      "Yogdan",
+      "Charges Total",
+      "Charges Details",
     ];
 
-    const rows = filteredLedger.map((row) => [
-      formatDate(row.date),
-      row.receipt.toString(),
-      `${row.savingsDeposit}`,
-      `${row.savingsWithdraw}`,
-      `${row.savingsBalance}`,
-      `${row.loanPaid}`,
-      `${row.loanRecovered}`,
-      `${row.loanBalance}`,
-      `${row.fdDeposit}`,
-      `${row.fdWithdraw}`,
-      `${row.fdBalance}`,
-      `${row.interestDue}`,
-      `${row.interestPaid}`,
-    ]);
+    const rows = filteredLedger.map((row) => {
+      const chargesTotal = row.charges ? 
+        Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
+      const chargesDetails = row.charges && Object.keys(row.charges).length > 0
+        ? Object.entries(row.charges)
+            .filter(([_, amount]) => parseFloat(amount) > 0)
+            .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+            .join(", ")
+        : "";
+      
+      return [
+        formatDate(row.date),
+        row.receipt.toString(),
+        `${row.savingsDeposit || 0}`,
+        `${row.savingsWithdraw || 0}`,
+        `${row.savingsBalance || 0}`,
+        `${row.loanPaid || 0}`,
+        `${row.loanRecovered || 0}`,
+        `${row.loanBalance || 0}`,
+        `${row.fdDeposit || 0}`,
+        `${row.fdWithdraw || 0}`,
+        `${row.fdBalance || 0}`,
+        `${row.interestDue || 0}`,
+        `${row.interestPaid || 0}`,
+        `${row.yogdan || 0}`,
+        `${chargesTotal}`,
+        chargesDetails || "",
+      ];
+    });
 
     exportToPDF(
       `${member.name} (${member.code}) - Transaction Report`,
@@ -573,23 +878,40 @@ export default function MemberDashboard() {
         "FD Balance",
         "Interest Due",
         "Interest Paid",
+        "Yogdan",
+        "Charges Total",
+        "Charges Details",
       ];
 
-      const rows = filteredLedger.map((row) => [
-        formatDate(row.date),
-        row.receipt.toString(),
-        `${row.savingsDeposit}`,
-        `${row.savingsWithdraw}`,
-        `${row.savingsBalance}`,
-        `${row.loanPaid}`,
-        `${row.loanRecovered}`,
-        `${row.loanBalance}`,
-        `${row.fdDeposit}`,
-        `${row.fdWithdraw}`,
-        `${row.fdBalance}`,
-        `${row.interestDue}`,
-        `${row.interestPaid}`,
-      ]);
+      const rows = filteredLedger.map((row) => {
+        const chargesTotal = row.charges ? 
+          Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
+        const chargesDetails = row.charges && Object.keys(row.charges).length > 0
+          ? Object.entries(row.charges)
+              .filter(([_, amount]) => parseFloat(amount) > 0)
+              .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+              .join(", ")
+          : "";
+        
+        return [
+          formatDate(row.date),
+          row.receipt.toString(),
+          `${row.savingsDeposit || 0}`,
+          `${row.savingsWithdraw || 0}`,
+          `${row.savingsBalance || 0}`,
+          `${row.loanPaid || 0}`,
+          `${row.loanRecovered || 0}`,
+          `${row.loanBalance || 0}`,
+          `${row.fdDeposit || 0}`,
+          `${row.fdWithdraw || 0}`,
+          `${row.fdBalance || 0}`,
+          `${row.interestDue || 0}`,
+          `${row.interestPaid || 0}`,
+          `${row.yogdan || 0}`,
+          `${chargesTotal}`,
+          chargesDetails || "",
+        ];
+      });
 
       autoTable(doc, {
         head: [headers],
@@ -1057,7 +1379,9 @@ export default function MemberDashboard() {
               {memberDoc?.loanDetails?.time_period && (
                 <tr className="border-b border-gray-200">
                   <td className="p-3 font-semibold text-gray-700 bg-gray-50">Loan Time Period:</td>
-                  <td className="p-3 text-gray-800">{memberDoc.loanDetails.time_period} months</td>
+                  <td className="p-3 text-gray-800">
+                    {memberDoc.loanDetails.time_period / 12} {memberDoc.loanDetails.time_period / 12 === 1 ? 'year' : 'years'} ({memberDoc.loanDetails.time_period} months)
+                  </td>
                 </tr>
               )}
               {memberDoc?.loanDetails?.installment_amount && (
@@ -1106,6 +1430,92 @@ export default function MemberDashboard() {
           </table>
         </div>
       </div>
+
+      {/* Membership Fees Summary */}
+      {(() => {
+        // Calculate totals for membership fees
+        const totalMemFeesGroup = memberRecoveries.reduce((sum, recovery) => {
+          return sum + (parseFloat(recovery.amounts?.memFeesGroup || 0) || 0);
+        }, 0);
+        const totalMemFeesSHG = memberRecoveries.reduce((sum, recovery) => {
+          return sum + (parseFloat(recovery.amounts?.memFeesSHG || 0) || 0);
+        }, 0);
+        const totalMemFeesSamiti = memberRecoveries.reduce((sum, recovery) => {
+          return sum + (parseFloat(recovery.amounts?.memFeesSamiti || 0) || 0);
+        }, 0);
+
+        // Get last payment dates from member document
+        const lastMemFeesSHGDate = memberDoc?.lastMembershipPaidDate;
+        const lastMemFeesGroupDate = memberDoc?.lastMembershipGroupPaidDate;
+
+        // Helper function to check if paid for current April-to-April cycle
+        const getCurrentCycleStart = () => {
+          const now = new Date();
+          const currentYear = now.getFullYear();
+          const currentMonth = now.getMonth(); // 0-11, where 0 is January
+          // If current month is before April (month 3), cycle started last year
+          if (currentMonth < 3) {
+            return new Date(currentYear - 1, 3, 1); // April 1 of previous year
+          }
+          return new Date(currentYear, 3, 1); // April 1 of current year
+        };
+
+        const currentCycleStart = getCurrentCycleStart();
+        const isMemFeesSHGPaid = lastMemFeesSHGDate && new Date(lastMemFeesSHGDate) >= currentCycleStart;
+        const isMemFeesGroupPaid = lastMemFeesGroupDate && new Date(lastMemFeesGroupDate) >= currentCycleStart;
+
+        return (
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 className="text-xl font-semibold text-gray-800 mb-4">Membership Fees Summary</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="p-3 text-left font-semibold text-gray-700 border-b border-gray-200">Fee Type</th>
+                    <th className="p-3 text-right font-semibold text-gray-700 border-b border-gray-200">Total Paid</th>
+                    <th className="p-3 text-left font-semibold text-gray-700 border-b border-gray-200">Payment Status</th>
+                    <th className="p-3 text-left font-semibold text-gray-700 border-b border-gray-200">Last Payment Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-gray-200">
+                    <td className="p-3 font-semibold text-gray-700 bg-gray-50">Mem. Fees SHG (Yearly)</td>
+                    <td className="p-3 text-gray-800 text-right">₹{totalMemFeesSHG.toLocaleString()}</td>
+                    <td className="p-3">
+                      <span className={`px-2 py-1 rounded text-xs font-semibold ${isMemFeesSHGPaid ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                        {isMemFeesSHGPaid ? "Paid" : "Not Paid"}
+                      </span>
+                    </td>
+                    <td className="p-3 text-gray-800">{lastMemFeesSHGDate ? formatDate(lastMemFeesSHGDate) : "Never"}</td>
+                  </tr>
+                  <tr className="border-b border-gray-200">
+                    <td className="p-3 font-semibold text-gray-700 bg-gray-50">Mem. Fees Group</td>
+                    <td className="p-3 text-gray-800 text-right">₹{totalMemFeesGroup.toLocaleString()}</td>
+                    <td className="p-3">
+                      <span className={`px-2 py-1 rounded text-xs font-semibold ${isMemFeesGroupPaid ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                        {isMemFeesGroupPaid ? "Paid" : "Not Paid"}
+                      </span>
+                    </td>
+                    <td className="p-3 text-gray-800">{lastMemFeesGroupDate ? formatDate(lastMemFeesGroupDate) : "Never"}</td>
+                  </tr>
+                  {totalMemFeesSamiti > 0 && (
+                    <tr className="border-b border-gray-200">
+                      <td className="p-3 font-semibold text-gray-700 bg-gray-50">Mem. Fees Samiti (Yearly)</td>
+                      <td className="p-3 text-gray-800 text-right">₹{totalMemFeesSamiti.toLocaleString()}</td>
+                      <td className="p-3">
+                        <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-100 text-blue-800">
+                          Paid
+                        </span>
+                      </td>
+                      <td className="p-3 text-gray-800">—</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Existing Member Financial Details Section */}
       {member.isExistingMember && (
@@ -1165,7 +1575,9 @@ export default function MemberDashboard() {
                     {memberDoc?.loanDetails?.time_period && (
                       <tr className="border-b border-blue-200">
                         <td className="p-3 font-semibold text-gray-700 bg-blue-100">Loan Time Period:</td>
-                        <td className="p-3 text-gray-800">{memberDoc.loanDetails.time_period} months</td>
+                        <td className="p-3 text-gray-800">
+                          {memberDoc.loanDetails.time_period / 12} {memberDoc.loanDetails.time_period / 12 === 1 ? 'year' : 'years'} ({memberDoc.loanDetails.time_period} months)
+                        </td>
                       </tr>
                     )}
                     {memberDoc?.loanDetails?.installment_amount && (
@@ -1230,14 +1642,20 @@ export default function MemberDashboard() {
                   <tr key={fd._id} className="border-b border-green-200">
                     <td className="p-3 text-gray-800">{formatDate(fd.date)}</td>
                     <td className="p-3 text-gray-800">₹{parseFloat(fd.amount || 0).toLocaleString()}</td>
-                    <td className="p-3 text-gray-800">{fd.time_period || "-"} months</td>
+                    <td className="p-3 text-gray-800">
+                      {fd.time_period ? (
+                        <>
+                          {fd.time_period / 12} {fd.time_period / 12 === 1 ? 'year' : 'years'} ({fd.time_period} months)
+                        </>
+                      ) : "-"}
+                    </td>
                     <td className="p-3 text-gray-800">{formatDate(fd.maturityDate)}</td>
                     <td className="p-3 text-gray-800">₹{parseFloat(fd.interestAmount || 0).toLocaleString()}</td>
                     <td className="p-3 text-gray-800">₹{parseFloat(fd.maturityAmount || 0).toLocaleString()}</td>
                     <td className="p-3 text-gray-800">
                       <span className={`px-2 py-1 rounded text-xs font-semibold ${fd.status === "active" ? "bg-green-200 text-green-800" :
-                          fd.status === "matured" ? "bg-yellow-200 text-yellow-800" :
-                            "bg-gray-200 text-gray-800"
+                        fd.status === "matured" ? "bg-yellow-200 text-yellow-800" :
+                          "bg-gray-200 text-gray-800"
                         }`}>
                         {fd.status || "active"}
                       </span>
@@ -1383,6 +1801,9 @@ export default function MemberDashboard() {
                     <th className="border border-gray-300 p-3 text-right font-semibold">FD</th>
                     <th className="border border-gray-300 p-3 text-right font-semibold">Interest</th>
                     <th className="border border-gray-300 p-3 text-right font-semibold">Yogdan</th>
+                    <th className="border border-gray-300 p-3 text-right font-semibold">Mem. Fees SHG</th>
+                    <th className="border border-gray-300 p-3 text-right font-semibold">Mem. Fees Group</th>
+                    <th className="border border-gray-300 p-3 text-right font-semibold">Charges</th>
                     <th className="border border-gray-300 p-3 text-right font-semibold">Other</th>
                     <th className="border border-gray-300 p-3 text-right font-semibold">Total</th>
                     <th className="border border-gray-300 p-3 text-left font-semibold">Payment Mode</th>
@@ -1396,8 +1817,13 @@ export default function MemberDashboard() {
                     const fd = parseFloat(amounts.fd || 0);
                     const interest = parseFloat(amounts.interest || 0);
                     const yogdan = parseFloat(amounts.yogdan || 0);
+                    const memFeesSHG = parseFloat(amounts.memFeesSHG || 0);
+                    const memFeesGroup = parseFloat(amounts.memFeesGroup || 0);
+                    const memFeesSamiti = parseFloat(amounts.memFeesSamiti || 0);
                     const other = parseFloat(amounts.other || 0);
-                    const total = saving + loan + fd + interest + yogdan + other;
+                    const chargesTotal = amounts.charges ? 
+                      Object.values(amounts.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
+                    const total = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesGroup + memFeesSamiti + other + chargesTotal;
                     const mode = recovery.paymentMode?.cash && recovery.paymentMode?.online
                       ? "Cash & Online"
                       : recovery.paymentMode?.cash
@@ -1416,6 +1842,18 @@ export default function MemberDashboard() {
                         <td className="border border-gray-300 p-3 text-right">₹{fd.toLocaleString()}</td>
                         <td className="border border-gray-300 p-3 text-right">₹{interest.toLocaleString()}</td>
                         <td className="border border-gray-300 p-3 text-right">₹{yogdan.toLocaleString()}</td>
+                        <td className="border border-gray-300 p-3 text-right">₹{memFeesSHG.toLocaleString()}</td>
+                        <td className="border border-gray-300 p-3 text-right">₹{memFeesGroup.toLocaleString()}</td>
+                        <td className="border border-gray-300 p-3 text-right" title={
+                          amounts.charges && Object.keys(amounts.charges).length > 0
+                            ? Object.entries(amounts.charges)
+                                .filter(([_, amount]) => parseFloat(amount) > 0)
+                                .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+                                .join(", ")
+                            : ""
+                        }>
+                          ₹{chargesTotal.toLocaleString()}
+                        </td>
                         <td className="border border-gray-300 p-3 text-right">₹{other.toLocaleString()}</td>
                         <td className="border border-gray-300 p-3 text-right font-semibold text-green-700">
                           ₹{total.toLocaleString()}
@@ -1445,86 +1883,126 @@ export default function MemberDashboard() {
       {/* Transaction Table */}
       <div className="bg-white rounded-lg shadow-md p-6">
         <h2 className="text-xl font-semibold text-gray-800 mb-4">Financial Ledger</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-gray-100">
-                <th rowSpan={2} className="border border-gray-300 p-3 text-left font-semibold">
-                  Date
-                </th>
-                <th rowSpan={2} className="border border-gray-300 p-3 text-left font-semibold">
-                  Receipt
-                </th>
-                <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
-                  Monthly Savings
-                </th>
-                <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
-                  General Loan
-                </th>
-                <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
-                  FD
-                </th>
-                <th colSpan={2} className="border border-gray-300 p-3 text-center font-semibold">
-                  Interest
-                </th>
-              </tr>
-              <tr className="bg-gray-50">
-                <th className="border border-gray-300 p-2 text-center font-medium">Deposit</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Withdraw</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Recovered</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Deposit</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Withdraw</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Due</th>
-                <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredLedger.length === 0 ? (
-                <tr>
-                  <td colSpan={14} className="text-center p-6 text-gray-500">
-                    No records found for the selected date range
-                  </td>
-                </tr>
-              ) : (
-                filteredLedger.map((row, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="border border-gray-300 p-3">{formatDate(row.date)}</td>
-                    <td className="border border-gray-300 p-3">{row.receipt}</td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.savingsDeposit}</td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.savingsWithdraw}</td>
-                    <td className="border border-gray-300 p-3 text-right font-semibold">
-                      ₹{row.savingsBalance}
-                    </td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.loanPaid}</td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.loanRecovered}</td>
-                    <td className="border border-gray-300 p-3 text-right font-semibold">
-                      ₹{row.loanBalance}
-                    </td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.fdDeposit}</td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.fdWithdraw}</td>
-                    <td className="border border-gray-300 p-3 text-right font-semibold">
-                      ₹{row.fdBalance}
-                    </td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.interestDue}</td>
-                    <td className="border border-gray-300 p-3 text-right">₹{row.interestPaid}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        {filteredLedger.length > 0 && (
-          <div className="mt-4 text-sm text-gray-600">
-            Showing {filteredLedger.length} record(s)
-            {fromDate || toDate
-              ? ` (Filtered from ${fromDate ? formatDate(fromDate) : "beginning"} to ${toDate ? formatDate(toDate) : "end"
-              })`
-              : " (All records)"}
+        {ledgerError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <p className="text-red-700 font-semibold">Error loading ledger</p>
+            <p className="text-red-600 text-sm mt-1">{ledgerError}</p>
           </div>
+        )}
+        {ledgerLoading && (
+          <div className="text-center p-6 text-gray-600">
+            Loading financial ledger...
+          </div>
+        )}
+        {!ledgerLoading && !ledgerError && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th rowSpan={2} className="border border-gray-300 p-3 text-left font-semibold">
+                      Date
+                    </th>
+                    <th rowSpan={2} className="border border-gray-300 p-3 text-left font-semibold">
+                      Receipt
+                    </th>
+                    <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
+                      Monthly Savings
+                    </th>
+                    <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
+                      General Loan
+                    </th>
+                    <th colSpan={3} className="border border-gray-300 p-3 text-center font-semibold">
+                      FD
+                    </th>
+                    <th colSpan={2} className="border border-gray-300 p-3 text-center font-semibold">
+                      Interest
+                    </th>
+                    <th className="border border-gray-300 p-3 text-center font-semibold">
+                      Yogdan
+                    </th>
+                    <th className="border border-gray-300 p-3 text-center font-semibold">
+                      Charges
+                    </th>
+                  </tr>
+                  <tr className="bg-gray-50">
+                    <th className="border border-gray-300 p-2 text-center font-medium">Deposit</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Withdraw</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Recovered</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Deposit</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Withdraw</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Due</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Amount</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredLedger.length === 0 ? (
+                    <tr>
+                      <td colSpan={16} className="text-center p-6 text-gray-500">
+                        No records found for the selected date range
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLedger.map((row, i) => {
+                      // Calculate total charges amount
+                      const chargesTotal = row.charges ? 
+                        Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
+                      // Format charges details for display
+                      const chargesDetails = row.charges && Object.keys(row.charges).length > 0
+                        ? Object.entries(row.charges)
+                            .filter(([_, amount]) => parseFloat(amount) > 0)
+                            .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+                            .join(", ")
+                        : "—";
+                      
+                      return (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="border border-gray-300 p-3">{formatDate(row.date)}</td>
+                          <td className="border border-gray-300 p-3">{row.receipt}</td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.savingsDeposit || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.savingsWithdraw || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right font-semibold">
+                            ₹{row.savingsBalance || 0}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.loanPaid || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.loanRecovered || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right font-semibold">
+                            ₹{row.loanBalance || 0}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.fdDeposit || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.fdWithdraw || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right font-semibold">
+                            ₹{row.fdBalance || 0}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.interestDue || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.interestPaid || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right">₹{row.yogdan || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right" title={chargesDetails}>
+                            {chargesTotal > 0 ? `₹${chargesTotal.toLocaleString()}` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {filteredLedger.length > 0 && (
+              <div className="mt-4 text-sm text-gray-600">
+                Showing {filteredLedger.length} record(s)
+                {fromDate || toDate
+                  ? ` (Filtered from ${fromDate ? formatDate(fromDate) : "beginning"} to ${toDate ? formatDate(toDate) : "end"
+                  })`
+                  : " (All records)"}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

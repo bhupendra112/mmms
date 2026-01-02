@@ -12,4 +12,5 @@ export default {
 
     BANK_ADDED: "Bank added successfully",
     BANK_EXISTS: "Bank account already exists",
+    CASH_AMOUNT_ADDED: "Cash amount added successfully",
 };

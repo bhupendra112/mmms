@@ -33,3 +33,13 @@ export const getLoanDetail = async (id) => {
   return res.data;
 };
 
+export const approveLoan = async (id) => {
+  const res = await httpLoan.put(`/approve/${id}`);
+  return res.data;
+};
+
+export const rejectLoan = async (id, reason) => {
+  const res = await httpLoan.put(`/reject/${id}`, { reason });
+  return res.data;
+};
+

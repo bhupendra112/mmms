@@ -19,6 +19,8 @@ export const loginGroup = async (req, res) => {
         }
 
         // Find group by name and ID/code
+        // Note: If multiple groups exist with same group_code, findOne returns the first match
+        // Group name verification below ensures correct group is selected
         let groupDoc = null;
         if (groupId) {
             groupDoc = await GroupMaster.findById(groupId);

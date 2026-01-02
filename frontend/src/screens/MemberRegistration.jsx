@@ -132,12 +132,14 @@ export default function MemberRegistration() {
   }, [form.isExistingMember, form.group_id]);
 
   // Calculate installment amount when loan amount and time period are entered
+  // time_period is now in years, convert to months for calculation
   useEffect(() => {
     if (form.loanDetails.amount && form.loanDetails.time_period) {
       const loanAmount = parseFloat(form.loanDetails.amount || 0);
-      const months = parseFloat(form.loanDetails.time_period || 0);
+      const years = parseFloat(form.loanDetails.time_period || 0);
       
-      if (loanAmount > 0 && months > 0) {
+      if (loanAmount > 0 && years > 0) {
+        const months = years * 12; // Convert years to months
         const calculatedInstallment = (loanAmount / months).toFixed(2);
         setForm((prev) => ({
           ...prev,
@@ -757,11 +759,13 @@ export default function MemberRegistration() {
             />
             <Input
               type="number"
-              label="Time Period (Months)"
+              label="Time Period (Years)"
               name="loanDetails.time_period"
               value={form.loanDetails.time_period}
               handleChange={handleChange}
-              placeholder="Enter loan duration in months"
+              placeholder="Enter loan duration in years"
+              min="0.1"
+              step="0.1"
             />
             {form.loanDetails.amount && form.loanDetails.time_period && (
               <div className="md:col-span-2">
@@ -770,7 +774,7 @@ export default function MemberRegistration() {
                     <strong>Calculated Installment:</strong> ₹
                     {(
                       parseFloat(form.loanDetails.amount || 0) /
-                      parseFloat(form.loanDetails.time_period || 1)
+                      (parseFloat(form.loanDetails.time_period || 1) * 12)
                     ).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
@@ -779,10 +783,10 @@ export default function MemberRegistration() {
                   </p>
                   <p className="text-xs text-gray-600 mt-1">
                     Formula: ₹{parseFloat(form.loanDetails.amount || 0).toLocaleString("en-IN")} ÷{" "}
-                    {form.loanDetails.time_period} months = ₹
+                    {parseFloat(form.loanDetails.time_period || 1) * 12} months ({form.loanDetails.time_period} {parseFloat(form.loanDetails.time_period) === 1 ? 'year' : 'years'}) = ₹
                     {(
                       parseFloat(form.loanDetails.amount || 0) /
-                      parseFloat(form.loanDetails.time_period || 1)
+                      (parseFloat(form.loanDetails.time_period || 1) * 12)
                     ).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,

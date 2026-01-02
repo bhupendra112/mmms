@@ -91,10 +91,17 @@ export default function LoanManagement() {
     };
 
     const filteredLoans = loans.filter((loan) => {
-        const matchSearch =
-            loan.memberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            loan.memberCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            loan.purpose.toLowerCase().includes(searchTerm.toLowerCase());
+        // For group expenses (no member), search only by purpose
+        // For member loans, search by member name, code, or purpose
+        const memberName = (loan.memberName || "").toLowerCase();
+        const memberCode = (loan.memberCode || "").toLowerCase();
+        const purpose = (loan.purpose || "").toLowerCase();
+        const searchLower = searchTerm.toLowerCase();
+        
+        const matchSearch = searchTerm.trim() === "" ||
+            (memberName && memberName.includes(searchLower)) ||
+            (memberCode && memberCode.includes(searchLower)) ||
+            purpose.includes(searchLower);
 
         const matchFilter =
             filterType === "all" ||
@@ -258,8 +265,12 @@ export default function LoanManagement() {
                                 filteredLoans.map((loan) => (
                                     <tr key={loan.id} className="hover:bg-gray-50">
                                         <td className="border p-3 text-gray-800">{loan.date}</td>
-                                        <td className="border p-3 text-gray-800">{loan.memberCode}</td>
-                                        <td className="border p-3 text-gray-800">{loan.memberName}</td>
+                                        <td className="border p-3 text-gray-800">
+                                            {loan.memberCode || <span className="text-gray-400 italic">Group Expense</span>}
+                                        </td>
+                                        <td className="border p-3 text-gray-800">
+                                            {loan.memberName || <span className="text-gray-400 italic">Group Expense</span>}
+                                        </td>
                                         <td className="border p-3 text-center">
                                             <span
                                                 className={`px-2 py-1 rounded-full text-xs font-medium ${loan.hasAssets

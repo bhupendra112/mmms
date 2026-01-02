@@ -1,6 +1,6 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail } from "../../controller/admin/groupController.js";
+import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail, getCashTransactions, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
@@ -53,5 +53,16 @@ router.put("/bank/:bankId", authAdmin, updateBankDetail);
 router.get("/bank/:bankId", authAdmin, (req, res) => {
     return getBankDetail(req, res);
 });
+
+// GET CASH TRANSACTIONS FOR A GROUP
+router.get("/:groupId/cash-transactions", authAdmin, (req, res) => {
+    return getCashTransactions(req, res);
+});
+
+// Charge Management Routes
+router.post("/:groupId/charges", authAdmin, addGroupCharge);
+router.put("/:groupId/charges/:chargeId", authAdmin, updateGroupCharge);
+router.delete("/:groupId/charges/:chargeId", authAdmin, deleteGroupCharge);
+router.get("/:groupId/charges", authAdmin, getGroupCharges);
 
 export default router;

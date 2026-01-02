@@ -10,15 +10,12 @@ export const createErrorInterceptor = (isAdmin = true) => {
 
         // Handle 401 Unauthorized - redirect to appropriate login
         if (status === 401) {
+            // Auto-detect if we're in group context based on current route
+            const isGroupRoute = window.location.pathname.startsWith("/group");
+            const useGroupAuth = !isAdmin || isGroupRoute;
+            
             // Clear tokens
-            if (isAdmin) {
-                localStorage.removeItem("adminToken");
-                localStorage.removeItem("adminData");
-                // Redirect to admin login if not already there
-                if (window.location.pathname !== "/login-admin") {
-                    window.location.href = "/login-admin";
-                }
-            } else {
+            if (useGroupAuth) {
                 // For group authentication, clear group tokens
                 localStorage.removeItem("groupToken");
                 localStorage.removeItem("groupData");
@@ -26,8 +23,16 @@ export const createErrorInterceptor = (isAdmin = true) => {
                 localStorage.removeItem("activeGroupCode");
                 localStorage.removeItem("activeGroupCache");
                 // Redirect to group login if not already there
-                if (window.location.pathname !== "/group/login") {
-                    window.location.href = "/group/login";
+                if (window.location.pathname !== "/login" && window.location.pathname !== "/group/login") {
+                    window.location.href = "/login";
+                }
+            } else {
+                // For admin authentication
+                localStorage.removeItem("adminToken");
+                localStorage.removeItem("adminData");
+                // Redirect to admin login if not already there
+                if (window.location.pathname !== "/login-admin") {
+                    window.location.href = "/login-admin";
                 }
             }
         }

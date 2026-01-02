@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 const MemberSchema = new mongoose.Schema({
-    Member_Id: { type: String, required: true, unique: true },
+    Member_Id: { type: String, required: true }, // Not unique - same Member ID can exist in different groups
     Group_Name: { type: String },
     group: {
         type: mongoose.Schema.Types.ObjectId,
@@ -73,12 +73,15 @@ const MemberSchema = new mongoose.Schema({
         amount: { type: Number, default: 0 },
         loanDate: { type: Date },
         overdueInterest: { type: Number, default: 0 },
-        time_period: { type: Number }, // Loan duration in months
+        time_period: { type: Number }, // Loan duration in months (stored internally, but accepted in years from frontend)
         installment_amount: { type: Number }, // Monthly installment amount (calculated: amount / time_period)
     },
     openingYogdan: { type: Number, default: 0 }, // One-time opening balance, future tracked in recovery
     // Rate snapshot for existing members (to use historical saving rate instead of current group rate)
     saving_per_member_snapshot: { type: Number }, // Snapshot of saving_per_member from group
+    // Membership payment tracking
+    lastMembershipPaidDate: { type: Date }, // Last date when membership_fees was paid
+    lastMembershipGroupPaidDate: { type: Date }, // Last date when Mship_Group was paid
 }, {
     timestamps: true,
 });

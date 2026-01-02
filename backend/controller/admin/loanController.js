@@ -2,6 +2,8 @@ import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import LoanMaster from "../../model/LoanMaster.js";
 import { GroupMaster, BankMaster } from "../../model/index.js";
+import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
+import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
 
 export const registerLoan = async (req, res) => {
     try {
@@ -21,6 +23,12 @@ export const registerLoan = async (req, res) => {
             return apiResponse.error(res, "Valid groupId/groupCode/groupName is required", 400);
         }
 
+        // Validate loan amount
+        const loanAmount = parseFloat(payload.amount || 0);
+        if (!loanAmount || loanAmount <= 0) {
+            return apiResponse.error(res, "Loan amount must be greater than 0", 400);
+        }
+
         // Validate bankId if paymentMode is "Bank"
         if (payload.paymentMode === "Bank") {
             if (!payload.bankId) {
@@ -33,6 +41,21 @@ export const registerLoan = async (req, res) => {
             }
             if (bankDoc.group_id && bankDoc.group_id.toString() !== groupDoc._id.toString()) {
                 return apiResponse.error(res, "Bank does not belong to the specified group", 400);
+            }
+            
+            // Check bank balance
+            const balanceInfo = await BankMaster.calculateAvailableBalance(payload.bankId);
+            const availableBalance = balanceInfo.availableBalance || 0;
+            if (availableBalance < loanAmount) {
+                return apiResponse.error(res, `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${loanAmount.toFixed(2)}`, 400);
+            }
+        } else if (payload.paymentMode === "Cash") {
+            // Check cash balance
+            // Recalculate to get current cash balance
+            await groupDoc.recalculateCashBalance();
+            const cashBalance = groupDoc.current_cash_balance || 0;
+            if (cashBalance < loanAmount) {
+                return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${loanAmount.toFixed(2)}`, 400);
             }
         }
 
@@ -60,19 +83,93 @@ export const registerLoan = async (req, res) => {
             }
         }
 
+        // Convert time_period from years to months if provided
+        const loanPayload = { ...payload };
+        if (loanPayload.time_period !== undefined && loanPayload.time_period !== null) {
+            const timePeriodYears = parseFloat(loanPayload.time_period);
+            if (timePeriodYears > 0) {
+                loanPayload.time_period = Math.round(timePeriodYears * 12); // Convert years to months
+            }
+        }
+
+        // Calculate installment_amount if time_period and amount are provided
+        if (loanPayload.time_period && loanPayload.amount) {
+            const months = loanPayload.time_period;
+            const amount = parseFloat(loanPayload.amount);
+            if (months > 0 && amount > 0) {
+                loanPayload.installment_amount = amount / months;
+            }
+        }
+
+        // Calculate Yogdan (1% of loan amount) for member loans only
+        let yogdanAmount = 0;
+        if (loanPayload.transactionType === "Loan" && loanPayload.memberId && loanPayload.amount) {
+            const loanAmount = parseFloat(loanPayload.amount);
+            yogdanAmount = Math.round((loanAmount * 0.01) * 100) / 100; // 1% of loan amount, rounded to 2 decimals
+        }
+
+        // Determine status based on user type
+        // Check if the user is a group (type === "group") or an admin
+        // Group loans must go through approval workflow (pending status)
+        // Admin loans are immediately approved
+        const isAdmin = req.admin?.type !== "group";
+        const loanStatus = isAdmin ? "approved" : "pending";
+
         // Create loan transaction
         const loan = await LoanMaster.create({
-            ...payload,
+            ...loanPayload,
             date: dateValue,
             groupId: groupDoc._id,
             groupName: payload.groupName || groupDoc.group_name,
             groupCode: payload.groupCode || groupDoc.group_code,
             loan_rate_snapshot: groupDoc.loan_rate || null, // Store rate snapshot
-            status: "approved", // Admin actions are directly approved
+            yogdanAmount: yogdanAmount, // Store 1% Yogdan amount
+            status: loanStatus,
             createdBy: req.user?.id || "admin",
         });
 
-        return apiResponse.success(res, "Loan transaction registered successfully", loan);
+        // Only create transaction records and update balances if admin (loan is approved)
+        // For group loans, transactions will be created when admin approves
+        if (isAdmin) {
+            // Create bank transaction record if payment mode is Bank
+            if (payload.paymentMode === "Bank" && payload.bankId) {
+                await createBankTransactionRecord({
+                    bankId: payload.bankId,
+                    groupId: groupDoc._id,
+                    transactionType: "loan",
+                    amount: payload.amount || 0,
+                    date: dateValue,
+                    description: `Loan ${payload.transactionType} - ${payload.purpose || ""}`,
+                    loanId: loan._id,
+                    memberId: payload.memberId || null,
+                    memberCode: payload.memberCode || null,
+                    memberName: payload.memberName || null,
+                    createdBy: req.user?.id || "admin",
+                });
+            }
+
+            // Create cash transaction record if payment mode is Cash
+            if (payload.paymentMode === "Cash") {
+                await createCashTransactionRecord({
+                    groupId: groupDoc._id,
+                    transactionType: "loan",
+                    amount: payload.amount || 0,
+                    date: dateValue,
+                    description: `Loan ${payload.transactionType} - ${payload.purpose || ""}`,
+                    loanId: loan._id,
+                    memberId: payload.memberId || null,
+                    memberCode: payload.memberCode || null,
+                    memberName: payload.memberName || null,
+                    createdBy: req.user?.id || "admin",
+                });
+            }
+        }
+
+        const successMessage = isAdmin 
+            ? "Loan transaction registered successfully" 
+            : "Loan request created successfully! Waiting for admin approval.";
+        
+        return apiResponse.success(res, successMessage, loan);
 
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
@@ -116,6 +213,99 @@ export const getLoanDetail = async (req, res) => {
         }
 
         return apiResponse.success(res, "Loan detail fetched successfully", loan);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Approve loan
+export const approveLoan = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const loan = await LoanMaster.findById(id);
+        if (!loan) {
+            return apiResponse.error(res, "Loan not found", 404);
+        }
+
+        if (loan.status !== "pending") {
+            return apiResponse.error(res, `Loan is already ${loan.status}`, 400);
+        }
+
+        // Update loan status
+        loan.status = "approved";
+        loan.approvedBy = req.user?.id || "admin";
+        loan.approvedAt = new Date();
+        await loan.save();
+
+        // Get group document
+        const group = await GroupMaster.findById(loan.groupId);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        // Create bank transaction record if payment mode is Bank
+        if (loan.paymentMode === "Bank" && loan.bankId) {
+            await createBankTransactionRecord({
+                bankId: loan.bankId,
+                groupId: loan.groupId,
+                transactionType: "loan",
+                amount: loan.amount || 0,
+                date: loan.date,
+                description: `Loan ${loan.transactionType} - ${loan.purpose || ""}`,
+                loanId: loan._id,
+                memberId: loan.memberId || null,
+                memberCode: loan.memberCode || null,
+                memberName: loan.memberName || null,
+                createdBy: req.user?.id || "admin",
+                status: "verified", // Admin approved loans are immediately verified
+            });
+        }
+
+        // Create cash transaction record if payment mode is Cash
+        if (loan.paymentMode === "Cash") {
+            await createCashTransactionRecord({
+                groupId: loan.groupId,
+                transactionType: "loan",
+                amount: loan.amount || 0,
+                date: loan.date,
+                description: `Loan ${loan.transactionType} - ${loan.purpose || ""}`,
+                loanId: loan._id,
+                memberId: loan.memberId || null,
+                memberCode: loan.memberCode || null,
+                memberName: loan.memberName || null,
+                createdBy: req.user?.id || "admin",
+            });
+        }
+
+        return apiResponse.success(res, "Loan approved successfully", loan);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Reject loan
+export const rejectLoan = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        const loan = await LoanMaster.findById(id);
+        if (!loan) {
+            return apiResponse.error(res, "Loan not found", 404);
+        }
+
+        if (loan.status !== "pending") {
+            return apiResponse.error(res, `Loan is already ${loan.status}`, 400);
+        }
+
+        loan.status = "rejected";
+        loan.rejectedBy = req.user?.id || "admin";
+        loan.rejectedAt = new Date();
+        loan.rejectionReason = reason || "No reason provided";
+        await loan.save();
+
+        return apiResponse.success(res, "Loan rejected successfully", loan);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

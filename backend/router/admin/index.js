@@ -8,6 +8,11 @@ import groupAuthRouter from "./groupAuthRouter.js"
 import dataManagementRouter from "./dataManagementRouter.js"
 import fdRouter from "./fdRouter.js"
 import paymentRouter from "./paymentRouter.js"
+import expenseRouter from "./expenseRouter.js"
+import financialReportRouter from "./financialReportRouter.js"
+import cashToBankRouter from "./cashToBankRouter.js"
+import bankTransactionRouter from "./bankTransactionRouter.js"
+import cashAmountRouter from "./cashAmountRouter.js"
 
 const router = express.Router();
 
@@ -22,6 +27,11 @@ const routeArray = [
     { path: "/data-management", route: dataManagementRouter },
     { path: "/fd", route: fdRouter },
     { path: "/payment", route: paymentRouter },
+    { path: "/expense", route: expenseRouter },
+    { path: "/financial-report", route: financialReportRouter },
+    { path: "/cash-to-bank", route: cashToBankRouter },
+    { path: "/bank-transaction", route: bankTransactionRouter },
+    { path: "/cash-amount", route: cashAmountRouter },
 ];
 
 // ✅ Register routes

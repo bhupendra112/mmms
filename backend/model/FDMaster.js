@@ -19,7 +19,7 @@ const FDMasterSchema = new mongoose.Schema({
 
     // FD Details
     amount: { type: Number, required: true, min: 0 },
-    time_period: { type: Number, required: true, min: 1 }, // Time period in months
+    time_period: { type: Number, required: true, min: 1 }, // Time period in months (stored internally, but accepted in years from frontend)
     fd_rate_snapshot: { type: Number, required: true }, // Snapshot of fd_rate from GroupMaster at time of creation
 
     // Dates
@@ -49,6 +49,10 @@ const FDMasterSchema = new mongoose.Schema({
         online: { type: Boolean, default: false },
     },
     onlineRef: { type: String },
+    bankId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "BankMaster",
+    }, // Bank reference for online payments
 
     // Created by
     createdBy: { type: String }, // Admin user ID or "admin"

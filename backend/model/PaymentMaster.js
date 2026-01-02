@@ -8,7 +8,7 @@ const PaymentMasterSchema = new mongoose.Schema({
     },
     memberCode: { type: String, required: true },
     memberName: { type: String, required: true },
-    
+
     groupId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "GroupMaster",
@@ -16,7 +16,7 @@ const PaymentMasterSchema = new mongoose.Schema({
     },
     groupName: { type: String, required: true },
     groupCode: { type: String },
-    
+
     // Payment details
     paymentType: {
         type: String,
@@ -24,32 +24,37 @@ const PaymentMasterSchema = new mongoose.Schema({
         required: true,
     },
     amount: { type: Number, required: true, min: 0 },
-    
-    // Bank details
+    paymentMode: {
+        type: String,
+        enum: ["Cash", "Bank"],
+        default: "Bank", // Default to Bank for backward compatibility
+    },
+
+    // Bank details (optional - only required when paymentMode is Bank)
     bankId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "BankMaster",
-        required: true,
+        required: false, // Optional - only required when paymentMode is "Bank"
     },
-    bankName: { type: String, required: true },
-    accountNo: { type: String, required: true },
-    
+    bankName: { type: String, required: false }, // Optional
+    accountNo: { type: String, required: false }, // Optional
+
     // FD reference (if FD payment)
     fdId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "FDMaster",
     },
-    
+
     // Status and workflow
     status: {
         type: String,
         enum: ["pending", "approved", "rejected", "completed"],
         default: "pending",
     },
-    
+
     // Dates
     paymentDate: { type: Date, required: true, default: Date.now },
-    
+
     // Approval workflow
     createdBy: { type: String }, // Admin user ID, "admin", or group user ID
     approvedBy: { type: String }, // Admin who approved (if from group panel)
@@ -57,14 +62,14 @@ const PaymentMasterSchema = new mongoose.Schema({
     rejectedBy: { type: String },
     rejectedAt: { type: Date },
     rejectionReason: { type: String },
-    
+
     // Completion
     completedBy: { type: String },
     completedAt: { type: Date },
-    
+
     // Additional info
     remarks: { type: String },
-    
+
 }, {
     timestamps: true,
 });

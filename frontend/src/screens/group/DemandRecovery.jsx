@@ -21,9 +21,9 @@ import { Input, Select } from "../../components/forms/FormComponents";
 import { exportRecoveryToExcel, exportRecoveryToPDF } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { createApprovalRequest } from "../../services/approvalDB";
-import { registerRecovery, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData } from "../../services/recoveryService";
+import { registerRecovery, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails } from "../../services/recoveryService";
 import { getLoans } from "../../services/loanService";
-import { getGroups } from "../../services/groupService";
+import { getGroups, getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
 import { isMeetingDay, getNextMeetingDate, formatMeetingDateTime } from "../../utils/meetingDateUtils";
 import CreateFD from "../../components/fd/CreateFD";
@@ -52,9 +52,11 @@ export default function DemandRecovery() {
     yogdan: "",
     memFeesSHG: "",
     memFeesSamiti: "",
+    memFeesGroup: "",
     penalty: "",
     other: "",
     fd: "",
+    charges: {}, // Dynamic charges: { [chargeName]: amount }
   });
   const [totalAmount, setTotalAmount] = useState(""); // Single total amount input for auto-calculation
   const [autoCalculated, setAutoCalculated] = useState(false); // Track if amounts are auto-calculated
@@ -64,6 +66,8 @@ export default function DemandRecovery() {
     online: false,
   });
   const [onlineRef, setOnlineRef] = useState("");
+  const [selectedBankId, setSelectedBankId] = useState("");
+  const [groupBanks, setGroupBanks] = useState([]);
   const [screenshot, setScreenshot] = useState(null);
   const [groupPhoto, setGroupPhoto] = useState(null);
   const [showCreateFD, setShowCreateFD] = useState(false);
@@ -129,6 +133,20 @@ export default function DemandRecovery() {
       .catch((err) => {
         console.error("Error loading previous recovery data:", err);
       });
+
+    // Fetch demandDetails from backend
+    getDemandDetails(activeGroup.id, member.id, today)
+      .then((res) => {
+        if (res?.success && res?.data) {
+          setDemandSummaries(prev => ({
+            ...prev,
+            [member.id]: res.data
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error("Error loading demand details:", err);
+      });
   }, [activeGroup?.id, currentMemberIndex, allMembers]);
 
   // Demand summary (dynamic): uses new calculation logic with previous demands
@@ -136,7 +154,7 @@ export default function DemandRecovery() {
     const recovery = recoveries.find((r) => r.memberId === memberId);
     const member = allMembers.find((m) => m.id === memberId);
 
-    // Use demandDetails from recovery if available (calculated by backend)
+    // Priority 1: Use demandDetails from recovery if available (calculated by backend when saving)
     if (recovery?.demandDetails) {
       const dd = recovery.demandDetails;
       return {
@@ -177,20 +195,20 @@ export default function DemandRecovery() {
           closing: dd.fd?.closingBalance || 0,
         },
         yogdan: {
-          prev: 0,
-          curr: 0,
-          total: recovery?.amounts?.yogdan || 0,
+          prev: dd.yogdan?.prevDemand || 0,
+          curr: dd.yogdan?.currDemand || dd.yogdan?.totalDemand || 0,
+          total: dd.yogdan?.totalDemand || 0,
           actual: recovery?.amounts?.yogdan || 0,
-          unpaid: 0,
-          opening: member?.openingYogdan || member?.raw?.openingYogdan || 0,
-          closing: (member?.openingYogdan || member?.raw?.openingYogdan || 0) + (recovery?.amounts?.yogdan || 0),
+          unpaid: dd.yogdan?.unpaidDemand || 0,
+          opening: dd.yogdan?.openingBalance || member?.openingYogdan || member?.raw?.openingYogdan || 0,
+          closing: dd.yogdan?.closingBalance || ((member?.openingYogdan || member?.raw?.openingYogdan || 0) + (recovery?.amounts?.yogdan || 0)),
         },
         memFeesSHG: {
           prev: 0,
-          curr: 0,
-          total: recovery?.amounts?.memFeesSHG || 0,
+          curr: dd.membership?.membershipFeesDue || 0,
+          total: dd.membership?.membershipFeesDue || 0, // Total demand should be just the due amount
           actual: recovery?.amounts?.memFeesSHG || 0,
-          unpaid: 0,
+          unpaid: Math.max(0, (dd.membership?.membershipFeesDue || 0) - (recovery?.amounts?.memFeesSHG || 0)),
           opening: 0,
           closing: 0,
         },
@@ -200,6 +218,15 @@ export default function DemandRecovery() {
           total: recovery?.amounts?.memFeesSamiti || 0,
           actual: recovery?.amounts?.memFeesSamiti || 0,
           unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+        memFeesGroup: {
+          prev: 0,
+          curr: dd.membership?.membershipGroupDue || 0,
+          total: dd.membership?.membershipGroupDue || 0, // Total demand should be just the due amount, not due + actual
+          actual: recovery?.amounts?.memFeesGroup || 0,
+          unpaid: Math.max(0, (dd.membership?.membershipGroupDue || 0) - (recovery?.amounts?.memFeesGroup || 0)),
           opening: 0,
           closing: 0,
         },
@@ -221,10 +248,130 @@ export default function DemandRecovery() {
           opening: 0,
           closing: 0,
         },
+        charges: {
+          prev: 0,
+          curr: 0,
+          total: dd.charges?.totalChargesDue || 0,
+          actual: Object.values(dd.charges?.actualCharges || {}).reduce((sum, amount) => sum + (amount || 0), 0),
+          unpaid: Math.max(0, (dd.charges?.totalChargesDue || 0) - (dd.charges?.totalChargesPaid || 0)),
+          opening: 0,
+          closing: 0,
+          chargesDue: dd.charges?.chargesDue || {}, // Individual charges due
+          actualCharges: dd.charges?.actualCharges || {}, // Individual charges paid
+        },
       };
     }
 
-    // Calculate on frontend if demandDetails not available (for display before saving)
+    // Priority 2: Use demandDetails fetched from backend API (for display before saving)
+    const backendDemandDetails = demandSummaries[memberId];
+    if (backendDemandDetails) {
+      const dd = backendDemandDetails;
+      return {
+        saving: {
+          prev: dd.saving?.prevDemand || 0,
+          curr: dd.saving?.currDemand || 0,
+          total: dd.saving?.totalDemand || 0,
+          actual: recovery?.amounts?.saving || 0,
+          unpaid: dd.saving?.unpaidDemand || 0,
+          opening: dd.saving?.openingBalance || 0,
+          closing: dd.saving?.closingBalance || 0,
+        },
+        loan: {
+          prev: dd.loan?.prevDemand || 0,
+          curr: dd.loan?.currDemand || 0,
+          total: dd.loan?.totalDemand || 0,
+          actual: recovery?.amounts?.loan || 0,
+          unpaid: dd.loan?.unpaidDemand || 0,
+          opening: dd.loan?.openingBalance || 0,
+          closing: dd.loan?.closingBalance || 0,
+        },
+        interest: {
+          prev: dd.interest?.prevDemand || 0,
+          curr: dd.interest?.currDemand || 0,
+          total: dd.interest?.totalDemand || 0,
+          actual: recovery?.amounts?.interest || 0,
+          unpaid: dd.interest?.unpaidDemand || 0,
+          opening: dd.interest?.openingBalance || 0,
+          closing: dd.interest?.closingBalance || 0,
+        },
+        fd: {
+          prev: 0,
+          curr: 0,
+          total: 0,
+          actual: recovery?.amounts?.fd || 0,
+          unpaid: 0,
+          opening: dd.fd?.openingBalance || 0,
+          closing: dd.fd?.closingBalance || 0,
+        },
+        yogdan: {
+          prev: dd.yogdan?.prevDemand || 0,
+          curr: dd.yogdan?.currDemand || dd.yogdan?.totalDemand || 0,
+          total: dd.yogdan?.totalDemand || 0,
+          actual: recovery?.amounts?.yogdan || 0,
+          unpaid: dd.yogdan?.unpaidDemand || 0,
+          opening: dd.yogdan?.openingBalance || member?.openingYogdan || member?.raw?.openingYogdan || 0,
+          closing: dd.yogdan?.closingBalance || ((member?.openingYogdan || member?.raw?.openingYogdan || 0) + (recovery?.amounts?.yogdan || 0)),
+        },
+        memFeesSHG: {
+          prev: 0,
+          curr: dd.membership?.membershipFeesDue || 0,
+          total: dd.membership?.membershipFeesDue || 0,
+          actual: recovery?.amounts?.memFeesSHG || 0,
+          unpaid: Math.max(0, (dd.membership?.membershipFeesDue || 0) - (recovery?.amounts?.memFeesSHG || 0)),
+          opening: 0,
+          closing: 0,
+        },
+        memFeesSamiti: {
+          prev: 0,
+          curr: 0,
+          total: recovery?.amounts?.memFeesSamiti || 0,
+          actual: recovery?.amounts?.memFeesSamiti || 0,
+          unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+        memFeesGroup: {
+          prev: 0,
+          curr: dd.membership?.membershipGroupDue || 0,
+          total: dd.membership?.membershipGroupDue || 0,
+          actual: recovery?.amounts?.memFeesGroup || 0,
+          unpaid: Math.max(0, (dd.membership?.membershipGroupDue || 0) - (recovery?.amounts?.memFeesGroup || 0)),
+          opening: 0,
+          closing: 0,
+        },
+        penalty: {
+          prev: 0,
+          curr: 0,
+          total: recovery?.amounts?.penalty || 0,
+          actual: recovery?.amounts?.penalty || 0,
+          unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+        other: {
+          prev: 0,
+          curr: 0,
+          total: (recovery?.amounts?.other1 || 0) + (recovery?.amounts?.other2 || 0) + (recovery?.amounts?.other || 0),
+          actual: (recovery?.amounts?.other1 || 0) + (recovery?.amounts?.other2 || 0) + (recovery?.amounts?.other || 0),
+          unpaid: 0,
+          opening: 0,
+          closing: 0,
+        },
+        charges: {
+          prev: 0,
+          curr: 0,
+          total: dd.charges?.totalChargesDue || 0,
+          actual: Object.values(recovery?.amounts?.charges || {}).reduce((sum, amount) => sum + (amount || 0), 0),
+          unpaid: Math.max(0, (dd.charges?.totalChargesDue || 0) - (dd.charges?.totalChargesPaid || 0)),
+          opening: 0,
+          closing: 0,
+          chargesDue: dd.charges?.chargesDue || {},
+          actualCharges: recovery?.amounts?.charges || {},
+        },
+      };
+    }
+
+    // Priority 3: Calculate on frontend if demandDetails not available (fallback)
     const prevData = previousRecoveryData[memberId] || {
       loan: { unpaidDemand: 0, actualPaid: 0 },
       interest: { unpaidDemand: 0, actualPaid: 0 },
@@ -260,10 +407,13 @@ export default function DemandRecovery() {
     const actualYogdan = parseFloat(recovery?.amounts?.yogdan || 0) || 0;
     const actualMemFeesSHG = parseFloat(recovery?.amounts?.memFeesSHG || 0) || 0;
     const actualMemFeesSamiti = parseFloat(recovery?.amounts?.memFeesSamiti || 0) || 0;
+    const actualMemFeesGroup = parseFloat(recovery?.amounts?.memFeesGroup || 0) || 0;
     const actualPenalty = parseFloat(recovery?.amounts?.penalty || 0) || 0;
     const actualOther = (parseFloat(recovery?.amounts?.other1 || 0) || 0) +
       (parseFloat(recovery?.amounts?.other2 || 0) || 0) +
       (parseFloat(recovery?.amounts?.other || 0) || 0);
+    const actualCharges = recovery?.amounts?.charges || {};
+    const chargesDue = recovery?.demandDetails?.charges?.chargesDue || {};
 
     // Calculate loan demand details
     // Get monthly installment amount
@@ -300,10 +450,54 @@ export default function DemandRecovery() {
     const loanClosingBalance = loanOpeningBalance + actualLoan;
 
     // Calculate interest demand details (only for members with active loans)
-    // Use overdue interest directly as current month interest demand
-    // For existing members, show interest if they have loan amount, even without activeLoan
+    // Calculate interest from loan date to meeting date
+    let interestCurrDemand = 0;
     const hasLoan = activeLoan || openingLoan > 0;
-    const interestCurrDemand = hasLoan ? openingInterest : 0;
+
+    if (hasLoan) {
+      // Get loan details
+      const loanAmount = activeLoan?.amount || openingLoan || 0;
+      const loanDate = activeLoan?.date ? new Date(activeLoan.date) :
+        (member?.loanDetails?.loanDate ? new Date(member.loanDetails.loanDate) :
+          (member?.raw?.loanDetails?.loanDate ? new Date(member.raw.loanDetails.loanDate) : null));
+
+      // Get meeting date (recovery date or today)
+      const meetingDate = recovery?.date ? new Date(recovery.date) : today;
+
+      // Get loan rate (prefer snapshot from loan, else use current group rate)
+      const loanRate = activeLoan?.loan_rate_snapshot ||
+        activeGroup?.raw?.loan_rate ||
+        activeGroup?.loan_rate || 0;
+
+      // Calculate interest if we have loan amount, loan date, and loan rate
+      // DAILY INTEREST CALCULATION (same as backend)
+      if (loanAmount > 0 && loanDate && loanRate > 0) {
+        // Normalize both dates to start of day for accurate day calculation
+        const loanDateStart = new Date(loanDate);
+        loanDateStart.setHours(0, 0, 0, 0);
+        const meetingDateStart = new Date(meetingDate);
+        meetingDateStart.setHours(0, 0, 0, 0);
+
+        // Calculate days between loan date and meeting date
+        const timeDiff = meetingDateStart.getTime() - loanDateStart.getTime();
+        const daysDiff = Math.max(0, Math.floor(timeDiff / (1000 * 60 * 60 * 24))); // Use floor, ensure non-negative
+
+        if (daysDiff > 0) {
+          // Check if it's a leap year for accurate calculation
+          const isLeapYear = (year) => {
+            return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+          };
+          const daysInYear = isLeapYear(meetingDate.getFullYear()) ? 366 : 365;
+
+          // Daily interest calculation: (loanAmount * annualRate / 100 / daysInYear) * numberOfDays
+          const interestBeforeRound = (loanAmount * loanRate / 100 / daysInYear) * daysDiff;
+          interestCurrDemand = Math.round(interestBeforeRound * 100) / 100;
+        }
+      } else {
+        // Fallback to opening interest if calculation not possible
+        interestCurrDemand = openingInterest || 0;
+      }
+    }
 
     const interestPrevDemand = prevData.interest.unpaidDemand || 0;
     const interestTotalDemand = interestPrevDemand + interestCurrDemand;
@@ -324,6 +518,51 @@ export default function DemandRecovery() {
     const savingUnpaidDemand = Math.max(0, savingTotalDemand - actualSaving);
     const savingOpeningBalance = openingSaving; // Simplified - backend will calculate cumulative
     const savingClosingBalance = savingOpeningBalance + actualSaving;
+
+    // Calculate membership fees due (April-to-April cycle)
+    let membershipFeesDue = 0;
+    let membershipGroupDue = 0;
+    if (activeGroup && member) {
+      const currentDate = new Date();
+      const currentYear = currentDate.getFullYear();
+      const currentMonth = currentDate.getMonth(); // 0-indexed (0 = January, 3 = April)
+      const APRIL_MONTH = 3;
+      const currentApril1 = new Date(currentYear, APRIL_MONTH, 1);
+
+      const joinDate = member.Dt_Join || member.Member_Dt || member.createdAt;
+      const joinYear = joinDate ? new Date(joinDate).getFullYear() : currentYear;
+      const joinMonth = joinDate ? new Date(joinDate).getMonth() : currentMonth;
+
+      const lastMembershipPaidDate = member.lastMembershipPaidDate ? new Date(member.lastMembershipPaidDate) : null;
+      const lastMembershipGroupPaidDate = member.lastMembershipGroupPaidDate ? new Date(member.lastMembershipGroupPaidDate) : null;
+
+      const membershipFees = activeGroup?.raw?.membership_fees || activeGroup?.membership_fees || 0;
+      const membershipGroup = activeGroup?.raw?.Mship_Group || activeGroup?.Mship_Group || 0;
+
+      const isApril = currentMonth === APRIL_MONTH;
+
+      if (isApril) {
+        // In April, all members pay for next year
+        membershipFeesDue = membershipFees;
+        membershipGroupDue = membershipGroup;
+      } else {
+        // Not April - check if member needs to pay
+        if (!lastMembershipPaidDate || lastMembershipPaidDate < currentApril1) {
+          if (joinYear < currentYear || (joinYear === currentYear && joinMonth < APRIL_MONTH)) {
+            membershipFeesDue = membershipFees;
+          } else if (joinYear === currentYear && joinMonth >= APRIL_MONTH) {
+            membershipFeesDue = membershipFees;
+          }
+        }
+        if (!lastMembershipGroupPaidDate || lastMembershipGroupPaidDate < currentApril1) {
+          if (joinYear < currentYear || (joinYear === currentYear && joinMonth < APRIL_MONTH)) {
+            membershipGroupDue = membershipGroup;
+          } else if (joinYear === currentYear && joinMonth >= APRIL_MONTH) {
+            membershipGroupDue = membershipGroup;
+          }
+        }
+      }
+    }
 
     return {
       saving: {
@@ -356,7 +595,7 @@ export default function DemandRecovery() {
       fd: {
         prev: 0,
         curr: 0,
-        total: 0,
+        total: 0, // FD doesn't have recurring demand, but can be added during recovery
         actual: actualFd,
         unpaid: 0,
         opening: openingFd,
@@ -365,18 +604,48 @@ export default function DemandRecovery() {
       yogdan: {
         prev: 0,
         curr: 0,
-        total: actualYogdan,
+        // Calculate Yogdan demand from active loans (1% of loan amount)
+        total: (() => {
+          let totalYogdanDue = 0;
+          // Get all active loans for this member
+          const memberLoans = Object.values(activeLoans).filter(
+            loan => loan.memberId === memberId || loan.memberId?.toString() === memberId?.toString()
+          );
+          // Sum up Yogdan amounts from all loans (1% of each loan amount)
+          memberLoans.forEach(loan => {
+            if (loan.yogdanAmount && loan.yogdanAmount > 0) {
+              totalYogdanDue += loan.yogdanAmount;
+            } else if (loan.amount) {
+              // Fallback: calculate 1% if yogdanAmount not set
+              totalYogdanDue += (loan.amount * 0.01);
+            }
+          });
+          return totalYogdanDue;
+        })(),
         actual: actualYogdan,
-        unpaid: 0,
+        unpaid: (() => {
+          let totalYogdanDue = 0;
+          const memberLoans = Object.values(activeLoans).filter(
+            loan => loan.memberId === memberId || loan.memberId?.toString() === memberId?.toString()
+          );
+          memberLoans.forEach(loan => {
+            if (loan.yogdanAmount && loan.yogdanAmount > 0) {
+              totalYogdanDue += loan.yogdanAmount;
+            } else if (loan.amount) {
+              totalYogdanDue += (loan.amount * 0.01);
+            }
+          });
+          return Math.max(0, totalYogdanDue - (openingYogdan + actualYogdan));
+        })(),
         opening: openingYogdan,
         closing: openingYogdan + actualYogdan,
       },
       memFeesSHG: {
         prev: 0,
-        curr: 0,
-        total: actualMemFeesSHG,
+        curr: membershipFeesDue,
+        total: membershipFeesDue, // Total demand should be just the due amount, not due + actual
         actual: actualMemFeesSHG,
-        unpaid: 0,
+        unpaid: Math.max(0, membershipFeesDue - actualMemFeesSHG),
         opening: 0,
         closing: 0,
       },
@@ -386,6 +655,15 @@ export default function DemandRecovery() {
         total: actualMemFeesSamiti,
         actual: actualMemFeesSamiti,
         unpaid: 0,
+        opening: 0,
+        closing: 0,
+      },
+      memFeesGroup: {
+        prev: 0,
+        curr: membershipGroupDue,
+        total: membershipGroupDue, // Total demand should be just the due amount, not due + actual
+        actual: actualMemFeesGroup,
+        unpaid: Math.max(0, membershipGroupDue - actualMemFeesGroup),
         opening: 0,
         closing: 0,
       },
@@ -406,6 +684,17 @@ export default function DemandRecovery() {
         unpaid: 0,
         opening: 0,
         closing: 0,
+      },
+      charges: {
+        prev: 0,
+        curr: 0,
+        total: Object.values(chargesDue).reduce((sum, amount) => sum + (amount || 0), 0),
+        actual: Object.values(actualCharges).reduce((sum, amount) => sum + (amount || 0), 0),
+        unpaid: Math.max(0, Object.values(chargesDue).reduce((sum, amount) => sum + (amount || 0), 0) - Object.values(actualCharges).reduce((sum, amount) => sum + (amount || 0), 0)),
+        opening: 0,
+        closing: 0,
+        chargesDue: chargesDue, // Individual charges due (from backend)
+        actualCharges: actualCharges, // Individual charges paid
       },
     };
   };
@@ -469,6 +758,25 @@ export default function DemandRecovery() {
     if (activeGroup) {
       loadRecoveries();
     }
+  }, [activeGroup?.id]);
+
+  // Load group banks when active group changes
+  useEffect(() => {
+    const groupId = activeGroup?.id;
+    if (!groupId) {
+      setGroupBanks([]);
+      setSelectedBankId("");
+      return;
+    }
+    getGroupBanks(groupId)
+      .then((res) => {
+        const banks = Array.isArray(res?.data) ? res.data : [];
+        setGroupBanks(banks);
+      })
+      .catch((e) => {
+        console.error("Error loading banks:", e);
+        setGroupBanks([]);
+      });
   }, [activeGroup?.id]);
 
   const loadRecoveries = async () => {
@@ -536,11 +844,14 @@ export default function DemandRecovery() {
         const yogdan = parseFloat(recovery.amounts?.yogdan || 0);
         const memFeesSHG = parseFloat(recovery.amounts?.memFeesSHG || 0);
         const memFeesSamiti = parseFloat(recovery.amounts?.memFeesSamiti || 0);
+        const memFeesGroup = parseFloat(recovery.amounts?.memFeesGroup || 0);
         const penalty = parseFloat(recovery.amounts?.penalty || 0);
         const other = (parseFloat(recovery.amounts?.other1 || 0) || 0) +
           (parseFloat(recovery.amounts?.other2 || 0) || 0) +
           (parseFloat(recovery.amounts?.other || 0) || 0);
-        const memberTotal = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + penalty + other;
+        const chargesTotal = recovery.amounts?.charges ?
+          Object.values(recovery.amounts.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
+        const memberTotal = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + memFeesGroup + penalty + other + chargesTotal;
 
         totalAmount += memberTotal;
 
@@ -570,15 +881,18 @@ export default function DemandRecovery() {
       yogdan: "",
       memFeesSHG: "",
       memFeesSamiti: "",
+      memFeesGroup: "",
       penalty: "",
       other: "",
       fd: "",
+      charges: {},
     });
     setTotalAmount("");
     setAutoCalculated(false);
     setFdTimePeriod("");
     setPaymentMode({ cash: false, online: false });
     setOnlineRef("");
+    setSelectedBankId("");
     setScreenshot(null);
   };
 
@@ -590,11 +904,23 @@ export default function DemandRecovery() {
     if (total > 0) {
       // Get current member's demands
       const summary = currentMember ? getDemandSummary(currentMember.id) : null;
-      const savingDue = summary?.saving?.total || 0;
-      const loanDue = summary?.loan?.total || 0;
-      const interestDue = summary?.interest?.total || 0;
+      const savingDue = parseFloat(summary?.saving?.total || 0) || 0;
+      const loanDue = parseFloat(summary?.loan?.total || 0) || 0;
+      const interestDue = parseFloat(summary?.interest?.total || 0) || 0;
+      const yogdanDue = parseFloat(summary?.yogdan?.total || summary?.yogdan?.unpaid || 0) || 0; // Yogdan demand from loans (1% of loan amount)
+      const membershipFeesDue = parseFloat(summary?.memFeesSHG?.curr || 0) || 0; // Current month membership fees due
+      const membershipGroupDue = parseFloat(summary?.memFeesGroup?.curr || 0) || 0; // Current month membership group due
 
-      // New priority order: Other > Yogdan > Mem Fees SHG > Mem Fees Samiti > Penalty > Interest > Saving > Loan
+      // Priority order: 
+      // 1. Yogdan (1% of loan amount - when loan is given) - FIRST PRIORITY
+      // 1. Mem. Fees Group (Yearly)
+      // 1. Mem. Fees SHG (Yearly)
+      // 1. Mem. Fees Samiti (Yearly)
+      // 2. Int on loan
+      // 3. Saving
+      // 4. Loan
+      // 5. FD
+      // Penalty, Other-1, Other-2 (if present)
       // If extra remains, add to Saving
       let remaining = total;
       const calculated = {
@@ -604,44 +930,100 @@ export default function DemandRecovery() {
         yogdan: "",
         memFeesSHG: "",
         memFeesSamiti: "",
+        memFeesGroup: "",
         penalty: "",
         other: "",
         fd: "",
+        charges: {},
       };
 
-      // 1. Allocate to Other (optional, no demand - skip for now, will be allocated last if extra)
-      // We'll handle this at the end
+      // Get charges due
+      const chargesDue = summary?.charges?.chargesDue || {};
 
-      // 2. Allocate to Yogdan (optional, no demand - skip for now)
+      // Priority 1: Yogdan (1% of loan amount - when loan is given) - FIRST PRIORITY
+      if (yogdanDue > 0 && remaining > 0) {
+        const yogdanAmount = Math.min(yogdanDue, remaining);
+        calculated.yogdan = yogdanAmount.toFixed(2);
+        remaining -= yogdanAmount;
+      }
 
-      // 3. Allocate to Member Fees SHG (yearly, optional, no monthly demand - skip for now)
+      // Priority 1: Mem. Fees Group (Yearly) - FIRST PRIORITY - if due
+      if (membershipGroupDue > 0 && remaining > 0) {
+        const memGroupAmount = Math.min(membershipGroupDue, remaining);
+        calculated.memFeesGroup = memGroupAmount.toFixed(2);
+        remaining -= memGroupAmount;
+      }
 
-      // 4. Allocate to Member Fees Samiti (yearly, optional, no monthly demand - skip for now)
+      // Priority 1: Mem. Fees SHG (Yearly) - if due
+      if (membershipFeesDue > 0 && remaining > 0) {
+        const memFeesAmount = Math.min(membershipFeesDue, remaining);
+        calculated.memFeesSHG = memFeesAmount.toFixed(2);
+        remaining -= memFeesAmount;
+      }
 
-      // 5. Allocate to Penalty (optional, no demand - skip for now)
+      // Priority 1: Mem. Fees Samiti (Yearly) - if due
+      const memFeesSamitiDue = parseFloat(summary?.memFeesSamiti?.curr || 0) || 0;
+      if (memFeesSamitiDue > 0 && remaining > 0) {
+        const memFeesSamitiAmount = Math.min(memFeesSamitiDue, remaining);
+        calculated.memFeesSamiti = memFeesSamitiAmount.toFixed(2);
+        remaining -= memFeesSamitiAmount;
+      }
 
-      // 6. Allocate to Interest on Loan (if due)
+      // Priority 1: Charges (if due)
+      if (Object.keys(chargesDue).length > 0 && remaining > 0) {
+        const calculatedCharges = {};
+        Object.keys(chargesDue).forEach(chargeName => {
+          const chargeDue = parseFloat(chargesDue[chargeName]) || 0;
+          if (chargeDue > 0 && remaining > 0) {
+            const chargeAmount = Math.min(chargeDue, remaining);
+            calculatedCharges[chargeName] = chargeAmount.toFixed(2);
+            remaining -= chargeAmount;
+          }
+        });
+        calculated.charges = calculatedCharges;
+      }
+
+      // Priority 2: Int on loan (if due)
       if (interestDue > 0 && remaining > 0) {
         const interestAmount = Math.min(interestDue, remaining);
         calculated.interest = interestAmount.toFixed(2);
         remaining -= interestAmount;
       }
 
-      // 7. Allocate to Saving (if due)
+      // Priority 3: Saving (if due)
       if (savingDue > 0 && remaining > 0) {
         const savingAmount = Math.min(savingDue, remaining);
         calculated.saving = savingAmount.toFixed(2);
         remaining -= savingAmount;
       }
 
-      // 8. Allocate to Loan (if due)
+      // Priority 4: Loan (if due)
       if (loanDue > 0 && remaining > 0) {
         const loanAmount = Math.min(loanDue, remaining);
         calculated.loan = loanAmount.toFixed(2);
         remaining -= loanAmount;
       }
 
-      // 9. If there's remaining money after meeting all demands, add to Saving
+      // Priority 5: FD (if due)
+      const fdDue = parseFloat(summary?.fd?.total || 0) || 0;
+      if (fdDue > 0 && remaining > 0) {
+        const fdAmount = Math.min(fdDue, remaining);
+        calculated.fd = fdAmount.toFixed(2);
+        remaining -= fdAmount;
+      }
+
+      // Penalty (if present/due)
+      const penaltyDue = parseFloat(summary?.penalty?.total || 0) || 0;
+      if (penaltyDue > 0 && remaining > 0) {
+        const penaltyAmount = Math.min(penaltyDue, remaining);
+        calculated.penalty = penaltyAmount.toFixed(2);
+        remaining -= penaltyAmount;
+      }
+
+      // Other-1 and Other-2 (if present)
+      // Note: These are typically optional and don't have demands, so we skip them in auto-calculation
+
+      // If there's remaining money after meeting all demands, add to Saving
       if (remaining > 0) {
         const currentSaving = parseFloat(calculated.saving) || 0;
         calculated.saving = (currentSaving + remaining).toFixed(2);
@@ -658,9 +1040,11 @@ export default function DemandRecovery() {
         yogdan: "",
         memFeesSHG: "",
         memFeesSamiti: "",
+        memFeesGroup: "",
         penalty: "",
         other: "",
         fd: "",
+        charges: {},
       });
       setAutoCalculated(false);
     }
@@ -697,6 +1081,10 @@ export default function DemandRecovery() {
       ...paymentMode,
       [mode]: !paymentMode[mode],
     });
+    // Clear bank selection if switching from online to cash
+    if (mode === "cash" && paymentMode.online) {
+      setSelectedBankId("");
+    }
   };
 
   // Handle file upload
@@ -800,6 +1188,11 @@ export default function DemandRecovery() {
       return;
     }
 
+    if (paymentMode.online && !selectedBankId) {
+      alert("Please select a bank for online payment");
+      return;
+    }
+
     const saving = parseFloat(amountBreakup.saving) || 0;
     const loan = parseFloat(amountBreakup.loan) || 0;
     const fd = parseFloat(amountBreakup.fd) || 0;
@@ -807,9 +1200,12 @@ export default function DemandRecovery() {
     const yogdan = parseFloat(amountBreakup.yogdan) || 0;
     const memFeesSHG = parseFloat(amountBreakup.memFeesSHG) || 0;
     const memFeesSamiti = parseFloat(amountBreakup.memFeesSamiti) || 0;
+    const memFeesGroup = parseFloat(amountBreakup.memFeesGroup) || 0;
     const penalty = parseFloat(amountBreakup.penalty) || 0;
     const other = parseFloat(amountBreakup.other) || 0;
-    const total = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + penalty + other;
+    const chargesTotal = amountBreakup.charges ?
+      Object.values(amountBreakup.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
+    const total = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + memFeesGroup + penalty + other + chargesTotal;
 
     if (total === 0) {
       alert("Please enter at least one amount");
@@ -841,13 +1237,17 @@ export default function DemandRecovery() {
           yogdan,
           memFeesSHG,
           memFeesSamiti,
+          memFeesGroup,
           penalty,
           other,
+          charges: amountBreakup.charges || {},
         },
-        fd_time_period: isNewFd && fdTimePeriod ? parseInt(fdTimePeriod) : null,
+        // Convert years to months for storage
+        fd_time_period: isNewFd && fdTimePeriod ? Math.round(parseFloat(fdTimePeriod) * 12) : null,
         fd_rate_snapshot: fdRateSnapshot,
         paymentMode,
         onlineRef: paymentMode.online ? onlineRef : null,
+        bankId: paymentMode.online ? selectedBankId : null,
         screenshot: screenshot || null,
       };
 
@@ -929,10 +1329,12 @@ export default function DemandRecovery() {
       setAttendance(memberRecovery.attendance || "present");
       setRecoveryByOther(memberRecovery.recoveryByOther || false);
       setOtherMemberId(memberRecovery.otherMemberId || "");
-      setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "" });
-      setFdTimePeriod(memberRecovery.fd_time_period ? String(memberRecovery.fd_time_period) : "");
+      setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "", charges: {} });
+      // Convert months to years for display (fd_time_period is stored in months)
+      setFdTimePeriod(memberRecovery.fd_time_period ? String(memberRecovery.fd_time_period / 12) : "");
       setPaymentMode(memberRecovery.paymentMode || { cash: false, online: false });
       setOnlineRef(memberRecovery.onlineRef || "");
+      setSelectedBankId(memberRecovery.bankId || "");
       if (memberRecovery.screenshot) {
         setScreenshot(memberRecovery.screenshot);
       }
@@ -1193,49 +1595,81 @@ export default function DemandRecovery() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.entries(currentMemberSummary)
-                      .filter(([key, data]) => {
-                        // Always show: saving, loan, interest, fd
-                        if (['saving', 'loan', 'interest', 'fd'].includes(key)) {
-                          return true;
-                        }
-                        // Hide these categories if all values are 0: yogdan, memFeesSHG, memFeesSamiti, penalty, other
-                        const hasValue = data.prev > 0 || data.curr > 0 || data.total > 0 ||
-                          data.actual > 0 || data.unpaid > 0 || data.opening > 0 || data.closing > 0;
-                        return hasValue;
-                      })
-                      .map(([key, data]) => {
-                        // Map category keys to display names
-                        const categoryNames = {
-                          saving: "Saving",
-                          loan: "Loan",
-                          interest: "Int on loan",
-                          yogdan: "Yogdan",
-                          memFeesSHG: "Mem. Fees SHG (Yearly)",
-                          memFeesSamiti: "Mem. Fees Samiti (Yearly)",
-                          penalty: "Penalty",
-                          other: "Other",
-                          fd: "FD",
-                        };
-                        return (
-                          <tr key={key} className="hover:bg-gray-50">
-                            <td className="border p-2 font-medium text-gray-800">{categoryNames[key] || key}</td>
-                            <td className="border p-2 text-center text-gray-700">{data.prev === 0 ? "—" : `₹${data.prev}`}</td>
-                            <td className="border p-2 text-center text-gray-700">{data.curr === 0 ? "—" : `₹${data.curr}`}</td>
-                            <td className="border p-2 text-center text-gray-700">{data.total === 0 ? "—" : `₹${data.total}`}</td>
-                            <td className="border p-2 text-center text-gray-700">{data.actual === 0 ? "—" : `₹${data.actual}`}</td>
-                            <td className="border p-2 text-center text-gray-700">{data.unpaid === 0 ? "—" : `₹${data.unpaid}`}</td>
-                            <td className="border p-2 text-center text-gray-700">{data.opening === 0 ? "—" : `₹${data.opening}`}</td>
-                            <td className="border p-2 text-center text-gray-700">{data.closing === 0 ? "—" : `₹${data.closing}`}</td>
-                          </tr>
-                        );
-                      })}
+                    {(() => {
+                      const rows = [];
+                      // Map category keys to display names
+                      const categoryNames = {
+                        saving: "Saving",
+                        loan: "Loan",
+                        interest: "Int on loan",
+                        yogdan: "Yogdan",
+                        memFeesSHG: "Mem. Fees SHG (Yearly)",
+                        memFeesSamiti: "Mem. Fees Samiti (Yearly)",
+                        memFeesGroup: "Mem. Fees Group (Yearly)",
+                        penalty: "Penalty",
+                        other: "Other",
+                        fd: "FD",
+                        charges: "Charges",
+                      };
+
+                      Object.entries(currentMemberSummary)
+                        .filter(([key, data]) => {
+                          // Always show: saving, loan, interest, fd
+                          if (['saving', 'loan', 'interest', 'fd'].includes(key)) {
+                            return true;
+                          }
+                          // Special handling for charges - show if has charges due
+                          if (key === "charges" && data.chargesDue && Object.keys(data.chargesDue).length > 0) {
+                            return true;
+                          }
+                          // Hide these categories if all values are 0: yogdan, memFeesSHG, memFeesSamiti, memFeesGroup, penalty, other
+                          const hasValue = data.prev > 0 || data.curr > 0 || data.total > 0 ||
+                            data.actual > 0 || data.unpaid > 0 || data.opening > 0 || data.closing > 0;
+                          return hasValue;
+                        })
+                        .forEach(([key, data]) => {
+                          // Special handling for charges - show individual charges
+                          if (key === "charges" && data.chargesDue && Object.keys(data.chargesDue).length > 0) {
+                            Object.keys(data.chargesDue).forEach((chargeName) => {
+                              rows.push(
+                                <tr key={`charge-${chargeName}`} className="hover:bg-gray-50">
+                                  <td className="border p-2 font-medium text-gray-800 pl-6">{chargeName}</td>
+                                  <td className="border p-2 text-center text-gray-700">—</td>
+                                  <td className="border p-2 text-center text-gray-700">{data.chargesDue[chargeName] === 0 ? "—" : `₹${data.chargesDue[chargeName]}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">{data.chargesDue[chargeName] === 0 ? "—" : `₹${data.chargesDue[chargeName]}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">{(data.actualCharges?.[chargeName] || 0) === 0 ? "—" : `₹${data.actualCharges[chargeName]}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">{Math.max(0, (data.chargesDue[chargeName] || 0) - (data.actualCharges?.[chargeName] || 0)) === 0 ? "—" : `₹${Math.max(0, (data.chargesDue[chargeName] || 0) - (data.actualCharges?.[chargeName] || 0))}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">—</td>
+                                  <td className="border p-2 text-center text-gray-700">—</td>
+                                </tr>
+                              );
+                            });
+                          } else {
+                            rows.push(
+                              <tr key={key} className="hover:bg-gray-50">
+                                <td className="border p-2 font-medium text-gray-800">{categoryNames[key] || key}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.prev === 0 ? "—" : `₹${data.prev}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.curr === 0 ? "—" : `₹${data.curr}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.total === 0 ? "—" : `₹${data.total}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.actual === 0 ? "—" : `₹${data.actual}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.unpaid === 0 ? "—" : `₹${data.unpaid}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.opening === 0 ? "—" : `₹${data.opening}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.closing === 0 ? "—" : `₹${data.closing}`}</td>
+                              </tr>
+                            );
+                          }
+                        });
+                      return rows;
+                    })()}
                     <tr className="bg-gray-50 font-semibold">
                       <td className="border p-2 text-gray-800">TOTAL</td>
                       <td className="border p-2 text-center text-gray-800">—</td>
                       <td className="border p-2 text-center text-gray-800">—</td>
                       <td className="border p-2 text-center text-gray-800">
-                        ₹{Object.values(currentMemberSummary).reduce((sum, d) => sum + d.total, 0)}
+                        ₹{Object.values(currentMemberSummary).reduce((sum, d) => {
+                          const val = typeof d.total === 'number' ? d.total : parseFloat(d.total) || 0;
+                          return sum + val;
+                        }, 0).toLocaleString()}
                       </td>
                       <td className="border p-2 text-center text-gray-800">
                         ₹{Object.values(currentMemberSummary).reduce((sum, d) => sum + d.actual, 0)}
@@ -1447,6 +1881,20 @@ export default function DemandRecovery() {
                           step="0.01"
                         />
                       )}
+                      {(parseFloat(amountBreakup.memFeesGroup) || 0) > 0 && (
+                        <Input
+                          label="Membership Group (Yearly)"
+                          name="memFeesGroup"
+                          type="number"
+                          value={amountBreakup.memFeesGroup}
+                          handleChange={(e) => {
+                            setAmountBreakup({ ...amountBreakup, memFeesGroup: e.target.value });
+                            setAutoCalculated(false);
+                          }}
+                          placeholder="Enter Membership Group fees"
+                          step="0.01"
+                        />
+                      )}
                       {(parseFloat(amountBreakup.penalty) || 0) > 0 && (
                         <Input
                           label="Penalty"
@@ -1474,6 +1922,40 @@ export default function DemandRecovery() {
                           placeholder="Enter other amount"
                           step="0.01"
                         />
+                      )}
+                      {/* Dynamic Charges Input Fields */}
+                      {currentMemberSummary?.charges?.chargesDue && Object.keys(currentMemberSummary.charges.chargesDue).length > 0 && (
+                        <>
+                          {Object.keys(currentMemberSummary.charges.chargesDue).map((chargeName) => {
+                            const chargeDue = currentMemberSummary.charges.chargesDue[chargeName] || 0;
+                            const chargePaid = parseFloat(amountBreakup.charges?.[chargeName] || 0) || 0;
+                            // Show if charge is due or has been paid
+                            if (chargeDue > 0 || chargePaid > 0) {
+                              return (
+                                <Input
+                                  key={chargeName}
+                                  label={`${chargeName} (Due: ₹${chargeDue})`}
+                                  name={`charge-${chargeName}`}
+                                  type="number"
+                                  value={amountBreakup.charges?.[chargeName] || ""}
+                                  handleChange={(e) => {
+                                    setAmountBreakup({
+                                      ...amountBreakup,
+                                      charges: {
+                                        ...amountBreakup.charges,
+                                        [chargeName]: e.target.value,
+                                      },
+                                    });
+                                    setAutoCalculated(false);
+                                  }}
+                                  placeholder={`Enter ${chargeName} amount`}
+                                  step="0.01"
+                                />
+                              );
+                            }
+                            return null;
+                          })}
+                        </>
                       )}
                     </div>
                   </div>
@@ -1509,6 +1991,34 @@ export default function DemandRecovery() {
 
                   {paymentMode.online && (
                     <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-4">
+                      <Select
+                        label="Select Bank *"
+                        name="selectedBankId"
+                        value={selectedBankId}
+                        handleChange={(e) => setSelectedBankId(e.target.value)}
+                        options={groupBanks.length > 0
+                          ? groupBanks.map((bank) => {
+                            // Use available_balance if available, else fallback to current_balance or opening_balance
+                            const balance = bank.available_balance !== undefined
+                              ? bank.available_balance
+                              : (bank.current_balance !== undefined
+                                ? bank.current_balance
+                                : (bank.opening_balance || 0));
+                            const balanceFormatted = `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                            return {
+                              value: bank._id || bank.id,
+                              label: `${bank.bank_name} - ${bank.account_no}${bank.short_name ? ` (${bank.short_name})` : ""} [Available: ${balanceFormatted}]`
+                            };
+                          })
+                          : [{ value: "", label: "No banks available" }]
+                        }
+                        required
+                      />
+                      {groupBanks.length === 0 && (
+                        <p className="text-sm text-red-600 mt-1">
+                          No banks found for this group. Please add a bank account first.
+                        </p>
+                      )}
                       <Input
                         label="Reference Number / Transaction ID *"
                         name="onlineRef"
@@ -1631,7 +2141,8 @@ export default function DemandRecovery() {
                     (recovery.amounts?.fd || 0) +
                     (recovery.amounts?.interest || 0) +
                     (recovery.amounts?.yogdan || 0) +
-                    (recovery.amounts?.other || 0)
+                    (recovery.amounts?.other || 0) +
+                    (recovery.amounts?.charges ? Object.values(recovery.amounts.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0)
                     : 0;
                   return (
                     <div

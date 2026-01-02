@@ -58,6 +58,9 @@ const recoverySchema = {
         onlineRef: {
             type: 'string',
         },
+        bankId: {
+            type: 'string', // Bank reference for online payments
+        },
         screenshot: {
             type: 'string', // base64 or file path
         },

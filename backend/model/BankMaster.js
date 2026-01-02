@@ -14,7 +14,6 @@ const BankMasterSchema = new mongoose.Schema({
 
     opening_balance: { type: Number },
     open_indicator: { type: String },
-
     cc_limit: { type: Number },
     dp_limit: { type: Number },
 
@@ -35,6 +34,138 @@ const BankMasterSchema = new mongoose.Schema({
         ref: "GroupMaster",
         required: false,
     },
+
+    // Current balance (calculated from opening_balance + transactions)
+    // This is updated automatically when transactions are created/updated/deleted
+    current_balance: {
+        type: Number,
+        default: 0
+    },
 }, { timestamps: true });
+
+// Static method to calculate current balance from opening balance + all transactions
+BankMasterSchema.statics.calculateCurrentBalance = async function (bankId) {
+    const BankTransaction = mongoose.model("BankTransaction");
+
+    // Get opening balance
+    const bank = await this.findById(bankId);
+    if (!bank) {
+        throw new Error("Bank not found");
+    }
+
+    const openingBalance = bank.opening_balance || 0;
+
+    // Get all verified transactions for this bank
+    const transactions = await BankTransaction.find({
+        bankId: bankId,
+        status: "verified" // Only count verified transactions
+    }).sort({ date: 1, createdAt: 1 }); // Sort by date and creation time
+
+    // Calculate balance: opening + credits - debits
+    let balance = openingBalance;
+
+    for (const transaction of transactions) {
+        const amount = transaction.amount || 0;
+
+        // Determine if transaction is credit (money in) or debit (money out)
+        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
+        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
+        const isCredit = transaction.transactionType === "recovery" ||
+            transaction.transactionType === "fd" ||
+            transaction.transactionType === "cash_to_bank";
+
+        if (isCredit) {
+            balance += amount; // Money comes in
+        } else {
+            balance -= amount; // Money goes out
+        }
+    }
+
+    return balance;
+};
+
+// Instance method to recalculate and update current balance
+BankMasterSchema.methods.recalculateBalance = async function () {
+    const BankTransaction = mongoose.model("BankTransaction");
+
+    const openingBalance = this.opening_balance || 0;
+
+    // Get all verified transactions for this bank
+    const transactions = await BankTransaction.find({
+        bankId: this._id,
+        status: "verified"
+    }).sort({ date: 1, createdAt: 1 });
+
+    // Calculate balance
+    let balance = openingBalance;
+
+    for (const transaction of transactions) {
+        const amount = transaction.amount || 0;
+        // Determine if transaction is credit (money in) or debit (money out)
+        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
+        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
+        const isCredit = transaction.transactionType === "recovery" ||
+            transaction.transactionType === "fd" ||
+            transaction.transactionType === "cash_to_bank";
+
+        if (isCredit) {
+            balance += amount;
+        } else {
+            balance -= amount;
+        }
+    }
+
+    // Update current_balance
+    this.current_balance = balance;
+    await this.save();
+
+    return balance;
+};
+
+// Static method to calculate available balance (current balance - pending debits + pending credits)
+// This shows the balance available after accounting for pending transactions
+BankMasterSchema.statics.calculateAvailableBalance = async function (bankId) {
+    const BankTransaction = mongoose.model("BankTransaction");
+
+    // Get current balance (from verified transactions)
+    const currentBalance = await this.calculateCurrentBalance(bankId);
+
+    // Get all pending transactions for this bank
+    const pendingTransactions = await BankTransaction.find({
+        bankId: bankId,
+        status: "pending" // Only pending transactions
+    });
+
+    // Calculate pending adjustments
+    let pendingDebits = 0; // Money going out (will reduce available balance)
+    let pendingCredits = 0; // Money coming in (will increase available balance)
+
+    for (const transaction of pendingTransactions) {
+        const amount = transaction.amount || 0;
+
+        // Determine if transaction is credit (money in) or debit (money out)
+        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
+        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
+        const isCredit = transaction.transactionType === "recovery" ||
+            transaction.transactionType === "fd" ||
+            transaction.transactionType === "cash_to_bank";
+
+        if (isCredit) {
+            pendingCredits += amount; // Money coming in
+        } else {
+            pendingDebits += amount; // Money going out
+        }
+    }
+
+    // Available balance = current balance - pending debits + pending credits
+    const availableBalance = currentBalance - pendingDebits + pendingCredits;
+
+    return {
+        currentBalance,
+        availableBalance: Math.max(0, availableBalance), // Don't allow negative
+        pendingDebits,
+        pendingCredits
+    };
+};
 
 export default mongoose.model("BankMaster", BankMasterSchema);

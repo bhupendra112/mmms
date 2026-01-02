@@ -29,17 +29,23 @@ const RecoveryMasterSchema = new mongoose.Schema({
             yogdan: { type: Number, default: 0 }, // Yogdan (when loan is given)
             memFeesSHG: { type: Number, default: 0 }, // Member Fees SHG (Yearly)
             memFeesSamiti: { type: Number, default: 0 }, // Member Fees Samiti (Yearly)
+            memFeesGroup: { type: Number, default: 0 }, // Membership Group amount (from GroupMaster.Mship_Group)
             penalty: { type: Number, default: 0 },
             other: { type: Number, default: 0 },
             fd: { type: Number, default: 0 }, // FD is separate, not part of auto-calculation
+            charges: { type: mongoose.Schema.Types.Mixed, default: {} }, // Dynamic charges: { [chargeName]: amount }
         },
-        fd_time_period: { type: Number }, // Time period in months for new FD deposits
+        fd_time_period: { type: Number }, // Time period in months for new FD deposits (stored internally, but accepted in years from frontend)
         fd_rate_snapshot: { type: Number }, // Snapshot of fd_rate from group at time of FD creation
         paymentMode: {
             cash: { type: Boolean, default: false },
             online: { type: Boolean, default: false },
         },
         onlineRef: { type: String },
+        bankId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "BankMaster",
+        }, // Bank reference for online payments
         screenshot: { type: String }, // base64 or URL
         total: { type: Number, default: 0 },
         // Demand details for tracking previous/current demands and balances

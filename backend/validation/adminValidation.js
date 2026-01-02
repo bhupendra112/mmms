@@ -27,8 +27,8 @@ export const registerMemberSchema = Joi.object({
     Member_Nm: Joi.string().required(),
     Member_Dt: Joi.date().required(),
     Dt_Join: Joi.date().required(),
-    F_H_Name: Joi.string().required(),
-    F_H_FatherName: Joi.string().required(),
+    F_H_Name: Joi.string().required().optional(),
+    F_H_FatherName: Joi.string().required().optional(),
     Voter_Id: Joi.string().optional(),
     Adhar_Id: Joi.string().optional(),
     Ration_Card: Joi.string().optional(),
@@ -71,7 +71,45 @@ export const registerMemberSchema = Joi.object({
     }).optional(),
     openingYogdan: Joi.number().optional(),
     saving_per_member_snapshot: Joi.number().optional(),
+    lastMembershipPaidDate: Joi.date().optional(),
+    lastMembershipGroupPaidDate: Joi.date().optional(),
 }).or("group_id", "group_code", "Group_Name");
+
+// ======================
+// UPDATE MEMBER VALIDATION (all fields optional except id)
+// ======================
+export const updateMemberSchema = Joi.object({
+    Member_Id: Joi.string().optional(),
+    Member_Nm: Joi.string().optional(),
+    Member_Dt: Joi.date().optional(),
+    Dt_Join: Joi.date().optional(),
+    F_H_Name: Joi.string().optional(),
+    F_H_FatherName: Joi.string().optional(),
+    Voter_Id: Joi.string().optional(),
+    Adhar_Id: Joi.string().optional(),
+    Ration_Card: Joi.string().optional(),
+    Job_Card: Joi.string().optional(),
+    Apl_Bpl_Etc: Joi.string().valid("APL", "BPL").optional(),
+    Desg: Joi.string().valid("Member", "President", "Secretary", "Treasurer").optional(),
+    Bank_Name: Joi.string().optional(),
+    Br_Name: Joi.string().optional(),
+    Bank_Ac: Joi.string().optional(),
+    Ifsc_No: Joi.string().optional(),
+    Age: Joi.number().optional(),
+    Edu_Qual: Joi.string().optional(),
+    Anual_Income: Joi.number().optional(),
+    Profession: Joi.string().optional(),
+    Caste: Joi.string().valid("GEN", "OBC", "SC", "ST", "MINORITY").optional(),
+    Religion: Joi.string().valid("Hindu", "Muslim", "Christian", "Sikh", "Other").optional(),
+    cell_phone: Joi.string().optional(),
+    dt_birth: Joi.date().optional(),
+    nominee_1: Joi.string().optional(),
+    nominee_2: Joi.string().optional(),
+    res_add1: Joi.string().optional(),
+    res_add2: Joi.string().optional(),
+    Village: Joi.string().optional(),
+    Group_Name: Joi.string().optional(),
+}).min(1); // At least one field is required for update
 
 // ======================
 // GROUP REGISTER VALIDATION
@@ -85,7 +123,7 @@ export const registerGroupSchema = Joi.object({
     formation_date: Joi.date().optional(),
     cluster: Joi.string().optional(),
     saving_per_member: Joi.number().optional(),
-    Mship_Group: Joi.string().optional(),
+    Mship_Group: Joi.number().optional(), // Changed from String to Number
     membership_fees: Joi.number().optional(),
     mitan_name: Joi.string().optional(),
     meeting_date_1_day: Joi.number().integer().min(1).max(31).optional(),
@@ -147,7 +185,7 @@ export const updateGroupSchema = Joi.object({
     formation_date: Joi.date().optional(),
     cluster: Joi.string().optional(),
     saving_per_member: Joi.number().optional(),
-    Mship_Group: Joi.string().optional(),
+    Mship_Group: Joi.number().optional(), // Changed from String to Number
     membership_fees: Joi.number().optional(),
     mitan_name: Joi.string().optional(),
     meeting_date_1_day: Joi.number().integer().min(1).max(31).optional(),
@@ -162,7 +200,9 @@ export const updateGroupSchema = Joi.object({
     bankmaster: Joi.string().optional(),
     saving_rate: Joi.number().min(0).max(100).optional(),
     fd_rate: Joi.number().min(0).max(100).optional(),
-    loan_rate: Joi.number().min(0).max(100).optional()
+    loan_rate: Joi.number().min(0).max(100).optional(),
+    opening_cash_balance: Joi.number().min(0).optional(),
+    loginEnabled: Joi.boolean().optional()
 }).min(1); // At least one field is required for update
 
 // ======================

@@ -16,6 +16,9 @@ import {
     CheckCircle,
     LogOut,
     CreditCard,
+    Receipt,
+    FileText,
+    ArrowLeftRight,
 } from "lucide-react";
 import { useAdmin } from "../../contexts/AdminContext";
 
@@ -97,6 +100,24 @@ export default function AdminNavbar() {
                     label: "Payments",
                     path: "/admin/payments",
                     description: "Process FD maturity and savings withdrawal payments"
+                },
+                {
+                    icon: Receipt,
+                    label: "Expenses",
+                    path: "/admin/expenses",
+                    description: "Manage group expenses (Stationery, Travel, etc.)"
+                },
+                {
+                    icon: FileText,
+                    label: "Financial Reports",
+                    path: "/admin/financial-reports",
+                    description: "View Receipt & Payment, Income & Expense, and Balance Sheet reports"
+                },
+                {
+                    icon: ArrowLeftRight,
+                    label: "Cash to Bank Conversion",
+                    path: "/admin/cash-to-bank",
+                    description: "Convert cash recovery payments to bank payments"
                 },
             ],
         },

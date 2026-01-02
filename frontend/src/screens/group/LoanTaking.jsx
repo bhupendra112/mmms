@@ -3,13 +3,14 @@ import {
     User,
     Building2,
     DollarSign,
-    CheckCircle,
     XCircle,
     Upload,
     Camera,
     ArrowRight,
     ArrowLeft,
     Search,
+    Wallet,
+    CreditCard,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Input, Select } from "../../components/forms/FormComponents";
@@ -18,6 +19,7 @@ import { createApprovalRequest } from "../../services/approvalDB";
 import { registerLoan } from "../../services/loanService";
 import { getGroups, getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
+import { getCashAmount } from "../../services/cashAmount";
 
 export default function LoanTaking() {
     const { currentGroup, isOnline, isGroupPanel, isGroupLoading } = useGroup();
@@ -30,9 +32,9 @@ export default function LoanTaking() {
     const [allMembers, setAllMembers] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
     const [currentStep, setCurrentStep] = useState(() => (isAdminMode ? 0 : 1)); // 0: Select Group (admin only), 1: Loan Taking Form
-
+    const [cashAmount, setCashAmount] = useState(0);
+    const [groupCashBalance, setGroupCashBalance] = useState(0);
     // Form state
-    const [hasAssetsForLoan, setHasAssetsForLoan] = useState(null); // null, true, false - First question
     const [selectedMember, setSelectedMember] = useState(null);
     const [transactionType, setTransactionType] = useState("");
     const [paymentMode, setPaymentMode] = useState("");
@@ -48,11 +50,13 @@ export default function LoanTaking() {
     const activeGroup = currentGroup || selectedGroup;
 
     // Auto-calculate installment amount when amount and time period are entered
+    // timePeriod is now in years, convert to months for calculation
     useEffect(() => {
         if (amount && timePeriod) {
             const loanAmount = parseFloat(amount);
-            const months = parseFloat(timePeriod);
-            if (loanAmount > 0 && months > 0) {
+            const years = parseFloat(timePeriod);
+            if (loanAmount > 0 && years > 0) {
+                const months = years * 12; // Convert years to months
                 const calculatedInstallment = (loanAmount / months).toFixed(2);
                 setInstallmentAmount(calculatedInstallment);
             }
@@ -129,6 +133,25 @@ export default function LoanTaking() {
             });
     }, [activeGroup?.id]);
 
+    // Load cash balance when active group changes
+    useEffect(() => {
+        const groupId = activeGroup?.id;
+        if (!groupId) {
+            setGroupCashBalance(0);
+            return;
+        }
+        getCashAmount(groupId)
+            .then((res) => {
+                // CashAmount API returns { cashAmount, groupCashBalance, openingCashBalance }
+                const balance = res?.data?.groupCashBalance || res?.data?.cashAmount || 0;
+                setGroupCashBalance(balance);
+            })
+            .catch((e) => {
+                console.error("Error loading cash balance:", e);
+                setGroupCashBalance(0);
+            });
+    }, [activeGroup?.id]);
+
     // Note: Bank selection is available for both Cash and Bank modes (required for Bank, optional for Cash)
 
     // Auto-select group when coming from admin loan management (e.g. ?groupId=...)
@@ -148,7 +171,6 @@ export default function LoanTaking() {
         setSelectedGroup(group);
         setCurrentStep(1); // Move to loan taking form
         // Reset form when group changes
-        setHasAssetsForLoan(null);
         setSelectedMember(null);
         setTransactionType("");
         setPaymentMode("");
@@ -181,26 +203,9 @@ export default function LoanTaking() {
             String(member.code || "").toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    // Transaction type options based on hasAssetsForLoan
-    const getTransactionTypes = () => {
-        if (hasAssetsForLoan === true) {
-            return ["Saving", "FD", "Loan"];
-        } else if (hasAssetsForLoan === false) {
-            return ["Deposit", "Bank", "Expense", "Other"];
-        }
-        return [];
-    };
-
-    // Filter members based on asset status if needed
+    // Filter members - all members can take loans
     const getAvailableMembers = () => {
-        if (hasAssetsForLoan === true) {
-            // Show all members (they can have assets)
             return filteredMembers;
-        } else if (hasAssetsForLoan === false) {
-            // Show all members (for deposit, bank, expense, other)
-            return filteredMembers;
-        }
-        return [];
     };
 
     // Handle photo upload
@@ -217,19 +222,9 @@ export default function LoanTaking() {
 
     // Handle submit
     const handleSubmit = async () => {
-        if (hasAssetsForLoan === null) {
-            alert("Please answer if member has assets for this loan");
-            return;
-        }
-
-        // If has assets, member selection is required
-        if (hasAssetsForLoan && !selectedMember) {
+        // Member selection is required
+        if (!selectedMember) {
             alert("Please select a member");
-            return;
-        }
-
-        if (!transactionType) {
-            alert("Please select transaction type");
             return;
         }
 
@@ -238,7 +233,7 @@ export default function LoanTaking() {
             return;
         }
 
-        // Validate bank selection when payment mode is "Bank" (required for Bank, optional for Cash)
+        // Validate bank selection when payment mode is "Bank"
         if (paymentMode === "Bank" && !selectedBankId) {
             alert("Please select a bank for bank transactions");
             return;
@@ -249,26 +244,57 @@ export default function LoanTaking() {
             return;
         }
 
-        if (!amount || parseFloat(amount) <= 0) {
-            alert("Please enter valid amount");
+        const loanAmount = parseFloat(amount);
+        if (!amount || loanAmount <= 0) {
+            alert("Please enter valid amount (must be greater than 0)");
             return;
+        }
+
+        if (!timePeriod || parseFloat(timePeriod) <= 0) {
+            alert("Please enter valid time period");
+            return;
+        }
+
+        // Validate balance based on payment mode
+        if (paymentMode === "Bank") {
+            const selectedBank = groupBanks.find(b => (b._id || b.id) === selectedBankId);
+            if (!selectedBank) {
+                alert("Selected bank not found");
+                return;
+            }
+            const availableBalance = selectedBank.available_balance !== undefined
+                ? selectedBank.available_balance
+                : (selectedBank.current_balance !== undefined
+                    ? selectedBank.current_balance
+                    : (selectedBank.opening_balance || 0));
+
+            if (availableBalance < loanAmount) {
+                alert(`Insufficient bank balance. Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${loanAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                return;
+            }
+        } else if (paymentMode === "Cash") {
+            if (groupCashBalance < loanAmount) {
+                alert(`Insufficient cash balance. Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${loanAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                return;
+            }
         }
 
         try {
             const loanData = {
                 groupId: activeGroup.id,
                 groupName: activeGroup.name,
-                memberId: hasAssetsForLoan ? selectedMember.id : null,
-                memberCode: hasAssetsForLoan ? selectedMember.code : null,
-                memberName: hasAssetsForLoan ? selectedMember.name : null,
-                hasAssets: hasAssetsForLoan,
-                isGroupLoan: !hasAssetsForLoan, // Flag for group management loan
-                transactionType,
+                memberId: selectedMember.id,
+                memberCode: selectedMember.code,
+                memberName: selectedMember.name,
+                hasAssets: true, // Always true for member loans
+                isGroupLoan: false, // Always false - only members can take loans
+                transactionType: "Loan", // Always "Loan" for member loans
                 paymentMode,
                 bankId: paymentMode === "Bank" ? selectedBankId : null,
                 purpose,
                 amount: parseFloat(amount),
-                time_period: timePeriod ? parseInt(timePeriod) : null,
+                // Send time_period in years, backend will convert to months
+                time_period: timePeriod ? parseFloat(timePeriod) : null,
                 installment_amount: installmentAmount ? parseFloat(installmentAmount) : null,
                 bachanPathraPhoto: bachanPathraPhoto || null,
                 date: new Date().toLocaleDateString("en-GB"),
@@ -288,7 +314,6 @@ export default function LoanTaking() {
 
             // Reset form
             setSelectedMember(null);
-            setHasAssetsForLoan(null);
             setTransactionType("");
             setPaymentMode("");
                 setSelectedBankId("");
@@ -401,7 +426,6 @@ export default function LoanTaking() {
                                         setSelectedGroup(null);
                                         setAllMembers([]);
                                         setCurrentStep(0);
-                                        setHasAssetsForLoan(null);
                                         setSelectedMember(null);
                                         setTransactionType("");
                                         setPaymentMode("");
@@ -421,74 +445,9 @@ export default function LoanTaking() {
                         </div>
                     )}
 
-                    {/* Step 1: Asset Check for Loan */}
-                    {hasAssetsForLoan === null && (
-                        <div className="bg-white rounded-lg shadow-md p-8">
-                            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                                <DollarSign size={28} className="text-blue-600" />
-                                Asset Check for Loan
-                            </h2>
-                            <p className="text-gray-600 mb-6">
-                                Before proceeding, please confirm if the member has assets for this loan transaction.
-                            </p>
-                            <div className="mb-6">
-                                <label className="block text-lg font-semibold text-gray-700 mb-4">
-                                    Does the member have assets for this loan? *
-                                </label>
-                                <div className="flex gap-4">
-                                    <button
-                                        type="button"
-                                        onClick={() => setHasAssetsForLoan(true)}
-                                        className="flex items-center gap-3 px-8 py-4 rounded-lg font-semibold text-lg transition-colors bg-green-600 text-white hover:bg-green-700 shadow-md"
-                                    >
-                                        <CheckCircle size={24} />
-                                        Yes
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setHasAssetsForLoan(false)}
-                                        className="flex items-center gap-3 px-8 py-4 rounded-lg font-semibold text-lg transition-colors bg-red-600 text-white hover:bg-red-700 shadow-md"
-                                    >
-                                        <XCircle size={24} />
-                                        No
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Step 2: If No Assets - Group Management Loan */}
-                    {currentStep === 1 && activeGroup && hasAssetsForLoan === false && (
-                        <div className="bg-white rounded-lg shadow-md p-8">
-                            <div className="mb-6">
-                                <div className="flex items-center gap-3 mb-4">
-                                    <Building2 size={32} className="text-blue-600" />
-                                    <h2 className="text-2xl font-semibold text-gray-800">
-                                        Group Management Loan
-                                    </h2>
-                                </div>
-                                <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg mb-6">
-                                    <p className="text-gray-700 text-lg font-medium mb-2">
-                                        Explanation:
-                                    </p>
-                                    <p className="text-gray-600">
-                                        If a member is not taking a personal loan, the group may need a loan for personal use and management purposes.
-                                        This loan will be for group management and operational needs.
-                                    </p>
-                                </div>
-                                <p className="text-gray-600 mb-4">
-                                    <strong>Note:</strong> Member selection is not required for group management loans.
-                                    Please fill in the transaction details below.
-                                </p>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Step 3: Form (with or without member selection) */}
-                    {currentStep === 1 && activeGroup && hasAssetsForLoan !== null && (
-                        <div className={hasAssetsForLoan ? "grid grid-cols-1 lg:grid-cols-3 gap-6" : ""}>
-                            {/* Left Sidebar - Member Selection (Only if has assets) */}
-                            {hasAssetsForLoan && (
+                    {/* Loan Form - Member Selection Required */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Left Sidebar - Member Selection */}
                                 <div className="lg:col-span-1">
                                     <div className="bg-white rounded-lg shadow-md p-4 mb-4">
                                         <div className="relative mb-4">
@@ -505,7 +464,7 @@ export default function LoanTaking() {
 
                                     <div className="bg-white rounded-lg shadow-md overflow-hidden">
                                         <div className="p-4 bg-gray-50 border-b">
-                                            <h3 className="font-semibold text-gray-800">Select Member</h3>
+                                    <h3 className="font-semibold text-gray-800">Select Member *</h3>
                                         </div>
                                         <div className="max-h-[600px] overflow-y-auto">
                                             {getAvailableMembers().length > 0 ? (
@@ -542,14 +501,11 @@ export default function LoanTaking() {
                                         </div>
                                     </div>
                                 </div>
-                            )}
 
                             {/* Right Side - Loan Form */}
-                            <div className={hasAssetsForLoan ? "lg:col-span-2" : ""}>
-                                {/* Show form if: (has assets AND member selected) OR (no assets) */}
-                                {((hasAssetsForLoan && selectedMember) || !hasAssetsForLoan) ? (
+                        <div className="lg:col-span-2">
+                            {selectedMember ? (
                                     <div className="bg-white rounded-lg shadow-md p-6">
-                                        {hasAssetsForLoan && selectedMember ? (
                                             <div className="flex items-center justify-between mb-4">
                                                 <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
                                                     <User size={24} className="text-blue-600" />
@@ -572,68 +528,105 @@ export default function LoanTaking() {
                                                     Change Member
                                                 </button>
                                             </div>
-                                        ) : (
-                                            <div className="mb-4">
-                                                <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
-                                                    <Building2 size={24} className="text-blue-600" />
-                                                    Group Management Loan
-                                                </h2>
-                                                <p className="text-gray-600 text-sm mt-1">
-                                                    This loan is for group management and operational purposes
-                                                </p>
+
+                                    {/* Balance Display */}
+                                    <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+                                        <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                            <Wallet size={18} className="text-blue-600" />
+                                            Available Balances
+                                        </h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {/* Cash Balance */}
+                                            <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <Wallet size={16} className="text-green-600" />
+                                                        <span className="text-sm font-medium text-gray-700">Cash Balance</span>
+                                                    </div>
+                                                    <span className="text-lg font-bold text-green-600">
+                                                        ₹{groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            {/* Bank Balance Summary */}
+                                            {groupBanks.length > 0 && (
+                                                <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <CreditCard size={16} className="text-blue-600" />
+                                                            <span className="text-sm font-medium text-gray-700">Bank Accounts</span>
+                                                        </div>
+                                                        <span className="text-xs text-gray-500">{groupBanks.length} account{groupBanks.length !== 1 ? 's' : ''}</span>
+                                                    </div>
+                                                    {selectedBankId && (() => {
+                                                        const selectedBank = groupBanks.find(b => (b._id || b.id) === selectedBankId);
+                                                        if (!selectedBank) return null;
+                                                        const availableBalance = selectedBank.available_balance !== undefined
+                                                            ? selectedBank.available_balance
+                                                            : (selectedBank.current_balance !== undefined
+                                                                ? selectedBank.current_balance
+                                                                : (selectedBank.opening_balance || 0));
+                                                        return (
+                                                            <div className="text-sm">
+                                                                <span className="text-gray-600">{selectedBank.bank_name || 'Bank'}: </span>
+                                                                <span className="font-bold text-blue-600">
+                                                                    ₹{availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                    {!selectedBankId && (
+                                                        <span className="text-xs text-gray-500">Select a bank to see balance</span>
+                                                    )}
                                             </div>
                                         )}
+                                        </div>
+                                    </div>
 
-                                        {/* Show asset status (only if has assets) */}
-                                        {hasAssetsForLoan && (
-                                            <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                                                <p className="text-sm text-gray-600">Asset Status:</p>
-                                                <p className="font-semibold text-gray-800">Has Assets</p>
-                                            </div>
-                                        )}
-
-                                        {/* Transaction Type */}
+                                    {/* Payment Mode */}
                                         <div className="mb-6">
                                             <Select
-                                                label="Transaction Type *"
-                                                name="transactionType"
-                                                value={transactionType}
-                                                handleChange={(e) => setTransactionType(e.target.value)}
-                                                options={getTransactionTypes()}
+                                                label="Payment Mode *"
+                                                name="paymentMode"
+                                                value={paymentMode}
+                                                handleChange={(e) => {
+                                                    const newMode = e.target.value;
+                                                    setPaymentMode(newMode);
+                                                    // Clear bank selection if switching to Cash
+                                                    if (newMode === "Cash") {
+                                                        setSelectedBankId("");
+                                                    }
+                                                }}
+                                                options={["Cash", "Bank"]}
                                                 required
                                             />
                                         </div>
 
-                                        {/* Payment Mode */}
-                                        {transactionType && (
+                                        {/* Bank Selection - Show only when payment mode is "Bank" */}
+                                        {paymentMode === "Bank" && (
                                             <div className="mb-6">
                                                 <Select
-                                                    label="Payment Mode *"
-                                                    name="paymentMode"
-                                                    value={paymentMode}
-                                                    handleChange={(e) => setPaymentMode(e.target.value)}
-                                                    options={["Cash", "Bank"]}
-                                                    required
-                                                />
-                                            </div>
-                                        )}
-
-                                        {/* Bank Selection - Show for both Cash and Bank payment modes */}
-                                        {paymentMode && (
-                                            <div className="mb-6">
-                                                <Select
-                                                    label={`Select Bank${paymentMode === "Bank" ? " *" : " (Optional)"}`}
+                                                    label="Select Bank *"
                                                     name="selectedBankId"
                                                     value={selectedBankId}
                                                     handleChange={(e) => setSelectedBankId(e.target.value)}
                                                     options={groupBanks.length > 0 
-                                                        ? groupBanks.map((bank) => ({
+                                                    ? groupBanks.map((bank) => {
+                                                        // Use available_balance if available, else fallback to current_balance or opening_balance
+                                                        const balance = bank.available_balance !== undefined
+                                                            ? bank.available_balance
+                                                            : (bank.current_balance !== undefined
+                                                                ? bank.current_balance
+                                                                : (bank.opening_balance || 0));
+                                                        const balanceFormatted = `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                                        return {
                                                             value: bank._id || bank.id,
-                                                            label: `${bank.bank_name} - ${bank.account_no}${bank.short_name ? ` (${bank.short_name})` : ""}`
-                                                        }))
+                                                            label: `${bank.bank_name} - ${bank.account_no}${bank.short_name ? ` (${bank.short_name})` : ""} [Available: ${balanceFormatted}]`
+                                                        };
+                                                    })
                                                         : [{ value: "", label: "No banks available" }]
                                                     }
-                                                    required={paymentMode === "Bank"}
+                                                    required
                                                 />
                                                 {groupBanks.length === 0 && (
                                                     <p className="text-sm text-red-600 mt-1">
@@ -651,7 +644,7 @@ export default function LoanTaking() {
                                                     name="purpose"
                                                     value={purpose}
                                                     handleChange={(e) => setPurpose(e.target.value)}
-                                                    placeholder="Enter purpose of transaction"
+                                                placeholder="Enter purpose of loan"
                                                     required
                                                 />
                                             </div>
@@ -661,41 +654,80 @@ export default function LoanTaking() {
                                         {purpose && (
                                             <div className="mb-6">
                                                 <Input
-                                                    label="Amount *"
+                                                label="Loan Amount (₹) *"
                                                     name="amount"
                                                     type="number"
                                                     value={amount}
                                                     handleChange={(e) => setAmount(e.target.value)}
-                                                    placeholder="Enter amount"
+                                                placeholder="Enter loan amount"
                                                     required
                                                 />
+                                            {amount && parseFloat(amount) > 0 && (
+                                                <div className="mt-2">
+                                                    {paymentMode === "Bank" && selectedBankId && (() => {
+                                                        const selectedBank = groupBanks.find(b => (b._id || b.id) === selectedBankId);
+                                                        if (!selectedBank) return null;
+                                                        const availableBalance = selectedBank.available_balance !== undefined
+                                                            ? selectedBank.available_balance
+                                                            : (selectedBank.current_balance !== undefined
+                                                                ? selectedBank.current_balance
+                                                                : (selectedBank.opening_balance || 0));
+                                                        const loanAmount = parseFloat(amount);
+                                                        const isSufficient = availableBalance >= loanAmount;
+                                                        return (
+                                                            <p className={`text-sm ${isSufficient ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {isSufficient
+                                                                    ? `✓ Sufficient balance. Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                                    : `✗ Insufficient balance. Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${loanAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                                }
+                                                            </p>
+                                                        );
+                                                    })()}
+                                                    {paymentMode === "Cash" && (
+                                                        (() => {
+                                                            const loanAmount = parseFloat(amount);
+                                                            const isSufficient = groupCashBalance >= loanAmount;
+                                                            return (
+                                                                <p className={`text-sm ${isSufficient ? 'text-green-600' : 'text-red-600'}`}>
+                                                                    {isSufficient
+                                                                        ? `✓ Sufficient cash balance. Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                                        : `✗ Insufficient cash balance. Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${loanAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                                    }
+                                                                </p>
+                                                            );
+                                                        })()
+                                                    )}
+                                                </div>
+                                            )}
                                             </div>
                                         )}
 
-                                        {/* Time Period */}
-                                        {amount && (
+                                    {/* Time Period - Required for member loans */}
+                                    {amount && (
                                             <div className="mb-6">
                                                 <Input
-                                                    label="Time Period (Months)"
+                                                label="Time Period (Years) *"
                                                     name="timePeriod"
                                                     type="number"
                                                     value={timePeriod}
                                                     handleChange={(e) => setTimePeriod(e.target.value)}
-                                                    placeholder="Enter loan duration in months"
-                                                    min="1"
+                                                placeholder="Enter loan duration in years"
+                                                min="0.1"
+                                                step="0.1"
+                                                required
                                                 />
                                             </div>
                                         )}
 
-                                        {/* Installment Amount - Auto-calculated */}
-                                        {timePeriod && amount && (
+                                    {/* Installment Amount - Auto-calculated */}
+                                    {timePeriod && amount && (
                                             <div className="mb-6">
                                                 <div className="mb-2">
                                                     <label className="block text-sm font-semibold text-gray-700">
                                                         Installment Amount Per Month (Auto-calculated)
                                                     </label>
                                                     <p className="text-xs text-gray-500 mt-1">
-                                                        Calculated: ₹{parseFloat(amount || 0).toLocaleString('en-IN')} ÷ {timePeriod} months = ₹{installmentAmount || "0.00"}
+                                                    Calculated: ₹{parseFloat(amount || 0).toLocaleString('en-IN')} ÷ {parseFloat(timePeriod || 0) * 12} months ({timePeriod} {parseFloat(timePeriod) === 1 ? 'year' : 'years'}) = ₹{installmentAmount || "0.00"}
                                                     </p>
                                                 </div>
                                                 <Input
@@ -714,8 +746,8 @@ export default function LoanTaking() {
                                             </div>
                                         )}
 
-                                        {/* Bachan Pathra Photo */}
-                                        {(amount || timePeriod || installmentAmount) && (
+                                    {/* Bachan Pathra Photo */}
+                                    {amount && timePeriod && (
                                             <div className="mb-6">
                                                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                                                     Bachan Pathra Photo (Optional)
@@ -749,10 +781,10 @@ export default function LoanTaking() {
                                                     )}
                                                 </div>
                                             </div>
-                                        )}
+                                    )}
 
                                         {/* Submit Button */}
-                                        {amount && (
+                                    {amount && timePeriod && (
                                             <div className="flex justify-end gap-4">
                                                 <button
                                                     onClick={() => {
@@ -774,7 +806,7 @@ export default function LoanTaking() {
                                                     onClick={handleSubmit}
                                                     className="px-8 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md"
                                                 >
-                                                    Submit
+                                                Submit Loan
                                                 </button>
                                             </div>
                                         )}
@@ -785,37 +817,13 @@ export default function LoanTaking() {
                                         <p className="text-gray-600 text-lg">
                                             Please select a member to process loan transaction
                                         </p>
+                                    <p className="text-gray-500 text-sm mt-2">
+                                        Only members can take loans. Group expenses should be handled in the Expense section.
+                                    </p>
                                     </div>
                                 )}
                             </div>
                         </div>
-                    )}
-
-                    {/* Back Button - Show if asset question is answered */}
-                    {hasAssetsForLoan !== null && (
-                        <div className="mt-6">
-                            <button
-                                onClick={() => {
-                                    if (window.confirm("Are you sure you want to go back? All entered data will be lost.")) {
-                                        setHasAssetsForLoan(null);
-                                        setSelectedMember(null);
-                                        setTransactionType("");
-                                        setPaymentMode("");
-                setSelectedBankId("");
-                setPurpose("");
-                setAmount("");
-                setTimePeriod("");
-                setInstallmentAmount("");
-                setBachanPathraPhoto(null);
-                                    }
-                                }}
-                                className="flex items-center gap-2 px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
-                            >
-                                <ArrowLeft size={18} />
-                                Back to Asset Check
-                            </button>
-                        </div>
-                    )}
                 </div>
             )}
         </div>

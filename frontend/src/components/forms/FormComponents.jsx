@@ -21,7 +21,7 @@ export function Input({ label, name, value, handleChange, type = "text", require
     );
 }
 
-export function Select({ label, name, value, options, handleChange, required = false }) {
+export function Select({ label, name, value, options = [], handleChange, required = false }) {
     // Handle both array of strings and array of objects with {value, label}
     const getOptionValue = (opt) => {
         return typeof opt === "object" && opt !== null ? opt.value : opt;
@@ -30,6 +30,10 @@ export function Select({ label, name, value, options, handleChange, required = f
     const getOptionLabel = (opt) => {
         return typeof opt === "object" && opt !== null ? opt.label : opt;
     };
+
+    // Check if first option has empty value (custom placeholder)
+    const hasCustomPlaceholder = options.length > 0 && getOptionValue(options[0]) === "";
+    const displayOptions = hasCustomPlaceholder ? options : [{ value: "", label: `Select ${label}` }, ...options];
 
     return (
         <div className="flex flex-col">
@@ -44,8 +48,7 @@ export function Select({ label, name, value, options, handleChange, required = f
                 required={required}
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
             >
-                <option value="">Select {label}</option>
-                {options.map((opt, i) => (
+                {displayOptions.map((opt, i) => (
                     <option key={i} value={getOptionValue(opt)}>
                         {getOptionLabel(opt)}
                     </option>

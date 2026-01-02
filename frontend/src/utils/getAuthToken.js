@@ -1,12 +1,23 @@
 /**
  * Centralized function to get auth token
- * Checks Redux store first, then falls back to localStorage
+ * Checks for group token first (if in group context), then admin token
  * This ensures consistency across all HTTP clients
  */
 export const getAuthToken = () => {
-  // Try to get from localStorage (works even outside React components)
-  const token = localStorage.getItem("adminToken");
-  return token;
+  // Check if we're in a group context (group routes start with /group)
+  const isGroupRoute = window.location.pathname.startsWith("/group");
+  
+  // For group routes, prefer group token
+  if (isGroupRoute) {
+    const groupToken = localStorage.getItem("groupToken");
+    if (groupToken) {
+      return groupToken;
+    }
+  }
+  
+  // Fall back to admin token
+  const adminToken = localStorage.getItem("adminToken");
+  return adminToken;
 };
 
 /**

@@ -16,6 +16,9 @@ import AdminLoanManagement from "./screens/admin/LoanManagement";
 import AdminSettings from "./screens/admin/AdminSettings";
 import ApprovalManagement from "./screens/admin/ApprovalManagement";
 import AdminPaymentManagement from "./screens/admin/PaymentManagement";
+import ExpenseManagement from "./screens/admin/ExpenseManagement";
+import FinancialReports from "./screens/admin/FinancialReports";
+import CashToBankConversion from "./screens/admin/CashToBankConversion";
 
 // Group Components
 import GroupNavbar from "./components/group/GroupNavbar";
@@ -65,6 +68,9 @@ function App() {
             <Route path="loan-management" element={<AdminLoanManagement />} />
             <Route path="approvals" element={<ApprovalManagement />} />
             <Route path="payments" element={<AdminPaymentManagement />} />
+            <Route path="expenses" element={<ExpenseManagement />} />
+            <Route path="financial-reports" element={<FinancialReports />} />
+            <Route path="cash-to-bank" element={<CashToBankConversion />} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 
@@ -88,6 +94,7 @@ function App() {
             <Route path="loans" element={<LoanManagement />} />
             <Route path="loan-taking" element={<LoanTaking />} />
             <Route path="payments" element={<GroupPaymentManagement />} />
+            <Route path="cash-to-bank" element={<CashToBankConversion />} />
           </Route>
 
           {/* Auth Routes (No Layout) */}

@@ -12,9 +12,12 @@ import {
     Edit,
     Save,
     X,
+    ArrowLeftRight,
 } from "lucide-react";
 import { initApprovalDB, getAllApprovals, approveRequest, rejectRequest, updateApprovalData } from "../../services/approvalDB";
 import { getGroups } from "../../services/groupService";
+import { getPendingConversions, approveConversion, rejectConversion } from "../../services/cashToBankService";
+import { getLoans, approveLoan, rejectLoan } from "../../services/loanService";
 
 export default function ApprovalManagement() {
     const [approvals, setApprovals] = useState([]);
@@ -56,6 +59,74 @@ export default function ApprovalManagement() {
             await initApprovalDB();
             let allApprovals = await getAllApprovals(selectedGroupId || null);
 
+            // Load CashToBankConversion approvals from backend
+            try {
+                const cashToBankRes = await getPendingConversions();
+                if (cashToBankRes?.success && Array.isArray(cashToBankRes.data)) {
+                    const cashToBankApprovals = cashToBankRes.data.map((conversion) => ({
+                        id: conversion._id || conversion.id,
+                        type: "cash_to_bank",
+                        status: conversion.status || "pending",
+                        groupId: conversion.groupId?._id || conversion.groupId || "",
+                        groupName: conversion.groupName || conversion.groupId?.group_name || "",
+                        data: conversion,
+                        submittedAt: conversion.createdAt ? new Date(conversion.createdAt).getTime() : Date.now(),
+                        approvedAt: conversion.approvedAt ? new Date(conversion.approvedAt).getTime() : null,
+                        approvedBy: conversion.approvedBy || null,
+                        rejectionReason: conversion.rejectionReason || null,
+                        synced: true, // Backend data is always synced
+                        _isBackendApproval: true, // Flag to identify backend approvals
+                    }));
+
+                    // Merge with local approvals
+                    allApprovals = [...allApprovals, ...cashToBankApprovals];
+                }
+            } catch (error) {
+                console.error("Error loading CashToBank conversions:", error);
+                // Continue with local approvals even if backend fails
+            }
+
+            // Load Loan approvals from backend
+            // Fetch loans based on current filter status (or all if filter is "all")
+            try {
+                // Determine which status to fetch based on current filter
+                // We fetch all loans and filter client-side since the backend list endpoint
+                // accepts status as a query param, but we want to show loans in approval context
+                const loansRes = await getLoans();
+                if (loansRes?.success && Array.isArray(loansRes.data)) {
+                    // Transform all loans (we'll filter by status later)
+                    const loanApprovals = loansRes.data.map((loan) => ({
+                        id: loan._id || loan.id,
+                        type: "loan",
+                        status: loan.status || "pending",
+                        groupId: loan.groupId?._id || loan.groupId || "",
+                        groupName: loan.groupName || loan.groupId?.group_name || "",
+                        data: loan,
+                        submittedAt: loan.createdAt ? new Date(loan.createdAt).getTime() : Date.now(),
+                        approvedAt: loan.approvedAt ? new Date(loan.approvedAt).getTime() : null,
+                        approvedBy: loan.approvedBy || null,
+                        rejectionReason: loan.rejectionReason || null,
+                        synced: true, // Backend data is always synced
+                        _isBackendApproval: true, // Flag to identify backend approvals
+                    }));
+
+                    // Merge with existing approvals
+                    allApprovals = [...allApprovals, ...loanApprovals];
+                }
+            } catch (error) {
+                console.error("Error loading loans:", error);
+                // Continue with other approvals even if backend fails
+            }
+
+            // Filter by group if selected
+            if (selectedGroupId) {
+                allApprovals = allApprovals.filter((a) => {
+                    const approvalGroupId = a.groupId?._id || a.groupId || "";
+                    return approvalGroupId === selectedGroupId || approvalGroupId.toString() === selectedGroupId;
+                });
+            }
+
+            // Filter by status
             if (filter === "pending") {
                 allApprovals = allApprovals.filter((a) => a.status === "pending");
             } else if (filter === "approved") {
@@ -63,6 +134,7 @@ export default function ApprovalManagement() {
             } else if (filter === "rejected") {
                 allApprovals = allApprovals.filter((a) => a.status === "rejected");
             }
+            // Note: For "all" filter, we keep all approvals (no filtering)
 
             // Sort by submitted date (newest first)
             allApprovals.sort((a, b) => b.submittedAt - a.submittedAt);
@@ -76,40 +148,84 @@ export default function ApprovalManagement() {
         }
     };
 
-    const handleApprove = async (id) => {
+    const handleApprove = async (approval) => {
         if (window.confirm("Are you sure you want to approve this request?")) {
             try {
-                await approveRequest(id, "Admin User"); // In real app, get from auth
-                alert("Request approved successfully!");
+                // Check if this is a backend approval
+                if (approval._isBackendApproval) {
+                    if (approval.type === "cash_to_bank") {
+                        const res = await approveConversion(approval.id);
+                        if (res?.success) {
+                            alert("Cash to Bank conversion approved successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to approve conversion");
+                        }
+                    } else if (approval.type === "loan") {
+                        const res = await approveLoan(approval.id);
+                        if (res?.success) {
+                            alert("Loan approved successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to approve loan");
+                        }
+                    } else {
+                        throw new Error("Unknown approval type");
+                    }
+                } else {
+                    // Local approval (from approvalDB)
+                    await approveRequest(approval.id, "Admin User"); // In real app, get from auth
+                    alert("Request approved successfully!");
+                }
                 loadApprovals();
             } catch (error) {
                 console.error("Error approving request:", error);
-                alert("Error approving request");
+                alert("Error approving request: " + (error.message || error));
             }
         }
     };
 
-    const handleReject = async (id) => {
+    const handleReject = async (approval) => {
         if (!rejectionReason.trim()) {
             alert("Please provide a rejection reason");
             return;
         }
         if (window.confirm("Are you sure you want to reject this request?")) {
             try {
-                // If there are edits, save them first
-                if (isEditing && editedData) {
-                    await updateApprovalData(id, editedData);
-                    setIsEditing(false);
-                    setEditedData(null);
+                // Check if this is a backend approval
+                if (approval._isBackendApproval) {
+                    if (approval.type === "cash_to_bank") {
+                        const res = await rejectConversion(approval.id, rejectionReason);
+                        if (res?.success) {
+                            alert("Cash to Bank conversion rejected successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to reject conversion");
+                        }
+                    } else if (approval.type === "loan") {
+                        const res = await rejectLoan(approval.id, rejectionReason);
+                        if (res?.success) {
+                            alert("Loan rejected successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to reject loan");
+                        }
+                    } else {
+                        throw new Error("Unknown approval type");
+                    }
+                } else {
+                    // Local approval (from approvalDB)
+                    // If there are edits, save them first
+                    if (isEditing && editedData) {
+                        await updateApprovalData(approval.id, editedData);
+                        setIsEditing(false);
+                        setEditedData(null);
+                    }
+                    await rejectRequest(approval.id, "Admin User", rejectionReason); // In real app, get from auth
+                    alert("Request rejected successfully!");
                 }
-                await rejectRequest(id, "Admin User", rejectionReason); // In real app, get from auth
-                alert("Request rejected successfully!");
                 setSelectedApproval(null);
                 setRejectionReason("");
                 loadApprovals();
             } catch (error) {
                 console.error("Error rejecting request:", error);
-                alert("Error rejecting request");
+                alert("Error rejecting request: " + (error.message || error));
             }
         }
     };
@@ -171,6 +287,8 @@ export default function ApprovalManagement() {
                 return <DollarSign className="text-green-600" size={20} />;
             case "loan":
                 return <FileText className="text-purple-600" size={20} />;
+            case "cash_to_bank":
+                return <ArrowLeftRight className="text-orange-600" size={20} />;
             default:
                 return <FileText size={20} />;
         }
@@ -184,6 +302,8 @@ export default function ApprovalManagement() {
                 return "Demand & Recovery";
             case "loan":
                 return "Loan Application";
+            case "cash_to_bank":
+                return "Cash to Bank Conversion";
             default:
                 return type;
         }
@@ -350,6 +470,12 @@ export default function ApprovalManagement() {
                                                         Amount: {formatAmount(approval.data.amount)}
                                                     </p>
                                                 )}
+                                                {/* Show summary for cash_to_bank */}
+                                                {approval.type === "cash_to_bank" && approval.data?.totalCashAmount && (
+                                                    <p className="text-xs text-gray-500 mt-1">
+                                                        Amount: {formatAmount(approval.data.totalCashAmount)}
+                                                    </p>
+                                                )}
                                             </td>
                                             <td className="border p-3">
                                                 <div>
@@ -371,7 +497,7 @@ export default function ApprovalManagement() {
                                                     {approval.status === "pending" && (
                                                         <>
                                                             <button
-                                                                onClick={() => handleApprove(approval.id)}
+                                                                onClick={() => handleApprove(approval)}
                                                                 className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                                                                 title="Approve"
                                                             >
@@ -835,8 +961,76 @@ export default function ApprovalManagement() {
                                     </div>
                                 )}
 
+                                {/* Cash to Bank Conversion Dashboard */}
+                                {selectedApproval.type === "cash_to_bank" && selectedApproval.data && (
+                                    <div className="space-y-4">
+                                        {(() => {
+                                            const data = selectedApproval.data;
+                                            return (
+                                                <>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                                                            <p className="text-sm text-gray-600">Total Cash Amount</p>
+                                                            <p className="text-2xl font-bold text-gray-800">
+                                                                {formatAmount(data.totalCashAmount)}
+                                                            </p>
+                                                        </div>
+                                                        <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                            <p className="text-sm text-gray-600">Bank Account</p>
+                                                            <p className="text-lg font-bold text-gray-800">
+                                                                {data.bankName || "N/A"}
+                                                            </p>
+                                                            <p className="text-sm text-gray-600 mt-1">
+                                                                {data.accountNumber || "N/A"}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-4 bg-gray-50 rounded-lg space-y-2">
+                                                        <p className="text-sm font-semibold text-gray-700">Conversion Details</p>
+                                                        <p className="text-gray-600">
+                                                            <span className="font-medium">Group:</span> {data.groupName} ({data.groupCode || "N/A"})
+                                                        </p>
+                                                        {data.onlineRef && (
+                                                            <p className="text-gray-600">
+                                                                <span className="font-medium">Online Reference:</span> {data.onlineRef}
+                                                            </p>
+                                                        )}
+                                                        {data.recoveryDate && (
+                                                            <p className="text-gray-600">
+                                                                <span className="font-medium">Recovery Date:</span> {new Date(data.recoveryDate).toLocaleDateString("en-GB")}
+                                                            </p>
+                                                        )}
+                                                        {data.conversionDetails && data.conversionDetails.length > 0 && (
+                                                            <div className="mt-2">
+                                                                <p className="text-sm font-semibold text-gray-700 mb-1">Member Details:</p>
+                                                                <div className="max-h-40 overflow-y-auto">
+                                                                    {data.conversionDetails.map((detail, idx) => (
+                                                                        <p key={idx} className="text-xs text-gray-600">
+                                                                            {detail.memberName} ({detail.memberCode}): {formatAmount(detail.cashAmount)}
+                                                                        </p>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {data.paymentImage && (
+                                                        <div className="p-4 bg-gray-50 rounded-lg">
+                                                            <p className="text-sm font-semibold text-gray-700 mb-2">Payment Receipt</p>
+                                                            <img
+                                                                src={data.paymentImage.startsWith('http') ? data.paymentImage : `${import.meta.env.VITE_BASE_URL?.replace('/api', '') || 'http://localhost:8080'}${data.paymentImage}`}
+                                                                alt="Payment Receipt"
+                                                                className="max-w-full h-auto rounded-lg border-2 border-gray-300"
+                                                            />
+                                                        </div>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
+                                    </div>
+                                )}
+
                                 {/* Fallback for other types */}
-                                {!["recovery", "loan", "member"].includes(selectedApproval.type) && (
+                                {!["recovery", "loan", "member", "cash_to_bank"].includes(selectedApproval.type) && (
                                     <div className="border-t pt-4">
                                         <p className="text-sm font-semibold text-gray-600 mb-2">Request Data</p>
                                         <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto text-sm">
@@ -873,13 +1067,13 @@ export default function ApprovalManagement() {
                                             Cancel
                                         </button>
                                         <button
-                                            onClick={() => handleReject(selectedApproval.id)}
+                                            onClick={() => handleReject(selectedApproval)}
                                             className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
                                         >
                                             Reject
                                         </button>
                                         <button
-                                            onClick={() => handleApprove(selectedApproval.id)}
+                                            onClick={() => handleApprove(selectedApproval)}
                                             className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
                                         >
                                             Approve

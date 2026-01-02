@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { X, DollarSign, Calendar } from "lucide-react";
+import { X, DollarSign, Calendar, Wallet, CreditCard } from "lucide-react";
 import { Input, Select } from "../forms/FormComponents";
 import { createFD } from "../../services/fdService";
-import { getGroups } from "../../services/groupService";
+import { getGroups, getGroupBanks } from "../../services/groupService";
+import { getCashAmount } from "../../services/cashAmount";
 
 export default function CreateFD({ member, onClose, onSuccess }) {
     const [loading, setLoading] = useState(false);
@@ -12,9 +13,12 @@ export default function CreateFD({ member, onClose, onSuccess }) {
     const [timePeriod, setTimePeriod] = useState("");
     const [paymentMode, setPaymentMode] = useState({ cash: false, online: false });
     const [onlineRef, setOnlineRef] = useState("");
+    const [selectedBankId, setSelectedBankId] = useState("");
+    const [groupBanks, setGroupBanks] = useState([]);
     const [fdRate, setFdRate] = useState(null);
     const [calculatedInterest, setCalculatedInterest] = useState(0);
     const [calculatedMaturity, setCalculatedMaturity] = useState(0);
+    const [groupCashBalance, setGroupCashBalance] = useState(0);
 
     // Load groups if member doesn't have group info
     useEffect(() => {
@@ -43,7 +47,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
         }
     }, [member]);
 
-    // Load FD rate when group is selected
+    // Load FD rate and banks when group is selected
     useEffect(() => {
         if (selectedGroupId) {
             const selectedGroup = groups.find((g) => g._id === selectedGroupId);
@@ -54,6 +58,30 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                 const group = member.group;
                 setFdRate(group.fd_rate || 0);
             }
+
+            // Load banks for the selected group
+            getGroupBanks(selectedGroupId)
+                .then((res) => {
+                    setGroupBanks(Array.isArray(res?.data) ? res.data : []);
+                })
+                .catch((e) => {
+                    console.error("Failed to load banks:", e);
+                    setGroupBanks([]);
+                });
+
+            // Load cash balance
+            getCashAmount(selectedGroupId)
+                .then((res) => {
+                    const balance = res?.data?.groupCashBalance || res?.data?.cashAmount || 0;
+                    setGroupCashBalance(balance);
+                })
+                .catch((e) => {
+                    console.error("Failed to load cash balance:", e);
+                    setGroupCashBalance(0);
+                });
+        } else {
+            setGroupBanks([]);
+            setGroupCashBalance(0);
         }
     }, [selectedGroupId, groups, member]);
 
@@ -61,11 +89,10 @@ export default function CreateFD({ member, onClose, onSuccess }) {
     useEffect(() => {
         if (amount && timePeriod && fdRate !== null) {
             const principal = parseFloat(amount) || 0;
-            const months = parseFloat(timePeriod) || 0;
+            const years = parseFloat(timePeriod) || 0;
             const rate = parseFloat(fdRate) || 0;
 
-            if (principal > 0 && months > 0 && rate >= 0) {
-                const years = months / 12;
+            if (principal > 0 && years > 0 && rate >= 0) {
                 const interest = (principal * rate * years) / 100;
                 const maturity = principal + interest;
 
@@ -109,6 +136,31 @@ export default function CreateFD({ member, onClose, onSuccess }) {
             return;
         }
 
+        if (paymentMode.online && !selectedBankId) {
+            alert("Please select a bank for online payment");
+            return;
+        }
+
+        // Validate balance based on payment mode
+        // Note: For cash FD, member gives cash to group, so group's cash balance will increase (no validation needed)
+        // For bank FD, group pays from bank, so we need to check bank balance
+        const fdAmount = parseFloat(amount);
+        if (paymentMode.online && selectedBankId) {
+            const selectedBank = groupBanks.find(b => (b._id || b.id) === selectedBankId);
+            if (selectedBank) {
+                const availableBalance = selectedBank.available_balance !== undefined
+                    ? selectedBank.available_balance
+                    : (selectedBank.current_balance !== undefined
+                        ? selectedBank.current_balance
+                        : (selectedBank.opening_balance || 0));
+                
+                if (availableBalance < fdAmount) {
+                    alert(`Insufficient bank balance. Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${fdAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                    return;
+                }
+            }
+        }
+
         try {
             setLoading(true);
 
@@ -116,9 +168,10 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                 memberId: member._id || member.id,
                 groupId: selectedGroupId,
                 amount: parseFloat(amount),
-                time_period: parseInt(timePeriod),
+                time_period: parseFloat(timePeriod), // Send in years, backend will convert to months
                 paymentMode,
                 onlineRef: paymentMode.online ? onlineRef : null,
+                bankId: paymentMode.online ? selectedBankId : null,
                 date: new Date().toLocaleDateString("en-GB"),
             };
 
@@ -146,6 +199,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
         });
         if (mode === "cash" && paymentMode.online) {
             setOnlineRef("");
+            setSelectedBankId("");
         }
     };
 
@@ -191,6 +245,73 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                         </div>
                     )}
 
+                    {/* Balance Display */}
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 p-4">
+                        <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                            <Wallet size={18} className="text-blue-600" />
+                            Available Balances
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Cash Balance */}
+                            <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Wallet size={16} className="text-green-600" />
+                                        <span className="text-sm font-medium text-gray-700">Cash Balance</span>
+                                    </div>
+                                    <span className="text-lg font-bold text-green-600">
+                                        ₹{groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                                                {amount && paymentMode.cash && parseFloat(amount) > 0 && (
+                                                    <p className="text-xs mt-1 text-blue-600">
+                                                        ℹ️ Cash will be added to group balance
+                                                    </p>
+                                                )}
+                            </div>
+                            {/* Bank Balance Summary */}
+                            {groupBanks.length > 0 && (
+                                <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-2">
+                                            <CreditCard size={16} className="text-blue-600" />
+                                            <span className="text-sm font-medium text-gray-700">Bank Accounts</span>
+                                        </div>
+                                        <span className="text-xs text-gray-500">{groupBanks.length} account{groupBanks.length !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    {selectedBankId && paymentMode.online && (() => {
+                                        const selectedBank = groupBanks.find(b => (b._id || b.id) === selectedBankId);
+                                        if (!selectedBank) return null;
+                                        const availableBalance = selectedBank.available_balance !== undefined
+                                            ? selectedBank.available_balance
+                                            : (selectedBank.current_balance !== undefined
+                                                ? selectedBank.current_balance
+                                                : (selectedBank.opening_balance || 0));
+                                        return (
+                                            <div className="text-sm">
+                                                <span className="text-gray-600">{selectedBank.bank_name || 'Bank'}: </span>
+                                                <span className={`font-bold ${availableBalance >= parseFloat(amount || 0) ? 'text-blue-600' : 'text-red-600'}`}>
+                                                    ₹{availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </span>
+                                                {amount && parseFloat(amount) > 0 && (
+                                                    <p className={`text-xs mt-1 ${availableBalance >= parseFloat(amount) ? 'text-green-600' : 'text-red-600'}`}>
+                                                        {availableBalance >= parseFloat(amount) 
+                                                            ? `✓ Sufficient balance`
+                                                            : `✗ Insufficient balance`
+                                                        }
+                                                    </p>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+                                    {(!selectedBankId || !paymentMode.online) && (
+                                        <span className="text-xs text-gray-500">Select a bank to see balance</span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
                     {/* FD Rate Display */}
                     {fdRate !== null && (
                         <div className="bg-blue-50 p-4 rounded-lg">
@@ -214,13 +335,14 @@ export default function CreateFD({ member, onClose, onSuccess }) {
 
                     {/* Time Period */}
                     <Input
-                        label="Time Period (Months) *"
+                        label="Time Period (Years) *"
                         name="timePeriod"
                         type="number"
                         value={timePeriod}
                         handleChange={(e) => setTimePeriod(e.target.value)}
-                        placeholder="Enter time period in months"
-                        min="1"
+                        placeholder="Enter time period in years"
+                        min="0.1"
+                        step="0.1"
                         required
                     />
 
@@ -239,7 +361,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-600">Time Period</p>
-                                    <p className="text-lg font-bold text-gray-800">{timePeriod} months</p>
+                                    <p className="text-lg font-bold text-gray-800">{timePeriod} {parseFloat(timePeriod) === 1 ? 'year' : 'years'}</p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-600">Interest Amount</p>
@@ -280,8 +402,37 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                         </div>
                     </div>
 
-                    {/* Online Reference */}
+                    {/* Online Payment Details */}
                     {paymentMode.online && (
+                        <div className="space-y-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                            <Select
+                                label="Select Bank *"
+                                name="selectedBankId"
+                                value={selectedBankId}
+                                handleChange={(e) => setSelectedBankId(e.target.value)}
+                                options={groupBanks.length > 0
+                                    ? groupBanks.map((bank) => {
+                                        // Use available_balance if available, else fallback to current_balance or opening_balance
+                                        const balance = bank.available_balance !== undefined
+                                            ? bank.available_balance
+                                            : (bank.current_balance !== undefined
+                                                ? bank.current_balance
+                                                : (bank.opening_balance || 0));
+                                        const balanceFormatted = `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                        return {
+                                            value: bank._id || bank.id,
+                                            label: `${bank.bank_name} - ${bank.account_no}${bank.short_name ? ` (${bank.short_name})` : ""} [Available: ${balanceFormatted}]`
+                                        };
+                                    })
+                                    : [{ value: "", label: "No banks available" }]
+                                }
+                                required
+                            />
+                            {groupBanks.length === 0 && (
+                                <p className="text-sm text-red-600 mt-1">
+                                    No banks found for this group. Please add a bank account first.
+                                </p>
+                            )}
                         <Input
                             label="Online Payment Reference *"
                             name="onlineRef"
@@ -290,6 +441,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                             placeholder="Enter payment reference number"
                             required
                         />
+                        </div>
                     )}
 
                     {/* Buttons */}

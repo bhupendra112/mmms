@@ -101,6 +101,19 @@ export const getBankDetail = async (bankId) => {
 };
 
 // -------------------------------------------------------------
+// GET CASH TRANSACTIONS FOR A GROUP
+// -------------------------------------------------------------
+export const getCashTransactions = async (groupId) => {
+    if (!groupId) throw new Error("groupId is required");
+    try {
+        const res = await httpGroup.get(`/${groupId}/cash-transactions`);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+// -------------------------------------------------------------
 // UPDATE GROUP
 // -------------------------------------------------------------
 export const updateGroup = async (id, data) => {
@@ -120,6 +133,47 @@ export const updateBank = async (bankId, data) => {
     try {
         const payload = sanitizePayload(data);
         const res = await httpGroup.put(`/bank/${bankId}`, payload);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+// -------------------------------------------------------------
+// CHARGE MANAGEMENT
+// -------------------------------------------------------------
+export const addGroupCharge = async (groupId, chargeData) => {
+    try {
+        const payload = sanitizePayload(chargeData);
+        const res = await httpGroup.post(`/${groupId}/charges`, payload);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+export const updateGroupCharge = async (groupId, chargeId, chargeData) => {
+    try {
+        const payload = sanitizePayload(chargeData);
+        const res = await httpGroup.put(`/${groupId}/charges/${chargeId}`, payload);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+export const deleteGroupCharge = async (groupId, chargeId) => {
+    try {
+        const res = await httpGroup.delete(`/${groupId}/charges/${chargeId}`);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+export const getGroupCharges = async (groupId) => {
+    try {
+        const res = await httpGroup.get(`/${groupId}/charges`);
         return res.data;
     } catch (err) {
         throw err.response ? err.response.data : err;

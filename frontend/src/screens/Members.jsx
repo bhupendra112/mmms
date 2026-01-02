@@ -6,6 +6,10 @@ import { getMembersByGroup, exportMemberLedger } from "../services/memberService
 import { getPendingApprovals } from "../services/approvalDB";
 import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
 
+// #region agent log
+fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 'debug-session', runId: 'pre-fix', hypothesisId: 'H3', location: 'frontend/src/screens/Members.jsx:9', message: 'Members module loaded', data: {}, timestamp: Date.now() }) }).catch(() => { });
+// #endregion
+
 const Members = () => {
   const { currentGroup, isGroupLoading } = useGroup();
   const [search, setSearch] = useState("");
@@ -16,6 +20,10 @@ const Members = () => {
   const [selectedMembers, setSelectedMembers] = useState(new Set());
   const [dateRange, setDateRange] = useState({ fromDate: "", toDate: "" });
 
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 'debug-session', runId: 'pre-fix', hypothesisId: 'H1', location: 'frontend/src/screens/Members.jsx:22', message: 'Members render entry', data: { hasGroupId: Boolean(currentGroup?.id), isGroupLoading: Boolean(isGroupLoading) }, timestamp: Date.now() }) }).catch(() => { });
+  // #endregion
+
   const handleExportMember = async (memberId, format = 'excel') => {
     try {
       setExportLoading(true);
@@ -24,13 +32,13 @@ const Members = () => {
         fromDate: dateRange.fromDate || undefined,
         toDate: dateRange.toDate || undefined,
       };
-      
+
       const response = await exportMemberLedger(filters);
-      
+
       if (response?.success && response?.data && response.data.length > 0) {
         const memberData = response.data[0];
         const memberCode = memberData.memberInfo?.code || "Member";
-        
+
         if (format === 'excel') {
           exportMemberLedgerToExcel([memberData], `Member_${memberCode}_Ledger`);
         } else {
@@ -52,17 +60,20 @@ const Members = () => {
       alert("Please select a group first");
       return;
     }
-    
+
     try {
       setExportLoading(true);
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 'debug-session', runId: 'pre-fix', hypothesisId: 'H2', location: 'frontend/src/screens/Members.jsx:71', message: 'Bulk export started', data: { format, hasFromDate: Boolean(dateRange.fromDate), hasToDate: Boolean(dateRange.toDate) }, timestamp: Date.now() }) }).catch(() => { });
+      // #endregion
       const filters = {
         groupId: currentGroup.id,
         fromDate: dateRange.fromDate || undefined,
         toDate: dateRange.toDate || undefined,
       };
-      
+
       const response = await exportMemberLedger(filters);
-      
+
       if (response?.success && response?.data && response.data.length > 0) {
         const groupName = currentGroup.name || "Group";
         if (format === 'excel') {
@@ -79,6 +90,15 @@ const Members = () => {
     } finally {
       setExportLoading(false);
     }
+  };
+
+  // NOTE: This existed in the UI but was missing in code, causing a render-time ReferenceError.
+  // For debugging, we keep this small wrapper so the screen can render and we can capture runtime logs.
+  const handleExport = () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 'debug-session', runId: 'pre-fix', hypothesisId: 'H1', location: 'frontend/src/screens/Members.jsx:99', message: 'Top Export button clicked', data: { exportLoading: Boolean(exportLoading) }, timestamp: Date.now() }) }).catch(() => { });
+    // #endregion
+    return handleBulkExport("excel");
   };
 
   useEffect(() => {
@@ -124,7 +144,7 @@ const Members = () => {
       const name = String(m.Member_Nm || "").toLowerCase();
       const code = String(m.Member_Id || "").toLowerCase();
       return name.includes(q) || code.includes(q);
-  });
+    });
   }, [members, pendingMembers, search]);
 
   return (
@@ -160,7 +180,7 @@ const Members = () => {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        
+
         {/* Date Range and Bulk Export */}
         <div className="bg-gray-50 p-4 rounded-lg">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Export Options</h3>

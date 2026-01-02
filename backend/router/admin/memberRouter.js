@@ -1,6 +1,6 @@
 import express from "express";
-import { registerMemberSchema } from "../../validation/adminValidation.js";
-import { getMemberDetail, listMembers, listMembersByGroup, registerMember, exportMemberLedger } from "../../controller/admin/memberController.js";
+import { registerMemberSchema, updateMemberSchema } from "../../validation/adminValidation.js";
+import { getMemberDetail, listMembers, listMembersByGroup, registerMember, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember } from "../../controller/admin/memberController.js";
 import upload from "../../config/multerConfig.js";
 import authAdmin from "../../middleware/authorization.js";
 
@@ -16,6 +16,25 @@ router.get("/by-group/:groupId", (req, res) => {
 
 router.get("/detail/:id", (req, res) => {
     return getMemberDetail(req, res);
+});
+
+// UPDATE MEMBER
+router.put("/update/:id", authAdmin, async (req, res) => {
+    const { error } = updateMemberSchema.validate(req.body);
+    if (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.details[0].message
+        });
+    }
+    return updateMember(req, res);
+});
+
+// DELETE MEMBER
+router.delete("/delete/:id", authAdmin, deleteMember);
+
+router.get("/financial-ledger", authAdmin, (req, res) => {
+    return getMemberFinancialLedger(req, res);
 });
 
 router.get("/export-ledger", authAdmin, (req, res) => {

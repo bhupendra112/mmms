@@ -1,16 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText } from "lucide-react";
+import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, updateGroup, updateBank } from "../../services/groupService";
-import { getMembersByGroup, exportMemberLedger } from "../../services/memberService";
+import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges } from "../../services/groupService";
+import { getMembersByGroup, exportMemberLedger, updateMember, deleteMember } from "../../services/memberService";
 import { getLoans } from "../../services/loanService";
 import { getRecoveries } from "../../services/recoveryService";
+import { getFDsByGroup } from "../../services/fdService";
 import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
 
 export default function GroupManagement() {
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGroup, setSelectedGroup] = useState(null);
-    const [activeTab, setActiveTab] = useState("overview"); // overview, members, bank, finance
+    const [activeTab, setActiveTab] = useState("overview"); // overview, members, bank, cash, finance, charges
     const [groups, setGroupsState] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
@@ -24,6 +25,9 @@ export default function GroupManagement() {
     const [bankTransactions, setBankTransactions] = useState([]);
     const [bankDetailLoading, setBankDetailLoading] = useState(false);
     const [showBankModal, setShowBankModal] = useState(false);
+    const [cashTransactions, setCashTransactions] = useState([]);
+    const [cashBalance, setCashBalance] = useState(0);
+    const [cashTransactionsLoading, setCashTransactionsLoading] = useState(false);
     const [financeData, setFinanceData] = useState({
         totalSavings: 0,
         totalLoans: 0,
@@ -41,6 +45,21 @@ export default function GroupManagement() {
     const [editGroupForm, setEditGroupForm] = useState({});
     const [editBankForm, setEditBankForm] = useState({});
     const [saving, setSaving] = useState(false);
+    const [groupCharges, setGroupCharges] = useState([]);
+    const [chargesLoading, setChargesLoading] = useState(false);
+    const [showChargeModal, setShowChargeModal] = useState(false);
+    const [editingCharge, setEditingCharge] = useState(null);
+    const [chargeForm, setChargeForm] = useState({
+        name: "",
+        amount: "",
+        type: "one-time",
+        startDate: "",
+        frequency: "yearly",
+        isActive: true
+    });
+    const [showEditMemberModal, setShowEditMemberModal] = useState(false);
+    const [editingMember, setEditingMember] = useState(null);
+    const [editMemberForm, setEditMemberForm] = useState({});
 
     const mapGroupToUI = (g) => {
         if (!g) return null;
@@ -80,6 +99,14 @@ export default function GroupManagement() {
             .finally(() => setGroupsLoading(false));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Load cash transactions when cash tab is active
+    useEffect(() => {
+        if (activeTab === "cash" && selectedGroup) {
+            loadCashTransactions(selectedGroup);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, selectedGroup]);
 
     const filteredGroups = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
@@ -133,6 +160,21 @@ export default function GroupManagement() {
             setGroupBanks([]);
         } finally {
             setBanksLoading(false);
+        }
+    };
+
+    const loadCashTransactions = async (groupId) => {
+        try {
+            setCashTransactionsLoading(true);
+            const res = await getCashTransactions(groupId);
+            setCashBalance(res?.data?.currentCashBalance || 0);
+            setCashTransactions(res?.data?.transactions || []);
+        } catch (error) {
+            console.error("Failed to load cash transactions:", error);
+            setCashTransactions([]);
+            setCashBalance(0);
+        } finally {
+            setCashTransactionsLoading(false);
         }
     };
 
@@ -193,19 +235,28 @@ export default function GroupManagement() {
             group_name: selectedGroupRaw.group_name || "",
             group_code: selectedGroupRaw.group_code || "",
             cluster_name: selectedGroupRaw.cluster_name || "",
+            cluster: selectedGroupRaw.cluster || "",
             village: selectedGroupRaw.village || "",
             no_members: selectedGroupRaw.no_members || "",
             formation_date: selectedGroupRaw.formation_date ? new Date(selectedGroupRaw.formation_date).toISOString().split('T')[0] : "",
             saving_per_member: selectedGroupRaw.saving_per_member || "",
+            Mship_Group: selectedGroupRaw.Mship_Group || "",
             membership_fees: selectedGroupRaw.membership_fees || "",
             mitan_name: selectedGroupRaw.mitan_name || "",
             meeting_date_1_day: selectedGroupRaw.meeting_date_1_day || "",
             meeting_date_2_day: selectedGroupRaw.meeting_date_2_day || "",
             meeting_date_2_time: selectedGroupRaw.meeting_date_2_time || "",
+            sahyog_rashi: selectedGroupRaw.sahyog_rashi || "",
+            shar_capital: selectedGroupRaw.shar_capital || "",
+            saving_rate: selectedGroupRaw.saving_rate || "",
+            fd_rate: selectedGroupRaw.fd_rate || "",
+            loan_rate: selectedGroupRaw.loan_rate || "",
+            opening_cash_balance: selectedGroupRaw.opening_cash_balance || "",
             govt_linked: selectedGroupRaw.govt_linked || "No",
             govt_project_type: selectedGroupRaw.govt_project_type || "",
             other: selectedGroupRaw.other || "",
             remark: selectedGroupRaw.remark || "",
+            loginEnabled: selectedGroupRaw.loginEnabled !== undefined ? selectedGroupRaw.loginEnabled : true,
         });
         setShowEditGroupModal(true);
     };
@@ -246,6 +297,89 @@ export default function GroupManagement() {
         setShowEditBankModal(true);
     };
 
+    const handleEditMember = (member) => {
+        setEditingMember(member);
+        setEditMemberForm({
+            Member_Id: member.Member_Id || "",
+            Member_Nm: member.Member_Nm || "",
+            Member_Dt: member.Member_Dt ? new Date(member.Member_Dt).toISOString().split('T')[0] : "",
+            Dt_Join: member.Dt_Join ? new Date(member.Dt_Join).toISOString().split('T')[0] : "",
+            F_H_Name: member.F_H_Name || "",
+            F_H_FatherName: member.F_H_FatherName || "",
+            Voter_Id: member.Voter_Id || "",
+            Adhar_Id: member.Adhar_Id || "",
+            Ration_Card: member.Ration_Card || "",
+            Job_Card: member.Job_Card || "",
+            Apl_Bpl_Etc: member.Apl_Bpl_Etc || "",
+            Desg: member.Desg || "Member",
+            Bank_Name: member.Bank_Name || "",
+            Br_Name: member.Br_Name || "",
+            Bank_Ac: member.Bank_Ac || "",
+            Ifsc_No: member.Ifsc_No || "",
+            Age: member.Age || "",
+            Edu_Qual: member.Edu_Qual || "",
+            Anual_Income: member.Anual_Income || "",
+            Profession: member.Profession || "",
+            Caste: member.Caste || "",
+            Religion: member.Religion || "",
+            cell_phone: member.cell_phone || "",
+            dt_birth: member.dt_birth ? new Date(member.dt_birth).toISOString().split('T')[0] : "",
+            nominee_1: member.nominee_1 || "",
+            nominee_2: member.nominee_2 || "",
+            res_add1: member.res_add1 || "",
+            res_add2: member.res_add2 || "",
+            Village: member.Village || "",
+        });
+        setShowEditMemberModal(true);
+    };
+
+    const handleSaveMember = async () => {
+        if (!editingMember?._id) {
+            alert("Member ID is missing");
+            return;
+        }
+        try {
+            setSaving(true);
+            await updateMember(editingMember._id, editMemberForm);
+            alert("Member updated successfully");
+            setShowEditMemberModal(false);
+            setEditingMember(null);
+            // Reload members
+            if (selectedGroup) {
+                await loadGroupMembers(selectedGroup);
+            }
+        } catch (error) {
+            console.error("Error updating member:", error);
+            alert(error?.response?.data?.message || "Failed to update member");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDeleteMember = async (member) => {
+        if (!member?._id) {
+            alert("Member ID is missing");
+            return;
+        }
+        if (!window.confirm(`Are you sure you want to delete member ${member.Member_Id} (${member.Member_Nm})? This action cannot be undone.`)) {
+            return;
+        }
+        try {
+            setSaving(true);
+            await deleteMember(member._id);
+            alert("Member deleted successfully");
+            // Reload members
+            if (selectedGroup) {
+                await loadGroupMembers(selectedGroup);
+            }
+        } catch (error) {
+            console.error("Error deleting member:", error);
+            alert(error?.response?.data?.message || "Failed to delete member");
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const handleSaveBank = async () => {
         if (!editingBank?._id) {
             alert("Bank ID is missing");
@@ -253,7 +387,14 @@ export default function GroupManagement() {
         }
         try {
             setSaving(true);
-            await updateBank(editingBank._id, editBankForm);
+            // Set open_bal_curr to same value as opening_balance (they are the same)
+            // Set open_ind_curr to same value as open_indicator (they are the same)
+            const bankUpdateData = {
+                ...editBankForm,
+                open_bal_curr: editBankForm.opening_balance || null,
+                open_ind_curr: editBankForm.open_indicator || null,
+            };
+            await updateBank(editingBank._id, bankUpdateData);
             alert("Bank updated successfully");
             setShowEditBankModal(false);
             setEditingBank(null);
@@ -269,13 +410,98 @@ export default function GroupManagement() {
         }
     };
 
+    const loadGroupCharges = async (groupId) => {
+        if (!groupId) return;
+        try {
+            setChargesLoading(true);
+            const res = await getGroupCharges(groupId);
+            setGroupCharges(Array.isArray(res?.data) ? res.data : []);
+        } catch (error) {
+            console.error("Error loading charges:", error);
+            setGroupCharges([]);
+        } finally {
+            setChargesLoading(false);
+        }
+    };
+
+    const handleAddCharge = () => {
+        setEditingCharge(null);
+        setChargeForm({
+            name: "",
+            amount: "",
+            type: "one-time",
+            startDate: "",
+            frequency: "yearly",
+            isActive: true
+        });
+        setShowChargeModal(true);
+    };
+
+    const handleEditCharge = (charge) => {
+        setEditingCharge(charge);
+        setChargeForm({
+            name: charge.name || "",
+            amount: charge.amount || "",
+            type: charge.type || "one-time",
+            startDate: charge.startDate ? new Date(charge.startDate).toISOString().split('T')[0] : "",
+            frequency: charge.frequency || "yearly",
+            isActive: charge.isActive !== false
+        });
+        setShowChargeModal(true);
+    };
+
+    const handleSaveCharge = async () => {
+        if (!selectedGroup) {
+            alert("Please select a group first");
+            return;
+        }
+        if (!chargeForm.name || !chargeForm.amount || !chargeForm.startDate) {
+            alert("Please fill in all required fields");
+            return;
+        }
+        if (chargeForm.type === "recurring" && !chargeForm.frequency) {
+            alert("Please select frequency for recurring charges");
+            return;
+        }
+        try {
+            setSaving(true);
+            if (editingCharge) {
+                await updateGroupCharge(selectedGroup, editingCharge._id, chargeForm);
+                alert("Charge updated successfully");
+            } else {
+                await addGroupCharge(selectedGroup, chargeForm);
+                alert("Charge added successfully");
+            }
+            setShowChargeModal(false);
+            await loadGroupCharges(selectedGroup);
+        } catch (error) {
+            console.error("Error saving charge:", error);
+            alert(error?.response?.data?.message || "Failed to save charge");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDeleteCharge = async (chargeId) => {
+        if (!selectedGroup) return;
+        if (!window.confirm("Are you sure you want to delete this charge?")) return;
+        try {
+            await deleteGroupCharge(selectedGroup, chargeId);
+            alert("Charge deleted successfully");
+            await loadGroupCharges(selectedGroup);
+        } catch (error) {
+            console.error("Error deleting charge:", error);
+            alert(error?.response?.data?.message || "Failed to delete charge");
+        }
+    };
+
     const calculateFinance = async (groupId) => {
         if (!groupId) return;
         try {
             setFinanceData((prev) => ({ ...prev, loading: true }));
 
-            // Load members, loans, and recoveries in parallel
-            const [membersRes, loansRes, recoveriesRes] = await Promise.all([
+            // Load members, loans, recoveries, and FDs in parallel
+            const [membersRes, loansRes, recoveriesRes, fdsRes] = await Promise.all([
                 getMembersByGroup(groupId).catch(() => ({ data: [] })),
                 getLoans(groupId).catch((e) => {
                     console.error("Failed to load loans:", e);
@@ -285,6 +511,10 @@ export default function GroupManagement() {
                     console.error("Failed to load recoveries:", e);
                     return { data: [] };
                 }),
+                getFDsByGroup(groupId).catch((e) => {
+                    console.error("Failed to load FDs:", e);
+                    return { data: [] };
+                }),
             ]);
 
             // Handle API response structure: services return { success, message, data: [...] }
@@ -292,53 +522,116 @@ export default function GroupManagement() {
             const members = Array.isArray(membersRes?.data) ? membersRes.data : [];
             const loans = Array.isArray(loansRes?.data) ? loansRes.data : [];
             const recoveries = Array.isArray(recoveriesRes?.data) ? recoveriesRes.data : [];
+            const fds = Array.isArray(fdsRes?.data) ? fdsRes.data : [];
 
-            // Calculate totals from members (existing member financial data)
+            // Initialize totals
             let totalSavings = 0;
             let totalLoans = 0;
             let totalFD = 0;
             let totalInterest = 0;
             let totalYogdan = 0;
+            let totalRecovery = 0;
 
+            // Calculate totals from members - start with opening balances
+            const memberMap = new Map();
             members.forEach((member) => {
-                // Opening savings
+                const memberId = member._id?.toString() || member.id?.toString();
+                memberMap.set(memberId, {
+                    openingSaving: parseFloat(member.openingSaving || 0),
+                    openingYogdan: parseFloat(member.openingYogdan || 0),
+                    currentSaving: parseFloat(member.openingSaving || 0),
+                    currentYogdan: parseFloat(member.openingYogdan || 0),
+                });
+
+                // Start with opening balances
                 totalSavings += parseFloat(member.openingSaving || 0);
-
-                // Loan details
-                if (member.loanDetails?.amount) {
-                    totalLoans += parseFloat(member.loanDetails.amount);
-                }
-                if (member.loanDetails?.overdueInterest) {
-                    totalInterest += parseFloat(member.loanDetails.overdueInterest);
-                }
-
-                // FD details
-                if (member.fdDetails?.amount) {
-                    totalFD += parseFloat(member.fdDetails.amount);
-                }
-
-                // Opening Yogdan
                 totalYogdan += parseFloat(member.openingYogdan || 0);
             });
 
-            // Add loans from LoanMaster (approved loans)
-            loans.forEach((loan) => {
-                if (loan.status === "approved") {
-                    if (loan.transactionType === "Loan") {
-                        totalLoans += parseFloat(loan.amount || 0);
-                    } else if (loan.transactionType === "Saving") {
-                        totalSavings += parseFloat(loan.amount || 0);
-                    } else if (loan.transactionType === "FD") {
-                        totalFD += parseFloat(loan.amount || 0);
+            // Aggregate from approved recoveries to get current balances
+            recoveries.forEach((recovery) => {
+                if (recovery.status === "approved" && recovery.recoveries && Array.isArray(recovery.recoveries)) {
+                    // Add to total recovery
+                    if (recovery.totals?.totalAmount) {
+                        totalRecovery += parseFloat(recovery.totals.totalAmount || 0);
                     }
+
+                    // Process each member recovery
+                    recovery.recoveries.forEach((memberRec) => {
+                        const memberId = memberRec.memberId?.toString();
+                        if (!memberId) return;
+
+                        const amounts = memberRec.amounts || {};
+
+                        // Add saving recoveries
+                        const savingAmount = parseFloat(amounts.saving || 0);
+                        if (savingAmount > 0) {
+                            totalSavings += savingAmount;
+                            if (memberMap.has(memberId)) {
+                                memberMap.get(memberId).currentSaving += savingAmount;
+                            }
+                        }
+
+                        // Add yogdan recoveries
+                        const yogdanAmount = parseFloat(amounts.yogdan || 0);
+                        if (yogdanAmount > 0) {
+                            totalYogdan += yogdanAmount;
+                            if (memberMap.has(memberId)) {
+                                memberMap.get(memberId).currentYogdan += yogdanAmount;
+                            }
+                        }
+                    });
                 }
             });
 
-            // Calculate total recovery from RecoveryMaster
-            let totalRecovery = 0;
+            // Calculate total loans from approved LoanMaster records only
+            loans.forEach((loan) => {
+                if (loan.status === "approved" && loan.transactionType === "Loan") {
+                    totalLoans += parseFloat(loan.amount || 0);
+                }
+            });
+
+            // Calculate total interest - aggregate unpaid interest from latest recovery for each member
+            // We'll use the closingBalance from the latest recovery's demandDetails
+            const latestRecoveriesByMember = new Map();
             recoveries.forEach((recovery) => {
-                if (recovery.status === "approved" && recovery.totals) {
-                    totalRecovery += parseFloat(recovery.totals.totalAmount || 0);
+                if (recovery.status === "approved" && recovery.recoveries && Array.isArray(recovery.recoveries)) {
+                    recovery.recoveries.forEach((memberRec) => {
+                        const memberId = memberRec.memberId?.toString();
+                        if (!memberId) return;
+
+                        // Get the latest recovery date for each member
+                        const recoveryDate = recovery.date ? new Date(recovery.date) : new Date(0);
+                        if (!latestRecoveriesByMember.has(memberId) ||
+                            recoveryDate > latestRecoveriesByMember.get(memberId).date) {
+                            latestRecoveriesByMember.set(memberId, {
+                                date: recoveryDate,
+                                unpaidInterest: parseFloat(memberRec.demandDetails?.interest?.unpaidDemand || 0)
+                            });
+                        }
+                    });
+                }
+            });
+
+            // Sum unpaid interest from latest recoveries
+            latestRecoveriesByMember.forEach((data) => {
+                totalInterest += data.unpaidInterest;
+            });
+
+            // If no recoveries exist, fall back to member's overdueInterest
+            if (totalInterest === 0) {
+                members.forEach((member) => {
+                    if (member.loanDetails?.overdueInterest) {
+                        totalInterest += parseFloat(member.loanDetails.overdueInterest || 0);
+                    }
+                });
+            }
+
+            // Calculate total FD from FDMaster (all FDs for the group)
+            fds.forEach((fd) => {
+                const fdAmount = parseFloat(fd.amount || 0);
+                if (fdAmount > 0) {
+                    totalFD += fdAmount;
                 }
             });
 
@@ -408,6 +701,7 @@ export default function GroupManagement() {
                                         loadGroupMembers(group.id);
                                         loadBanks(group.id);
                                         calculateFinance(group.id);
+                                        loadGroupCharges(group.id);
                                     }}
                                     className={`p-4 border-b cursor-pointer transition-colors ${selectedGroup === group.id
                                         ? "bg-blue-50 border-l-4 border-l-blue-600"
@@ -468,7 +762,9 @@ export default function GroupManagement() {
                                         { id: "overview", label: "Overview", icon: Eye },
                                         { id: "members", label: "Members", icon: Users },
                                         { id: "bank", label: "Bank Details", icon: Banknote },
+                                        { id: "cash", label: "Cash Details", icon: Wallet },
                                         { id: "finance", label: "Finance", icon: DollarSign },
+                                        { id: "charges", label: "Charges", icon: CreditCard },
                                     ].map((tab) => {
                                         const Icon = tab.icon;
                                         return (
@@ -727,12 +1023,29 @@ export default function GroupManagement() {
                                                             </span>
                                                         </td>
                                                         <td className="border p-3 text-center">
-                                                            <Link
-                                                                to={`/admin/members/${member._id}`}
-                                                                className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                                                            >
-                                                                View
-                                                            </Link>
+                                                            <div className="flex items-center gap-2 justify-center">
+                                                                <button
+                                                                    onClick={() => handleEditMember(member)}
+                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                                                >
+                                                                    <Edit size={14} />
+                                                                    Edit
+                                                                </button>
+                                                                <Link
+                                                                    to={`/admin/members/${member._id}`}
+                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                >
+                                                                    <Eye size={14} />
+                                                                    View
+                                                                </Link>
+                                                                <button
+                                                                    onClick={() => handleDeleteMember(member)}
+                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                    Delete
+                                                                </button>
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -819,6 +1132,102 @@ export default function GroupManagement() {
                                             </Link>
                                         </div>
                                     )}
+                                </div>
+                            )}
+
+                            {activeTab === "cash" && (
+                                <div className="bg-white rounded-lg shadow-md p-6">
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h3 className="text-xl font-semibold text-gray-800">Cash Details</h3>
+                                    </div>
+
+                                    {/* Current Cash Balance */}
+                                    <div className="mb-6 p-6 bg-green-50 rounded-lg border border-green-200">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <p className="text-sm text-gray-600 mb-2">Current Cash Balance</p>
+                                                <p className="text-3xl font-bold text-green-800">₹{cashBalance.toLocaleString()}</p>
+                                            </div>
+                                            <Wallet size={48} className="text-green-600" />
+                                        </div>
+                                    </div>
+
+                                    {/* Cash Transactions Table */}
+                                    <div>
+                                        <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-3 border-b">
+                                            Cash Transactions ({cashTransactions.length})
+                                        </h4>
+                                        {cashTransactionsLoading ? (
+                                            <div className="text-center py-12">
+                                                <p className="text-gray-600">Loading cash transactions...</p>
+                                            </div>
+                                        ) : cashTransactions.length > 0 ? (
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full border-collapse">
+                                                    <thead>
+                                                        <tr className="bg-gray-100">
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Date</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Direction</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Transaction Type</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Member</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Description</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Amount</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {cashTransactions.map((tx) => (
+                                                            <tr key={tx.id || tx._id} className="hover:bg-gray-50">
+                                                                <td className="border p-3 text-gray-800">
+                                                                    {tx.date
+                                                                        ? new Date(tx.date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
+                                                                        : tx.createdAt
+                                                                            ? new Date(tx.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
+                                                                            : "-"}
+                                                                </td>
+                                                                <td className="border p-3">
+                                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.direction === "incoming" || tx.isCredit
+                                                                        ? "bg-green-100 text-green-800"
+                                                                        : "bg-red-100 text-red-800"
+                                                                        }`}>
+                                                                        {tx.direction === "incoming" || tx.isCredit ? "Incoming" : "Outgoing"}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="border p-3 text-gray-800 capitalize">{tx.transactionType || "-"}</td>
+                                                                <td className="border p-3 text-gray-800">
+                                                                    {tx.memberName && tx.memberName !== "-" ? (
+                                                                        <>
+                                                                            {tx.memberName}
+                                                                            {tx.memberCode && <span className="text-xs text-gray-500 ml-1">({tx.memberCode})</span>}
+                                                                        </>
+                                                                    ) : "-"}
+                                                                </td>
+                                                                <td className="border p-3 text-gray-800">{tx.description || "-"}</td>
+                                                                <td className="border p-3 text-right font-semibold text-gray-800">
+                                                                    ₹{(tx.amount || 0).toLocaleString()}
+                                                                </td>
+                                                                <td className="border p-3">
+                                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.status === "verified" || tx.status === "completed"
+                                                                        ? "bg-green-100 text-green-800"
+                                                                        : tx.status === "pending"
+                                                                            ? "bg-yellow-100 text-yellow-800"
+                                                                            : "bg-gray-100 text-gray-800"
+                                                                        }`}>
+                                                                        {tx.status || "N/A"}
+                                                                    </span>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-12 bg-gray-50 rounded-lg">
+                                                <Wallet size={48} className="mx-auto mb-4 text-gray-400" />
+                                                <p className="text-gray-600">No cash transactions found</p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
@@ -1001,6 +1410,96 @@ export default function GroupManagement() {
                                     )}
                                 </div>
                             )}
+
+                            {activeTab === "charges" && (
+                                <div className="bg-white rounded-lg shadow-md p-6">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-xl font-semibold text-gray-800">Group Charges</h3>
+                                        <button
+                                            onClick={handleAddCharge}
+                                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                        >
+                                            <Plus size={16} />
+                                            Add Charge
+                                        </button>
+                                    </div>
+
+                                    {chargesLoading ? (
+                                        <p className="text-gray-600">Loading charges...</p>
+                                    ) : groupCharges.length > 0 ? (
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full border-collapse">
+                                                <thead>
+                                                    <tr className="bg-gray-100">
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Name</th>
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Amount</th>
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Type</th>
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Frequency</th>
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Start Date</th>
+                                                        <th className="border p-3 text-center font-semibold text-gray-700">Status</th>
+                                                        <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {groupCharges.map((charge) => (
+                                                        <tr key={charge._id} className="hover:bg-gray-50">
+                                                            <td className="border p-3 text-gray-800">{charge.name}</td>
+                                                            <td className="border p-3 text-gray-800">₹{charge.amount?.toLocaleString() || 0}</td>
+                                                            <td className="border p-3 text-gray-800">
+                                                                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${charge.type === "one-time" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"
+                                                                    }`}>
+                                                                    {charge.type === "one-time" ? "One-Time" : "Recurring"}
+                                                                </span>
+                                                            </td>
+                                                            <td className="border p-3 text-gray-800">
+                                                                {charge.type === "recurring" ? (charge.frequency === "yearly" ? "Yearly" : "Monthly") : "-"}
+                                                            </td>
+                                                            <td className="border p-3 text-gray-800">
+                                                                {charge.startDate ? new Date(charge.startDate).toLocaleDateString("en-GB") : "-"}
+                                                            </td>
+                                                            <td className="border p-3 text-center">
+                                                                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${charge.isActive !== false ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
+                                                                    }`}>
+                                                                    {charge.isActive !== false ? "Active" : "Inactive"}
+                                                                </span>
+                                                            </td>
+                                                            <td className="border p-3 text-center">
+                                                                <div className="flex items-center gap-2 justify-center">
+                                                                    <button
+                                                                        onClick={() => handleEditCharge(charge)}
+                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                    >
+                                                                        <Edit size={14} />
+                                                                        Edit
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDeleteCharge(charge._id)}
+                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+                                                                    >
+                                                                        <X size={14} />
+                                                                        Delete
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-12">
+                                            <CreditCard size={48} className="mx-auto mb-4 text-gray-400" />
+                                            <p className="text-gray-600">No charges added yet</p>
+                                            <button
+                                                onClick={handleAddCharge}
+                                                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                            >
+                                                Add First Charge
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="bg-white rounded-lg shadow-md p-12 text-center">
@@ -1072,18 +1571,15 @@ export default function GroupManagement() {
                                                     </p>
                                                 </div>
                                             )}
-                                            {selectedBank.opening_balance !== undefined && selectedBank.opening_balance !== null && (
+                                            {(selectedBank.opening_balance !== undefined && selectedBank.opening_balance !== null) ||
+                                                (selectedBank.open_bal_curr !== undefined && selectedBank.open_bal_curr !== null) ? (
                                                 <div className="p-4 bg-gray-50 rounded-lg">
                                                     <p className="text-sm text-gray-600 mb-1">Opening Balance</p>
-                                                    <p className="font-semibold text-gray-800">₹{selectedBank.opening_balance.toLocaleString()}</p>
+                                                    <p className="font-semibold text-gray-800">
+                                                        ₹{(selectedBank.opening_balance || selectedBank.open_bal_curr || 0).toLocaleString()}
+                                                    </p>
                                                 </div>
-                                            )}
-                                            {selectedBank.open_bal_curr !== undefined && selectedBank.open_bal_curr !== null && (
-                                                <div className="p-4 bg-gray-50 rounded-lg">
-                                                    <p className="text-sm text-gray-600 mb-1">Current Opening Balance</p>
-                                                    <p className="font-semibold text-gray-800">₹{selectedBank.open_bal_curr.toLocaleString()}</p>
-                                                </div>
-                                            )}
+                                            ) : null}
                                             {selectedBank.cc_limit !== undefined && selectedBank.cc_limit !== null && (
                                                 <div className="p-4 bg-gray-50 rounded-lg">
                                                     <p className="text-sm text-gray-600 mb-1">CC Limit</p>
@@ -1133,10 +1629,26 @@ export default function GroupManagement() {
                                         </div>
                                     </div>
 
+                                    {/* Current Balance */}
+                                    <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <p className="text-sm text-gray-600 mb-1">Current Balance</p>
+                                                <p className="text-2xl font-bold text-blue-800">₹{(selectedBank.current_balance || 0).toLocaleString()}</p>
+                                            </div>
+                                            {selectedBank.available_balance !== undefined && (
+                                                <div className="text-right">
+                                                    <p className="text-sm text-gray-600 mb-1">Available Balance</p>
+                                                    <p className="text-xl font-semibold text-gray-800">₹{(selectedBank.available_balance || 0).toLocaleString()}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
                                     {/* Transactions Table */}
-                                    <div>
+                                    <div className="mb-8">
                                         <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">
-                                            Transactions ({bankTransactions.length})
+                                            Bank Transactions ({bankTransactions.length})
                                         </h3>
                                         {bankTransactions.length > 0 ? (
                                             <div className="overflow-x-auto">
@@ -1144,17 +1656,17 @@ export default function GroupManagement() {
                                                     <thead>
                                                         <tr className="bg-gray-100">
                                                             <th className="border p-3 text-left font-semibold text-gray-700">Date</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Type</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Direction</th>
                                                             <th className="border p-3 text-left font-semibold text-gray-700">Transaction Type</th>
                                                             <th className="border p-3 text-left font-semibold text-gray-700">Member</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Purpose</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Description</th>
                                                             <th className="border p-3 text-right font-semibold text-gray-700">Amount</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Payment Mode</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Status</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
                                                         {bankTransactions.map((tx) => (
-                                                            <tr key={tx.id} className="hover:bg-gray-50">
+                                                            <tr key={tx.id || tx._id} className="hover:bg-gray-50">
                                                                 <td className="border p-3 text-gray-800">
                                                                     {tx.date
                                                                         ? new Date(tx.date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
@@ -1162,33 +1674,40 @@ export default function GroupManagement() {
                                                                             ? new Date(tx.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
                                                                             : "-"}
                                                                 </td>
-                                                                <td className="border p-3 text-gray-800">
-                                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.type === "Loan" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"
+                                                                <td className="border p-3">
+                                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.direction === "incoming" || tx.isCredit
+                                                                        ? "bg-green-100 text-green-800"
+                                                                        : "bg-red-100 text-red-800"
                                                                         }`}>
-                                                                        {tx.type}
+                                                                        {tx.direction === "incoming" || tx.isCredit ? "Incoming" : "Outgoing"}
                                                                     </span>
                                                                 </td>
-                                                                <td className="border p-3 text-gray-800">{tx.transactionType || "-"}</td>
+                                                                <td className="border p-3 text-gray-800 capitalize">{tx.transactionType || "-"}</td>
                                                                 <td className="border p-3 text-gray-800">
-                                                                    {tx.memberName || "-"}
-                                                                    {tx.memberCode && <span className="text-xs text-gray-500 ml-1">({tx.memberCode})</span>}
-                                                                    {tx.isGroupLoan && <span className="text-xs text-blue-600 ml-1">[Group]</span>}
+                                                                    {tx.memberName && tx.memberName !== "-" ? (
+                                                                        <>
+                                                                            {tx.memberName}
+                                                                            {tx.memberCode && <span className="text-xs text-gray-500 ml-1">({tx.memberCode})</span>}
+                                                                        </>
+                                                                    ) : "-"}
                                                                 </td>
-                                                                <td className="border p-3 text-gray-800">{tx.purpose || "-"}</td>
-                                                                <td className="border p-3 text-right font-semibold text-gray-800">₹{tx.amount?.toLocaleString() || "0"}</td>
-                                                                <td className="border p-3 text-gray-800">{tx.paymentMode || "-"}</td>
+                                                                <td className="border p-3 text-gray-800">{tx.description || "-"}</td>
+                                                                <td className="border p-3 text-right font-semibold text-gray-800">
+                                                                    ₹{(tx.amount || 0).toLocaleString()}
+                                                                </td>
+                                                                <td className="border p-3">
+                                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.status === "verified" || tx.status === "completed"
+                                                                        ? "bg-green-100 text-green-800"
+                                                                        : tx.status === "pending"
+                                                                            ? "bg-yellow-100 text-yellow-800"
+                                                                            : "bg-gray-100 text-gray-800"
+                                                                        }`}>
+                                                                        {tx.status || "N/A"}
+                                                                    </span>
+                                                                </td>
                                                             </tr>
                                                         ))}
                                                     </tbody>
-                                                    <tfoot>
-                                                        <tr className="bg-gray-100 font-semibold">
-                                                            <td colSpan={5} className="border p-3 text-right text-gray-700">Total:</td>
-                                                            <td className="border p-3 text-right text-gray-800">
-                                                                ₹{bankTransactions.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0).toLocaleString()}
-                                                            </td>
-                                                            <td className="border p-3"></td>
-                                                        </tr>
-                                                    </tfoot>
                                                 </table>
                                             </div>
                                         ) : (
@@ -1261,6 +1780,33 @@ export default function GroupManagement() {
                                     />
                                 </div>
                                 <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">No. of Members</label>
+                                    <input
+                                        type="number"
+                                        value={editGroupForm.no_members || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, no_members: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Formation Date</label>
+                                    <input
+                                        type="date"
+                                        value={editGroupForm.formation_date || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, formation_date: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Mitan Name</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.mitan_name || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, mitan_name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
                                     <label className="block text-sm font-semibold text-gray-700 mb-1">Saving Per Member</label>
                                     <input
                                         type="number"
@@ -1300,6 +1846,144 @@ export default function GroupManagement() {
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                     />
                                 </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Meeting Date 2 (Time)</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.meeting_date_2_time || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, meeting_date_2_time: e.target.value })}
+                                        placeholder="e.g., 10:00 AM"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Cluster</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.cluster || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, cluster: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Membership Group Amount (Mship_Group)</label>
+                                    <input
+                                        type="number"
+                                        value={editGroupForm.Mship_Group || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, Mship_Group: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Sahyog Rashi</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.sahyog_rashi || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, sahyog_rashi: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Share Capital</label>
+                                    <input
+                                        type="text"
+                                        value={editGroupForm.shar_capital || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, shar_capital: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Saving Rate (%)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={editGroupForm.saving_rate || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, saving_rate: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">FD Rate (%)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={editGroupForm.fd_rate || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, fd_rate: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Loan Rate (%)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={editGroupForm.loan_rate || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, loan_rate: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Opening Cash Balance</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={editGroupForm.opening_cash_balance || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, opening_cash_balance: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Govt Linked</label>
+                                    <select
+                                        value={editGroupForm.govt_linked || "No"}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, govt_linked: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="Yes">Yes</option>
+                                        <option value="No">No</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Govt Project Type</label>
+                                    <select
+                                        value={editGroupForm.govt_project_type || ""}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, govt_project_type: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="">None</option>
+                                        <option value="NRLM">NRLM</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Login Enabled</label>
+                                    <select
+                                        value={editGroupForm.loginEnabled ? "true" : "false"}
+                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, loginEnabled: e.target.value === "true" })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="true">Enabled</option>
+                                        <option value="false">Disabled</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Other</label>
+                                <textarea
+                                    value={editGroupForm.other || ""}
+                                    onChange={(e) => setEditGroupForm({ ...editGroupForm, other: e.target.value })}
+                                    rows="2"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Remark</label>
+                                <textarea
+                                    value={editGroupForm.remark || ""}
+                                    onChange={(e) => setEditGroupForm({ ...editGroupForm, remark: e.target.value })}
+                                    rows="2"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
                             </div>
                             <div className="flex gap-4">
                                 <button
@@ -1311,6 +1995,328 @@ export default function GroupManagement() {
                                 </button>
                                 <button
                                     onClick={() => setShowEditGroupModal(false)}
+                                    className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Member Modal */}
+            {showEditMemberModal && editingMember && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">Edit Member</h3>
+                            <button
+                                onClick={() => {
+                                    setShowEditMemberModal(false);
+                                    setEditingMember(null);
+                                }}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Member ID *</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Member_Id || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Member_Id: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Member Name *</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Member_Nm || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Member_Nm: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Member Date</label>
+                                    <input
+                                        type="date"
+                                        value={editMemberForm.Member_Dt || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Member_Dt: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Date of Joining</label>
+                                    <input
+                                        type="date"
+                                        value={editMemberForm.Dt_Join || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Dt_Join: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Father/Husband Name</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.F_H_Name || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, F_H_Name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Father/Husband Father Name</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.F_H_FatherName || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, F_H_FatherName: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Voter ID</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Voter_Id || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Voter_Id: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Aadhar ID</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Adhar_Id || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Adhar_Id: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Ration Card</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Ration_Card || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Ration_Card: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Job Card</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Job_Card || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Job_Card: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">APL/BPL</label>
+                                    <select
+                                        value={editMemberForm.Apl_Bpl_Etc || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Apl_Bpl_Etc: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="">Select</option>
+                                        <option value="APL">APL</option>
+                                        <option value="BPL">BPL</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Designation</label>
+                                    <select
+                                        value={editMemberForm.Desg || "Member"}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Desg: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="Member">Member</option>
+                                        <option value="President">President</option>
+                                        <option value="Secretary">Secretary</option>
+                                        <option value="Treasurer">Treasurer</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Bank Name</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Bank_Name || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Bank_Name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Branch Name</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Br_Name || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Br_Name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Bank Account</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Bank_Ac || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Bank_Ac: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">IFSC Code</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Ifsc_No || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Ifsc_No: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Age</label>
+                                    <input
+                                        type="number"
+                                        value={editMemberForm.Age || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Age: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Education Qualification</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Edu_Qual || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Edu_Qual: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Annual Income</label>
+                                    <input
+                                        type="number"
+                                        value={editMemberForm.Anual_Income || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Anual_Income: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Profession</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Profession || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Profession: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Caste</label>
+                                    <select
+                                        value={editMemberForm.Caste || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Caste: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="">Select</option>
+                                        <option value="GEN">GEN</option>
+                                        <option value="OBC">OBC</option>
+                                        <option value="SC">SC</option>
+                                        <option value="ST">ST</option>
+                                        <option value="MINORITY">MINORITY</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Religion</label>
+                                    <select
+                                        value={editMemberForm.Religion || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Religion: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="">Select</option>
+                                        <option value="Hindu">Hindu</option>
+                                        <option value="Muslim">Muslim</option>
+                                        <option value="Christian">Christian</option>
+                                        <option value="Sikh">Sikh</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Cell Phone</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.cell_phone || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, cell_phone: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Date of Birth</label>
+                                    <input
+                                        type="date"
+                                        value={editMemberForm.dt_birth || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, dt_birth: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Nominee 1</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.nominee_1 || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, nominee_1: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Nominee 2</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.nominee_2 || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, nominee_2: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Residential Address 1</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.res_add1 || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, res_add1: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Residential Address 2</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.res_add2 || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, res_add2: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Village</label>
+                                    <input
+                                        type="text"
+                                        value={editMemberForm.Village || ""}
+                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Village: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleSaveMember}
+                                    disabled={saving}
+                                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                    {saving ? "Saving..." : "Save Changes"}
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowEditMemberModal(false);
+                                        setEditingMember(null);
+                                    }}
                                     className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                                 >
                                     Cancel
@@ -1410,6 +2416,108 @@ export default function GroupManagement() {
                                         setShowEditBankModal(false);
                                         setEditingBank(null);
                                     }}
+                                    className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Charge Modal */}
+            {showChargeModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">
+                                {editingCharge ? "Edit Charge" : "Add Charge"}
+                            </h3>
+                            <button
+                                onClick={() => setShowChargeModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Charge Name *</label>
+                                <input
+                                    type="text"
+                                    value={chargeForm.name}
+                                    onChange={(e) => setChargeForm({ ...chargeForm, name: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="e.g., Registration Fee, Annual Fee"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Amount *</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={chargeForm.amount}
+                                    onChange={(e) => setChargeForm({ ...chargeForm, amount: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="0.00"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Charge Type *</label>
+                                <select
+                                    value={chargeForm.type}
+                                    onChange={(e) => setChargeForm({ ...chargeForm, type: e.target.value, frequency: e.target.value === "one-time" ? undefined : chargeForm.frequency })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="one-time">One-Time</option>
+                                    <option value="recurring">Recurring</option>
+                                </select>
+                            </div>
+                            {chargeForm.type === "recurring" && (
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Frequency *</label>
+                                    <select
+                                        value={chargeForm.frequency}
+                                        onChange={(e) => setChargeForm({ ...chargeForm, frequency: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="yearly">Yearly</option>
+                                        <option value="monthly">Monthly</option>
+                                    </select>
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Start Date *</label>
+                                <input
+                                    type="date"
+                                    value={chargeForm.startDate}
+                                    onChange={(e) => setChargeForm({ ...chargeForm, startDate: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="flex items-center gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={chargeForm.isActive}
+                                        onChange={(e) => setChargeForm({ ...chargeForm, isActive: e.target.checked })}
+                                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    />
+                                    <span className="text-sm font-semibold text-gray-700">Active</span>
+                                </label>
+                            </div>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleSaveCharge}
+                                    disabled={saving}
+                                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                    {saving ? "Saving..." : editingCharge ? "Update Charge" : "Add Charge"}
+                                </button>
+                                <button
+                                    onClick={() => setShowChargeModal(false)}
                                     className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                                 >
                                     Cancel

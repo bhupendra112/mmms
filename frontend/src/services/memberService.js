@@ -49,6 +49,15 @@ export const getMemberDetail = async (id) => {
   return res.data;
 };
 
+export const getMemberFinancialLedger = async (memberId, filters = {}) => {
+  const params = { memberId };
+  if (filters.fromDate) params.fromDate = filters.fromDate;
+  if (filters.toDate) params.toDate = filters.toDate;
+  
+  const res = await httpMember.get("/financial-ledger", { params });
+  return res.data;
+};
+
 export const exportMemberLedger = async (filters = {}) => {
   const params = {};
   if (filters.memberId) params.memberId = filters.memberId;
@@ -57,6 +66,17 @@ export const exportMemberLedger = async (filters = {}) => {
   if (filters.toDate) params.toDate = filters.toDate;
   
   const res = await httpMember.get("/export-ledger", { params });
+  return res.data;
+};
+
+export const updateMember = async (memberId, data) => {
+  const payload = sanitizePayload(data);
+  const res = await httpMember.put(`/update/${memberId}`, payload);
+  return res.data;
+};
+
+export const deleteMember = async (memberId) => {
+  const res = await httpMember.delete(`/delete/${memberId}`);
   return res.data;
 };
 

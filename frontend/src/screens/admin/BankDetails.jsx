@@ -135,6 +135,10 @@ export default function BankDetails() {
             const bankPayload = {
                 ...form,
                 group_id: selectedGroup.id,
+                // Set open_bal_curr to same value as opening_balance (they are the same)
+                open_bal_curr: form.opening_balance || form.open_bal_curr || null,
+                // Set open_ind_curr to same value as open_indicator (they are the same)
+                open_ind_curr: form.open_indicator || form.open_ind_curr || null,
             };
             await createBank(bankPayload);
             alert("Bank details saved successfully!");
@@ -369,14 +373,6 @@ export default function BankDetails() {
                         />
                         <Input
                             type="number"
-                            label="Open Balance Current"
-                            name="open_bal_curr"
-                            value={form.open_bal_curr}
-                            handleChange={handleChange}
-                            placeholder="Enter current balance"
-                        />
-                        <Input
-                            type="number"
                             label="CC Limit"
                             name="cc_limit"
                             value={form.cc_limit}
@@ -397,13 +393,6 @@ export default function BankDetails() {
                             value={form.open_indicator}
                             handleChange={handleChange}
                             placeholder="Enter open indicator"
-                        />
-                        <Input
-                            label="Open Indicator Current"
-                            name="open_ind_curr"
-                            value={form.open_ind_curr}
-                            handleChange={handleChange}
-                            placeholder="Enter current indicator"
                         />
                     </FormSection>
 

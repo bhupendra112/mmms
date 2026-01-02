@@ -6,6 +6,10 @@ import LoanMaster from "./LoanMaster.js";
 import RecoveryMaster from "./RecoveryMaster.js";
 import FDMaster from "./FDMaster.js";
 import PaymentMaster from "./PaymentMaster.js";
+import ExpenseMaster from "./ExpenseMaster.js";
+import BankTransaction from "./BankTransaction.js";
+import CashTransaction from "./CashTransaction.js";
+import CashAmount from "./CashAmount.js";
 
 export {
     Admin,
@@ -15,5 +19,9 @@ export {
     LoanMaster,
     RecoveryMaster,
     FDMaster,
-    PaymentMaster
+    PaymentMaster,
+    ExpenseMaster,
+    BankTransaction,
+    CashTransaction,
+    CashAmount
 };
