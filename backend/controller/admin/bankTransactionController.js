@@ -2,6 +2,7 @@ import apiResponse from "../../utility/apiResponse.js";
 import BankTransaction from "../../model/BankTransaction.js";
 import BankMaster from "../../model/BankMaster.js";
 import { GroupMaster } from "../../model/index.js";
+import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 
 // Create bank transaction receipt
 export const createBankTransaction = async (req, res) => {
@@ -19,11 +20,15 @@ export const createBankTransaction = async (req, res) => {
             return apiResponse.error(res, "Bank not found", 404);
         }
 
-        // Verify group exists
-        const group = await GroupMaster.findById(payload.groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
+        const accessCheck = await verifyGroupAccess(payload.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        const group = accessCheck.group;
 
         // Parse date
         let transactionDate = payload.date ? new Date(payload.date) : new Date();

@@ -1,6 +1,7 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
-import { GroupMaster, Member, LoanMaster, RecoveryMaster, FDMaster, PaymentMaster } from "../../model/index.js";
+import { GroupMaster, Member, LoanMaster, RecoveryMaster, FDMaster, PaymentMaster, MemberRevenueDemand } from "../../model/index.js";
+import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
 
 export const registerMember = async (req, res) => {
     try {
@@ -16,7 +17,17 @@ export const registerMember = async (req, res) => {
         // Handle file uploads - multer adds files to req.files
         // When using upload.fields(), req.files is an object with field names as keys
         if (req.files) {
-            const fileFields = ['Voter_Id_File', 'Adhar_Id_File', 'Ration_Card_File', 'Job_Card_File'];
+            const fileFields = [
+                'Member_Photo',
+                'Voter_Id_File',
+                'Adhar_Id_File',
+                'Bank_File',
+                'Ration_Card_File',
+                'Job_Card_File',
+                'Adhar_Id_Pati_File',
+                'Voter_Id_Pati_File',
+                'Bank_Pati_File'
+            ];
 
             // req.files is an object: { fieldName: [file1, file2, ...] }
             Object.keys(req.files).forEach(fieldName => {
@@ -49,7 +60,7 @@ export const registerMember = async (req, res) => {
         }
 
         // Parse numeric fields that come as strings from FormData
-        const numericFields = ['Age', 'Anual_Income', 'openingSaving', 'openingYogdan'];
+        const numericFields = ['Age', 'Age_Pati', 'Anual_Income', 'openingSaving', 'openingYogdan'];
         numericFields.forEach(field => {
             if (payload[field] !== undefined && payload[field] !== null && payload[field] !== '') {
                 const numValue = Number(payload[field]);
@@ -60,7 +71,7 @@ export const registerMember = async (req, res) => {
         });
 
         // Parse date fields that come as strings from FormData
-        const dateFields = ['Member_Dt', 'Dt_Join', 'dt_birth'];
+        const dateFields = ['Member_Dt', 'Dt_Join', 'dt_birth', 'dt_birth_pati'];
         dateFields.forEach(field => {
             if (payload[field] && typeof payload[field] === 'string' && payload[field] !== '') {
                 const dateValue = new Date(payload[field]);
@@ -119,16 +130,37 @@ export const registerMember = async (req, res) => {
                     payload.loanDetails.overdueInterest = numValue;
                 }
             }
+            if (payload.loanDetails.loanPaid !== undefined && payload.loanDetails.loanPaid !== null && payload.loanDetails.loanPaid !== '') {
+                const numValue = Number(payload.loanDetails.loanPaid);
+                if (!isNaN(numValue)) {
+                    payload.loanDetails.loanPaid = numValue;
+                }
+            }
         }
 
-        // Resolve group first (preferred: group_id)
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Resolve group first (preferred: group_id) and verify it belongs to admin's place
         let groupDoc = null;
         if (payload.group_id) {
-            groupDoc = await GroupMaster.findById(payload.group_id);
+            const accessCheck = await verifyGroupAccess(payload.group_id, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         } else if (payload.group_code) {
-            groupDoc = await GroupMaster.findOne({ group_code: payload.group_code });
+            const accessCheck = await verifyGroupAccessByCode(payload.group_code, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         } else if (payload.Group_Name) {
-            groupDoc = await GroupMaster.findOne({ group_name: payload.Group_Name });
+            const accessCheck = await verifyGroupAccessByName(payload.Group_Name, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         }
 
         if (!groupDoc) {
@@ -166,6 +198,24 @@ export const registerMember = async (req, res) => {
                     payload.loanDetails.installment_amount = installmentValue;
                 }
             }
+            // Calculate installment_amount if loan amount and time_period are provided but installment_amount is not
+            if (!payload.loanDetails.installment_amount && payload.loanDetails.amount && payload.loanDetails.time_period) {
+                const loanAmount = Number(payload.loanDetails.amount);
+                const timePeriodMonths = Number(payload.loanDetails.time_period);
+                if (!isNaN(loanAmount) && !isNaN(timePeriodMonths) && timePeriodMonths > 0) {
+                    payload.loanDetails.installment_amount = loanAmount / timePeriodMonths;
+                }
+            }
+        }
+
+        // Parse fdDetails time_period if it exists (convert from years to months)
+        if (payload.fdDetails && typeof payload.fdDetails === 'object') {
+            if (payload.fdDetails.time_period !== undefined && payload.fdDetails.time_period !== null && payload.fdDetails.time_period !== '') {
+                const timePeriodYears = Number(payload.fdDetails.time_period);
+                if (!isNaN(timePeriodYears) && timePeriodYears > 0) {
+                    payload.fdDetails.time_period = Math.round(timePeriodYears * 12); // Convert years to months
+                }
+            }
         }
 
         // Create new Member
@@ -183,10 +233,229 @@ export const registerMember = async (req, res) => {
                 group: memberData.group,
                 hasLoanDetails: !!memberData.loanDetails,
                 hasFdDetails: !!memberData.fdDetails,
+                isExistingMember: memberData.isExistingMember,
             });
         }
 
         const member = await Member.create(memberData);
+
+        // For existing members: Create LoanMaster and FDMaster entries
+        if (member.isExistingMember) {
+            // Create LoanMaster entry if member has existing loan
+            if (member.loanDetails && member.loanDetails.amount > 0) {
+                const totalLoanAmount = member.loanDetails.amount || 0;
+                const loanPaid = member.loanDetails.loanPaid || 0;
+                const loanDate = member.loanDetails.loanDate || member.Dt_Join || member.createdAt || new Date();
+                const totalTimePeriod = member.loanDetails.time_period || null;
+
+                // Calculate principal amount = total amount - paid amount (remaining loan amount)
+                const principalAmount = Math.max(0, totalLoanAmount - loanPaid);
+
+                // Calculate elapsed time from loan date to current date (registration date)
+                const currentDate = member.Dt_Join || member.createdAt || new Date();
+                const loanDateObj = new Date(loanDate);
+                const currentDateObj = new Date(currentDate);
+
+                // Calculate months difference between loan date and current date
+                let elapsedMonths = 0;
+                if (loanDateObj < currentDateObj) {
+                    const yearDiff = currentDateObj.getFullYear() - loanDateObj.getFullYear();
+                    const monthDiff = currentDateObj.getMonth() - loanDateObj.getMonth();
+                    elapsedMonths = yearDiff * 12 + monthDiff;
+                    // Add 1 month if the day of current date >= day of loan date (round up)
+                    if (currentDateObj.getDate() >= loanDateObj.getDate()) {
+                        elapsedMonths += 1;
+                    }
+                }
+
+                // Calculate remaining time period = total time period - elapsed time
+                let remainingTimePeriod = totalTimePeriod;
+                if (totalTimePeriod && totalTimePeriod > 0 && elapsedMonths > 0) {
+                    remainingTimePeriod = Math.max(1, totalTimePeriod - elapsedMonths); // Minimum 1 month remaining
+                } else if (!remainingTimePeriod || remainingTimePeriod <= 0) {
+                    // If no time period provided, calculate based on remaining amount and original installment
+                    // Fallback: assume remaining time period based on remaining amount
+                    remainingTimePeriod = totalTimePeriod || 12; // Default to 12 months if not provided
+                }
+
+                // Recalculate installment amount based on remaining principal and remaining time period
+                let installmentAmount = 0;
+                if (principalAmount > 0 && remainingTimePeriod > 0) {
+                    installmentAmount = principalAmount / remainingTimePeriod;
+                } else if (member.loanDetails.installment_amount) {
+                    // Fallback to original installment amount if calculation fails
+                    installmentAmount = member.loanDetails.installment_amount;
+                }
+
+                // Get loan rate snapshot from group
+                const loanRateSnapshot = groupDoc.loan_rate || null;
+
+                // Use openingYogdan from member registration (for existing members)
+                const yogdanAmount = member.openingYogdan || 0;
+
+                // Create LoanMaster entry for existing member's loan
+                // Store principal amount (remaining amount) in LoanMaster
+                // Note: member.loanDetails.amount keeps the total loan amount for reference
+                // member.loanDetails.loanPaid keeps the amount paid before registration
+                // The recovery system will calculate: total loan = LoanMaster.amount (principal) + member.loanPaid (pre-registration) + recovery payments (post-registration)
+                await LoanMaster.create({
+                    groupId: groupDoc._id,
+                    groupName: groupDoc.group_name,
+                    groupCode: groupDoc.group_code,
+                    memberId: member._id.toString(),
+                    memberCode: member.Member_Id,
+                    memberName: member.Member_Nm,
+                    transactionType: "Loan",
+                    paymentMode: "Cash", // Default for existing loans
+                    purpose: "Existing Loan from Registration",
+                    amount: principalAmount, // Store principal (remaining) amount = total - paid
+                    time_period: remainingTimePeriod, // Store remaining time period = total - elapsed
+                    installment_amount: installmentAmount, // Recalculated based on principal and remaining time period
+                    loan_rate_snapshot: loanRateSnapshot,
+                    yogdanAmount: yogdanAmount,
+                    yogdanCollected: false, // Will be collected in first recovery
+                    date: loanDate,
+                    status: "approved", // Existing loans are auto-approved
+                    createdBy: req.user?.id || "admin",
+                });
+
+                // Keep member.loanDetails.amount as total loan amount for reference
+                // Update installment_amount and time_period to reflect current state (remaining)
+                // This helps with backward compatibility and reference
+                member.loanDetails.installment_amount = installmentAmount;
+                // Note: We keep member.loanDetails.amount as total, and member.loanDetails.loanPaid as paid amount
+                // The recovery calculations use LoanMaster.amount (principal) + member.loanPaid + recovery payments
+                await member.save();
+
+                console.log(`[MEMBER_REGISTRATION] Created LoanMaster entry for existing member ${member.Member_Id}:`, {
+                    totalLoanAmount,
+                    loanPaid,
+                    principalAmount,
+                    loanDate,
+                    totalTimePeriod,
+                    elapsedMonths,
+                    remainingTimePeriod,
+                    installmentAmount,
+                    loanRateSnapshot
+                });
+            }
+
+            // Create FDMaster entry if member has existing FD
+            if (member.fdDetails && member.fdDetails.amount > 0) {
+                const fdAmount = member.fdDetails.amount || 0;
+                const fdDate = member.fdDetails.date || member.Dt_Join || member.createdAt || new Date();
+                let maturityDate = member.fdDetails.maturityDate || null;
+
+                // Parse maturity date if it's a string
+                if (maturityDate && typeof maturityDate === 'string') {
+                    maturityDate = new Date(maturityDate);
+                }
+
+                // Calculate maturity date if not provided but time_period exists
+                let calculatedMaturityDate = maturityDate && !isNaN(maturityDate.getTime()) ? maturityDate : null;
+                const timePeriodMonths = member.fdDetails.time_period || 12; // Default to 12 months
+
+                if (!calculatedMaturityDate) {
+                    calculatedMaturityDate = new Date(fdDate);
+                    calculatedMaturityDate.setMonth(calculatedMaturityDate.getMonth() + timePeriodMonths);
+                }
+
+                // Get FD rate snapshot from group (required field)
+                const fdRateSnapshot = groupDoc.fd_rate || 0;
+                if (!fdRateSnapshot || fdRateSnapshot <= 0) {
+                    console.warn(`[MEMBER_REGISTRATION] Warning: Group ${groupDoc.group_name} has no fd_rate set. Using 0 for FD snapshot.`);
+                }
+
+                // Calculate interest amount if provided in fdDetails, otherwise calculate it
+                let interestAmount = member.fdDetails?.interest || 0;
+                if (!interestAmount && fdRateSnapshot > 0 && timePeriodMonths > 0) {
+                    // Calculate interest: (Principal * Rate * Time) / (100 * 12)
+                    // Time is in months, so divide by 12 to get years
+                    const timeInYears = timePeriodMonths / 12;
+                    interestAmount = (fdAmount * fdRateSnapshot * timeInYears) / 100;
+                    interestAmount = Math.round(interestAmount * 100) / 100; // Round to 2 decimal places
+                }
+
+                // Calculate maturity amount = principal + interest
+                const maturityAmount = fdAmount + interestAmount;
+
+                // Create FDMaster entry for existing member's FD
+                await FDMaster.create({
+                    memberId: member._id,
+                    memberCode: member.Member_Id,
+                    memberName: member.Member_Nm,
+                    groupId: groupDoc._id,
+                    groupName: groupDoc.group_name,
+                    groupCode: groupDoc.group_code,
+                    amount: fdAmount,
+                    time_period: timePeriodMonths,
+                    fd_rate_snapshot: fdRateSnapshot,
+                    date: fdDate,
+                    maturityDate: calculatedMaturityDate,
+                    interestAmount: interestAmount,
+                    maturityAmount: maturityAmount,
+                    status: "active",
+                    createdBy: req.user?.id || "admin",
+                });
+
+                console.log(`[MEMBER_REGISTRATION] Created FDMaster entry for existing member ${member.Member_Id}:`, {
+                    fdAmount,
+                    fdDate,
+                    maturityDate: calculatedMaturityDate,
+                    timePeriodMonths,
+                    fdRateSnapshot
+                });
+            }
+        }
+
+        // Create revenue demand records for NEW members joining outside April
+        // New members (not isExistingMember) who join outside April must pay membership fees twice:
+        // 1. Immediately on registration (or first recovery)
+        // 2. Again in April as part of annual demand
+        if (!member.isExistingMember) {
+            const joinDate = member.Dt_Join || member.Member_Dt || member.createdAt || new Date();
+            const joinMonth = new Date(joinDate).getMonth(); // 0-indexed (0 = January, 3 = April)
+            const APRIL_MONTH = 3;
+
+            // If member joined outside April, create revenue demand records
+            if (joinMonth !== APRIL_MONTH) {
+                const currentYear = new Date(joinDate).getFullYear();
+                const financialYear = `${currentYear}-${String(currentYear + 1).slice(-2)}`; // e.g., "2024-25"
+
+                const membershipFees = groupDoc.membership_fees || 0;
+                const membershipGroup = groupDoc.Mship_Group || 0;
+
+                // Create revenue demand for membership fees SHG
+                if (membershipFees > 0) {
+                    await MemberRevenueDemand.create({
+                        memberId: member._id,
+                        groupId: groupDoc._id,
+                        revenueType: "membership_fees_shg",
+                        amount: membershipFees,
+                        demandDate: new Date(joinDate),
+                        isAnnualDemand: false, // This is registration demand, not annual
+                        year: financialYear,
+                        notes: `New member registration demand (joined outside April)`,
+                        isPaid: false,
+                    });
+                }
+
+                // Create revenue demand for membership fees Group
+                if (membershipGroup > 0) {
+                    await MemberRevenueDemand.create({
+                        memberId: member._id,
+                        groupId: groupDoc._id,
+                        revenueType: "membership_fees_group",
+                        amount: membershipGroup,
+                        demandDate: new Date(joinDate),
+                        isAnnualDemand: false, // This is registration demand, not annual
+                        year: financialYear,
+                        notes: `New member registration demand (joined outside April)`,
+                        isPaid: false,
+                    });
+                }
+            }
+        }
 
         return apiResponse.success(res, message.MEMBER_REGISTERED, member);
 
@@ -209,6 +478,16 @@ export const registerMember = async (req, res) => {
 export const listMembersByGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+        }
+
         const members = await Member.find({ group: groupId })
             .sort({ createdAt: -1 })
             .lean();
@@ -234,6 +513,19 @@ export const getMemberDetail = async (req, res) => {
         const { id } = req.params;
         const member = await Member.findById(id).populate("group").lean();
         if (!member) return apiResponse.error(res, "Member not found", 404);
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify member's group belongs to admin's place
+        if (member.group) {
+            const groupId = member.group._id || member.group;
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "You don't have access to this member's group", 403);
+            }
+        }
+
         return apiResponse.success(res, "Member detail fetched successfully", member);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
@@ -251,6 +543,18 @@ export const updateMember = async (req, res) => {
         const member = await Member.findById(id);
         if (!member) {
             return apiResponse.error(res, "Member not found", 404);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify member's group belongs to admin's place
+        if (member.group) {
+            const groupId = member.group._id || member.group;
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "You don't have access to this member's group", 403);
+            }
         }
 
         // Parse date fields
@@ -302,29 +606,41 @@ export const deleteMember = async (req, res) => {
             return apiResponse.error(res, "Member not found", 404);
         }
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify member's group belongs to admin's place
+        if (member.group) {
+            const groupId = member.group._id || member.group;
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "You don't have access to this member's group", 403);
+            }
+        }
+
         // Check for dependencies - check if member has any active loans, FDs, or recoveries
-        const activeLoans = await LoanMaster.find({ 
-            memberId: id, 
-            status: { $ne: "completed" } 
+        const activeLoans = await LoanMaster.find({
+            memberId: id,
+            status: { $ne: "completed" }
         }).lean();
 
         if (activeLoans && activeLoans.length > 0) {
             return apiResponse.error(
-                res, 
-                `Cannot delete member. Member has ${activeLoans.length} active loan(s). Please complete or cancel the loans first.`, 
+                res,
+                `Cannot delete member. Member has ${activeLoans.length} active loan(s). Please complete or cancel the loans first.`,
                 400
             );
         }
 
-        const activeFDs = await FDMaster.find({ 
-            memberId: id, 
-            status: { $ne: "matured" } 
+        const activeFDs = await FDMaster.find({
+            memberId: id,
+            status: { $ne: "matured" }
         }).lean();
 
         if (activeFDs && activeFDs.length > 0) {
             return apiResponse.error(
-                res, 
-                `Cannot delete member. Member has ${activeFDs.length} active FD(s). Please mature or cancel the FDs first.`, 
+                res,
+                `Cannot delete member. Member has ${activeFDs.length} active FD(s). Please mature or cancel the FDs first.`,
                 400
             );
         }
@@ -340,6 +656,15 @@ export const deleteMember = async (req, res) => {
 
 // Helper function to calculate member ledger
 const calculateMemberLedger = async (member, fromDate, toDate) => {
+    console.log('[MEMBER_LEDGER] Starting calculateMemberLedger', {
+        memberId: member._id,
+        memberCode: member.Member_Id,
+        memberName: member.Member_Nm,
+        fromDate,
+        toDate,
+        isExistingMember: member.isExistingMember
+    });
+
     const entries = [];
     const memberId = member._id.toString();
     const groupId = member.group?._id || member.group;
@@ -348,14 +673,22 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
     const group = await GroupMaster.findById(groupId).lean();
     const loanRate = group?.loan_rate || 0;
 
+    console.log('[MEMBER_LEDGER] Group details', {
+        groupId,
+        loanRate,
+        groupName: group?.group_name
+    });
     // Initialize running balances
+    // Start with opening savings only (FD and Loan come from FDMaster and LoanMaster)
     let runningSavings = member.openingSaving || 0;
-    let runningLoan = member.loanDetails?.amount || 0;
-    let runningFD = member.fdDetails?.amount || 0;
-    let runningInterest = member.loanDetails?.overdueInterest || 0;
-    let runningYogdan = member.openingYogdan || 0;
+    let runningLoan = 0; // Loans come from LoanMaster only
+    let runningFD = 0; // FDs come from FDMaster only
+    // For existing members, include overdueInterest from member.loanDetails (until paid)
+    // Yogdan comes from LoanMaster only
+    let runningInterest = member.isExistingMember && member.loanDetails?.overdueInterest ? member.loanDetails.overdueInterest : 0;
+    let runningYogdanDue = 0; // Track cumulative yogdan due (1% of loans given) - from LoanMaster only
+    let runningYogdanPaid = 0; // Track cumulative yogdan paid (recoveries not in ledger)
     let cumulativeLoanDisbursed = 0; // Track cumulative total loan disbursed (given to member)
-    let lastRecoveryDate = null; // Track last recovery date for interest calculation
 
     // Date range filter
     let dateFilter = {};
@@ -375,95 +708,58 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
 
     // Add opening balance entry if member is existing member
     if (member.isExistingMember) {
+        const openingOverdueInterest = member.loanDetails?.overdueInterest || 0;
+        console.log('[MEMBER_LEDGER] Processing existing member opening balances', {
+            openingSaving: member.openingSaving,
+            overdueInterest: openingOverdueInterest,
+            note: 'Opening savings and overdue interest included - FD and Loan come from FDMaster and LoanMaster'
+        });
+
         const openingDate = member.Dt_Join || member.createdAt || new Date();
 
-        // Add opening loan to cumulative if it exists (for same date opening)
-        if (member.loanDetails?.amount > 0) {
-            const openingLoanDate = member.loanDetails?.loanDate;
-            if (!openingLoanDate || new Date(openingLoanDate).getTime() === new Date(openingDate).getTime()) {
-                cumulativeLoanDisbursed += member.loanDetails.amount;
-            }
-        }
-
-        // Opening Saving entry
-        if (member.openingSaving > 0) {
-            entries.push({
+        // Opening Saving entry (only for existing members) - Opening savings and overdue interest
+        // FD and Loan should come only from FDMaster and LoanMaster respectively
+        // Overdue interest comes from member.loanDetails for existing members (until paid)
+        if (member.openingSaving > 0 || openingOverdueInterest > 0) {
+            const openingEntry = {
                 date: openingDate,
                 receipt: "Opening",
-                savingsDeposit: member.openingSaving,
+                savingsDeposit: member.openingSaving, // Only opening savings
                 savingsWithdraw: 0,
                 savingsBalance: runningSavings,
-                loanPaid: cumulativeLoanDisbursed, // Include opening loan if same date
+                loanPaid: 0, // Loans come from LoanMaster only
                 loanRecovered: 0,
-                loanBalance: runningLoan,
-                fdDeposit: member.fdDetails?.amount || 0,
+                loanBalance: 0, // Will be calculated from LoanMaster entries
+                fdDeposit: 0, // FDs come from FDMaster only
                 fdWithdraw: 0,
-                fdBalance: runningFD,
-                interestDue: member.loanDetails?.overdueInterest || 0,
+                fdBalance: 0, // Will be calculated from FDMaster entries
+                interestDue: 0, // Overdue interest from member.loanDetails (for existing members)
                 interestPaid: 0,
-                yogdan: member.openingYogdan || 0,
+                yogdanDue: 0, // Yogdan calculated from loans in LoanMaster
+                yogdanPaid: 0, // Yogdan paid from recoveries (but recoveries not in ledger)
                 other: 0,
-            });
+            };
+
+            entries.push(openingEntry);
+            console.log('[MEMBER_LEDGER] Added opening entry (savings and overdue interest)', openingEntry);
         }
 
-        // FD entry (if different date from opening)
-        if (member.fdDetails?.amount > 0 && member.fdDetails?.date &&
-            new Date(member.fdDetails.date).getTime() !== new Date(openingDate).getTime()) {
-            entries.push({
-                date: member.fdDetails.date,
-                receipt: "FD Opening",
-                savingsDeposit: 0,
-                savingsWithdraw: 0,
-                savingsBalance: runningSavings,
-                loanPaid: cumulativeLoanDisbursed, // Use cumulative loan disbursed (includes opening loan if same date)
-                loanRecovered: 0,
-                loanBalance: runningLoan,
-                fdDeposit: member.fdDetails.amount,
-                fdWithdraw: 0,
-                fdBalance: runningFD,
-                interestDue: runningInterest,
-                interestPaid: 0,
-                yogdan: 0,
-                other: 0,
-            });
-        }
-
-        // Loan entry (if different date from opening)
-        if (member.loanDetails?.amount > 0 && member.loanDetails?.loanDate &&
-            new Date(member.loanDetails.loanDate).getTime() !== new Date(openingDate).getTime()) {
-            cumulativeLoanDisbursed += member.loanDetails.amount; // Add opening loan to cumulative
-            entries.push({
-                date: member.loanDetails.loanDate,
-                receipt: "Loan Taken",
-                savingsDeposit: 0,
-                savingsWithdraw: 0,
-                savingsBalance: runningSavings,
-                loanPaid: member.loanDetails.amount, // Show only the loan amount for this transaction
-                loanRecovered: 0,
-                loanBalance: runningLoan,
-                loanAmount: member.loanDetails.amount, // Store actual loan amount for recalculation
-                fdDeposit: 0,
-                fdWithdraw: 0,
-                fdBalance: runningFD,
-                interestDue: runningInterest,
-                interestPaid: 0,
-                yogdan: 0,
-                other: 0,
-            });
-        } else if (member.loanDetails?.amount > 0) {
-            // Opening loan on same date as opening balance
-            cumulativeLoanDisbursed += member.loanDetails.amount; // Add opening loan to cumulative
-        }
+        // REMOVED: FD Opening entry - FDs should only come from FDMaster
+        // REMOVED: Loan Taken entry - Loans should only come from LoanMaster
     }
 
-    // Fetch loans
+    // Fetch loans from LoanMaster
     const loanFilter = { memberId: memberId };
     if (Object.keys(dateFilter).length > 0) {
         loanFilter.date = dateFilter;
     }
     const loans = await LoanMaster.find(loanFilter).sort({ date: 1 }).lean();
+    console.log('[MEMBER_LEDGER] Found loans from LoanMaster', {
+        count: loans.length,
+        loans: loans.map(l => ({ id: l._id, date: l.date, type: l.transactionType, amount: l.amount }))
+    });
 
-    // Add loan transactions
+    // Add loan transactions from LoanMaster
     loans.forEach((loan) => {
         const loanDate = loan.date || loan.createdAt;
         const amount = parseFloat(loan.amount || 0);
@@ -471,6 +767,10 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
         if (loan.transactionType === "Loan") {
             runningLoan += amount;
             cumulativeLoanDisbursed += amount;
+            // Use yogdanAmount directly from LoanMaster instead of calculating
+            const yogdanDue = Math.round((parseFloat(loan.yogdanAmount || 0)) * 100) / 100; // Round to 2 decimal places
+            console.log('[MEMBER Yogdan Due]', yogdanDue);
+            runningYogdanDue += yogdanDue;
             entries.push({
                 date: loanDate,
                 receipt: `Loan - ${loan.purpose || "N/A"}`,
@@ -486,8 +786,16 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 fdBalance: runningFD,
                 interestDue: runningInterest,
                 interestPaid: 0,
-                yogdan: 0,
+                yogdanDue: yogdanDue, // Use yogdanAmount from LoanMaster
+                yogdanPaid: 0,
                 other: 0,
+            });
+            console.log('[MEMBER_LEDGER] Added loan entry with yogdan', {
+                date: loanDate,
+                loanAmount: amount,
+                yogdanAmount: loan.yogdanAmount,
+                yogdanDue: yogdanDue,
+                runningYogdanDue: runningYogdanDue
             });
         } else if (loan.transactionType === "Saving") {
             runningSavings += amount;
@@ -505,7 +813,8 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 fdBalance: runningFD,
                 interestDue: runningInterest,
                 interestPaid: 0,
-                yogdan: 0,
+                yogdanDue: 0,
+                yogdanPaid: 0,
                 other: 0,
             });
         } else if (loan.transactionType === "FD") {
@@ -524,7 +833,8 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 fdBalance: runningFD,
                 interestDue: runningInterest,
                 interestPaid: 0,
-                yogdan: 0,
+                yogdanDue: 0,
+                yogdanPaid: 0,
                 other: 0,
             });
         }
@@ -536,8 +846,12 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
         fdFilter.date = dateFilter;
     }
     const fds = await FDMaster.find(fdFilter).sort({ date: 1 }).lean();
+    console.log('[MEMBER_LEDGER] Found FDs from FDMaster', {
+        count: fds.length,
+        fds: fds.map(f => ({ id: f._id, date: f.date, amount: f.amount, status: f.status }))
+    });
 
-    // Add FD transactions
+    // Add FD transactions from FDMaster
     fds.forEach((fd) => {
         const fdDate = fd.date || fd.createdAt;
         const amount = parseFloat(fd.amount || 0);
@@ -558,29 +872,42 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 fdBalance: runningFD,
                 interestDue: runningInterest,
                 interestPaid: 0,
-                yogdan: 0,
+                yogdanDue: 0,
+                yogdanPaid: 0,
                 other: 0,
             });
         }
     });
 
-    // Fetch payments (saving withdrawals and FD maturities)
+    // Fetch PaymentMaster entries for savings withdrawal and FD maturity
     const paymentFilter = {
         memberId: memberId,
-        status: { $in: ["approved", "completed"] }
+        status: { $in: ["approved", "completed"] } // Only approved/completed payments
     };
     if (Object.keys(dateFilter).length > 0) {
         paymentFilter.paymentDate = dateFilter;
     }
-    const payments = await PaymentMaster.find(paymentFilter).sort({ paymentDate: 1 }).lean();
+    const payments = await PaymentMaster.find(paymentFilter)
+        .sort({ paymentDate: 1 })
+        .lean();
+    console.log('[MEMBER_LEDGER] Found PaymentMaster entries', {
+        count: payments.length,
+        payments: payments.map(p => ({
+            id: p._id,
+            date: p.paymentDate,
+            type: p.paymentType,
+            amount: p.amount,
+            status: p.status
+        }))
+    });
 
-    // Add payment transactions
+    // Add PaymentMaster entries (savings withdrawal and FD maturity)
     payments.forEach((payment) => {
         const paymentDate = payment.paymentDate || payment.createdAt;
         const amount = parseFloat(payment.amount || 0);
-        const paymentType = payment.paymentType;
 
-        if (paymentType === "saving_withdrawal") {
+        if (payment.paymentType === "saving_withdrawal" && amount > 0) {
+            // Savings withdrawal - reduces savings balance
             runningSavings = Math.max(0, runningSavings - amount);
             entries.push({
                 date: paymentDate,
@@ -588,7 +915,7 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 savingsDeposit: 0,
                 savingsWithdraw: amount,
                 savingsBalance: runningSavings,
-                loanPaid: 0, // No loan disbursed in Savings Withdrawal entries
+                loanPaid: 0,
                 loanRecovered: 0,
                 loanBalance: runningLoan,
                 fdDeposit: 0,
@@ -596,10 +923,18 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 fdBalance: runningFD,
                 interestDue: runningInterest,
                 interestPaid: 0,
-                yogdan: 0,
+                yogdanDue: 0,
+                yogdanPaid: 0,
                 other: 0,
+                paymentMode: payment.paymentMode || "Bank",
             });
-        } else if (paymentType === "fd_maturity") {
+            console.log('[MEMBER_LEDGER] Added savings withdrawal entry', {
+                date: paymentDate,
+                amount,
+                newSavingsBalance: runningSavings
+            });
+        } else if (payment.paymentType === "fd_maturity" && amount > 0) {
+            // FD maturity - reduces FD balance
             runningFD = Math.max(0, runningFD - amount);
             entries.push({
                 date: paymentDate,
@@ -607,7 +942,7 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 savingsDeposit: 0,
                 savingsWithdraw: 0,
                 savingsBalance: runningSavings,
-                loanPaid: 0, // No loan disbursed in FD Maturity entries
+                loanPaid: 0,
                 loanRecovered: 0,
                 loanBalance: runningLoan,
                 fdDeposit: 0,
@@ -615,126 +950,144 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
                 fdBalance: runningFD,
                 interestDue: runningInterest,
                 interestPaid: 0,
-                yogdan: 0,
+                yogdanDue: 0,
+                yogdanPaid: 0,
                 other: 0,
+                paymentMode: payment.paymentMode || "Bank",
+            });
+            console.log('[MEMBER_LEDGER] Added FD maturity entry', {
+                date: paymentDate,
+                amount,
+                newFDBalance: runningFD
             });
         }
     });
 
-    // Fetch recoveries
+    console.log('[MEMBER_LEDGER] Added PaymentMaster entries', {
+        totalPaymentsProcessed: payments.length,
+        paymentEntriesAdded: entries.filter(e => e.receipt === "Savings Withdrawal" || e.receipt === "FD Maturity").length
+    });
+
+    // Add RecoveryMaster entries for saving recovery details
     const recoveryFilter = { groupId: groupId };
     if (Object.keys(dateFilter).length > 0) {
         recoveryFilter.date = dateFilter;
     }
     const recoveries = await RecoveryMaster.find(recoveryFilter).sort({ date: 1 }).lean();
+    console.log('[MEMBER_LEDGER] Found RecoveryMaster entries', {
+        count: recoveries.length,
+        recoveries: recoveries.map(r => ({ id: r._id, date: r.date, memberCount: r.recoveries?.length || 0 }))
+    });
 
-    // Add recovery transactions
+    // Process recovery entries for this member (all recovery amounts)
     recoveries.forEach((recovery) => {
-        if (!recovery.recoveries || !Array.isArray(recovery.recoveries)) return;
-
-        const memberRecovery = recovery.recoveries.find(
-            r => r.memberId?.toString() === memberId || r.memberId === memberId
+        const recoveryDate = recovery.date || recovery.createdAt;
+        const memberRecovery = recovery.recoveries?.find(
+            r => r.memberId === memberId || r.memberId?.toString() === memberId
         );
 
-        if (memberRecovery) {
-            const recoveryDate = recovery.date;
-            const amounts = memberRecovery.amounts || {};
-            const saving = parseFloat(amounts.saving || 0);
-            const loan = parseFloat(amounts.loan || 0);
-            const fd = parseFloat(amounts.fd || 0);
-            const interest = parseFloat(amounts.interest || 0);
-            const yogdan = parseFloat(amounts.yogdan || 0);
-            const other = parseFloat(amounts.other || 0);
-            const charges = amounts.charges || {}; // Get charges from recovery
+        if (memberRecovery && memberRecovery.amounts) {
+            const amounts = memberRecovery.amounts;
+            const savingAmount = parseFloat(amounts.saving || 0);
+            const loanAmount = parseFloat(amounts.loan || 0);
+            const interestAmount = parseFloat(amounts.interest || 0);
+            const yogdanAmount = parseFloat(amounts.yogdan || 0);
+            const fdAmount = parseFloat(amounts.fd || 0);
+            const otherAmount = parseFloat(amounts.other || 0);
+            const charges = amounts.charges || {};
+            const totalAmount = parseFloat(memberRecovery.total || 0);
 
-            runningSavings += saving;
-            const loanAmount = parseFloat(loan || 0);
-            runningLoan = Math.max(0, runningLoan - loanAmount);
+            // Check if there's any amount to include
+            const hasAnyAmount = savingAmount > 0 || loanAmount > 0 || interestAmount > 0 ||
+                yogdanAmount > 0 || fdAmount > 0 || otherAmount > 0 ||
+                Object.keys(charges).length > 0;
 
-            runningFD += fd;
+            if (hasAnyAmount) {
+                console.log('[MEMBER_LEDGER] Processing recovery entry', {
+                    date: recoveryDate,
+                    memberId,
+                    savingAmount,
+                    loanAmount,
+                    interestAmount,
+                    yogdanAmount,
+                    fdAmount,
+                    otherAmount,
+                    charges,
+                    totalAmount,
+                    recoveryId: recovery._id
+                });
 
-            // Calculate date-wise interest from last recovery date (or loan date) to current recovery date
-            let interestAccrued = 0;
-            if (runningLoan > 0 && loanRate > 0) {
-                // Find the loan date (from member loanDetails or first loan entry)
-                const loanDate = member.loanDetails?.loanDate ? new Date(member.loanDetails.loanDate) : null;
+                // Store due amounts BEFORE payment (for display in receipt)
+                const interestDueBeforePayment = runningInterest;
+                const yogdanDueBeforePayment = runningYogdanDue;
 
-                if (loanDate) {
-                    // Calculate interest from last recovery date (or loan date if first recovery) to current recovery date
-                    const fromDate = lastRecoveryDate || loanDate;
-                    const toDate = new Date(recoveryDate);
+                // Update running balances
+                runningSavings += savingAmount;
+                runningLoan = Math.max(0, runningLoan - loanAmount);
+                runningInterest = Math.max(0, runningInterest - interestAmount);
+                runningFD += fdAmount;
+                runningYogdanPaid += yogdanAmount;
 
-                    const timeDiff = toDate.getTime() - fromDate.getTime();
-                    const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-                    if (daysDiff > 0) {
-                        // Check if it's a leap year
-                        const isLeapYear = (year) => {
-                            return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-                        };
-                        const daysInYear = isLeapYear(toDate.getFullYear()) ? 366 : 365;
-
-                        // Daily interest: (loanAmount * rate / 100 / daysInYear) * numberOfDays
-                        // Use runningLoan (outstanding loan balance) for interest calculation
-                        interestAccrued = (runningLoan * loanRate / 100 / daysInYear) * daysDiff;
-                        interestAccrued = Math.round(interestAccrued * 100) / 100;
-                    }
-                }
+                entries.push({
+                    date: recoveryDate,
+                    receipt: "Recovery",
+                    savingsDeposit: savingAmount,
+                    savingsWithdraw: 0,
+                    savingsBalance: runningSavings,
+                    loanPaid: 0,
+                    loanRecovered: loanAmount,
+                    loanBalance: runningLoan,
+                    fdDeposit: fdAmount,
+                    fdWithdraw: 0,
+                    fdBalance: runningFD,
+                    interestDue: interestDueBeforePayment,
+                    interestPaid: interestAmount,
+                    yogdanDue: yogdanDueBeforePayment,
+                    yogdanPaid: yogdanAmount,
+                    other: otherAmount,
+                    charges: charges,
+                    paymentMode: memberRecovery.paymentMode?.cash ? "Cash" : (memberRecovery.paymentMode?.online ? "Online" : ""),
+                });
             }
-
-            // Interest due should show the total interest due before payment
-            const interestBeforeRecovery = runningInterest + interestAccrued;
-            runningInterest = Math.max(0, runningInterest + interestAccrued - interest);
-            runningYogdan += yogdan;
-            lastRecoveryDate = new Date(recoveryDate); // Update last recovery date
-
-            entries.push({
-                date: recoveryDate,
-                receipt: "Recovery",
-                savingsDeposit: saving,
-                savingsWithdraw: 0,
-                savingsBalance: runningSavings,
-                loanPaid: 0, // No loan disbursed in Recovery entries
-                loanRecovered: loanAmount, // Amount recovered from member in this transaction
-                loanBalance: runningLoan,
-                fdDeposit: fd,
-                fdWithdraw: 0,
-                fdBalance: runningFD,
-                interestDue: interestBeforeRecovery, // Total interest due before payment (including accrued)
-                interestPaid: interest,
-                yogdan: yogdan,
-                charges: charges, // Include charges in ledger entry
-                other: other,
-            });
         }
+    });
+
+    console.log('[MEMBER_LEDGER] Added RecoveryMaster entries', {
+        totalRecoveriesProcessed: recoveries.length,
+        recoveryEntriesAdded: entries.filter(e => e.receipt === "Recovery").length
     });
 
     // Sort by date
     entries.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-    // Recalculate running balances in chronological order to ensure accuracy
-    let recalcSavings = member.openingSaving || 0;
-    let recalcLoan = member.loanDetails?.amount || 0;
-    let recalcFD = member.fdDetails?.amount || 0;
-    let recalcInterest = member.loanDetails?.overdueInterest || 0;
-    let recalcCumulativeLoanDisbursed = 0;
-    let recalcLastRecoveryDate = null; // Track last recovery date for interest calculation
+    console.log('[MEMBER_LEDGER] Total entries before recalculation', {
+        count: entries.length,
+        entries: entries.map(e => ({ date: e.date, receipt: e.receipt, savingsDeposit: e.savingsDeposit, loanPaid: e.loanPaid, fdDeposit: e.fdDeposit }))
+    });
 
-    // Add opening loan to cumulative if it exists
-    if (member.loanDetails?.amount > 0) {
-        recalcCumulativeLoanDisbursed += member.loanDetails.amount;
-    }
+    // Recalculate running balances in chronological order to ensure accuracy
+    let recalcSavings = member.openingSaving || 0; // Start with opening savings only
+    let recalcLoan = 0; // Loans come from LoanMaster only
+    let recalcFD = 0; // FDs come from FDMaster only
+    // For existing members, start with overdueInterest from member.loanDetails (until paid)
+    // Yogdan comes from LoanMaster only
+    let recalcInterest = member.isExistingMember && member.loanDetails?.overdueInterest ? member.loanDetails.overdueInterest : 0;
+    let recalcYogdanDue = 0; // Track cumulative yogdan due (from LoanMaster only)
+    let recalcYogdanPaid = 0; // Track cumulative yogdan paid
+    let recalcCumulativeLoanDisbursed = 0;
 
     entries.forEach((entry) => {
-        if (entry.receipt === "Opening" || entry.receipt === "FD Opening") {
+        if (entry.receipt === "Opening") {
+            // Opening entry contains opening savings and overdue interest (FD and Loan come from FDMaster and LoanMaster)
             if (entry.savingsDeposit > 0) {
                 recalcSavings = entry.savingsDeposit;
             }
-            if (entry.fdDeposit > 0) {
-                recalcFD = entry.fdDeposit;
+            // Overdue interest is included in opening entry for existing members
+            if (entry.interestDue > 0) {
+                recalcInterest = entry.interestDue;
             }
-            entry.loanPaid = 0; // No loan disbursed in opening/FD opening entries
-        } else if (entry.receipt === "Loan Taken" || entry.receipt.startsWith("Loan -")) {
+            entry.loanPaid = 0; // No loan disbursed in opening entry
+        } else if (entry.receipt.startsWith("Loan -")) {
             // Use stored loanAmount if available, otherwise calculate from balance difference
             let loanAmount = entry.loanAmount;
             if (!loanAmount || loanAmount <= 0) {
@@ -743,14 +1096,19 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
             if (loanAmount > 0) {
                 recalcLoan += loanAmount;
                 recalcCumulativeLoanDisbursed += loanAmount;
-            } else if (entry.receipt === "Loan Taken") {
-                // For opening loan, loanAmount might be 0, so use entry.loanBalance directly
-                if (entry.loanBalance > recalcLoan) {
-                    const diff = entry.loanBalance - recalcLoan;
-                    recalcLoan = entry.loanBalance;
-                    recalcCumulativeLoanDisbursed += diff;
-                    loanAmount = diff; // Set loanAmount for display
+                // Use yogdanDue from entry (already set from LoanMaster.yogdanAmount) - don't recalculate
+                // If yogdanDue is not set in entry, it means it wasn't set from LoanMaster, so use 0
+                if (entry.yogdanDue === undefined || entry.yogdanDue === null) {
+                    entry.yogdanDue = 0; // Default to 0 if not set from LoanMaster
                 }
+                recalcYogdanDue += entry.yogdanDue;
+                console.log('[MEMBER_LEDGER] Using yogdanDue from LoanMaster for loan entry', {
+                    date: entry.date,
+                    receipt: entry.receipt,
+                    loanAmount,
+                    yogdanDue: entry.yogdanDue,
+                    recalcYogdanDue
+                });
             }
             entry.loanPaid = loanAmount; // Show only the loan amount for this transaction, not cumulative
         } else if (entry.receipt.startsWith("FD -")) {
@@ -760,39 +1118,25 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
             recalcSavings += entry.savingsDeposit;
             entry.loanPaid = 0; // No loan disbursed in Saving entries
         } else if (entry.receipt === "Recovery") {
+            // Handle full recovery entry with all amounts
             recalcSavings += entry.savingsDeposit || 0;
             recalcLoan = Math.max(0, recalcLoan - (entry.loanRecovered || 0));
+            recalcInterest = Math.max(0, recalcInterest - (entry.interestPaid || 0));
             recalcFD += entry.fdDeposit || 0;
-
-            // Calculate date-wise interest from last recovery (or loan date) to current recovery
-            let interestAccrued = 0;
-            if (recalcLoan > 0 && loanRate > 0) {
-                // Find loan date
-                const loanDate = member.loanDetails?.loanDate ? new Date(member.loanDetails.loanDate) : null;
-                if (loanDate) {
-                    const fromDate = recalcLastRecoveryDate || loanDate;
-                    const toDate = new Date(entry.date);
-
-                    const timeDiff = toDate.getTime() - fromDate.getTime();
-                    const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-                    if (daysDiff > 0) {
-                        const isLeapYear = (year) => {
-                            return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-                        };
-                        const daysInYear = isLeapYear(toDate.getFullYear()) ? 366 : 365;
-
-                        // Calculate interest on outstanding loan balance
-                        interestAccrued = (recalcLoan * loanRate / 100 / daysInYear) * daysDiff;
-                        interestAccrued = Math.round(interestAccrued * 100) / 100;
-                    }
-                }
-            }
-
-            // Update interest: add accrued interest, then subtract paid interest
-            recalcInterest = Math.max(0, recalcInterest + interestAccrued - (entry.interestPaid || 0));
-            recalcLastRecoveryDate = new Date(entry.date);
+            recalcYogdanPaid += entry.yogdanPaid || 0;
             entry.loanPaid = 0; // No loan disbursed in Recovery entries
+            console.log('[MEMBER_LEDGER] Recalculating recovery entry', {
+                date: entry.date,
+                savingsDeposit: entry.savingsDeposit,
+                loanRecovered: entry.loanRecovered,
+                interestPaid: entry.interestPaid,
+                yogdanPaid: entry.yogdanPaid,
+                fdDeposit: entry.fdDeposit,
+                newSavingsBalance: recalcSavings,
+                newLoanBalance: recalcLoan,
+                newInterestBalance: recalcInterest,
+                newFDBalance: recalcFD
+            });
         } else if (entry.receipt === "Savings Withdrawal") {
             recalcSavings = Math.max(0, recalcSavings - (entry.savingsWithdraw || 0));
             entry.loanPaid = 0; // No loan disbursed in Savings Withdrawal entries
@@ -801,11 +1145,61 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
             entry.loanPaid = 0; // No loan disbursed in FD Maturity entries
         }
 
-        // Update entry balances
-        entry.savingsBalance = recalcSavings;
-        entry.loanBalance = recalcLoan;
-        entry.fdBalance = recalcFD;
-        entry.interestDue = recalcInterest;
+        // Update entry balances    
+        entry.savingsBalance = Math.round(recalcSavings * 100) / 100;
+        entry.loanBalance = Math.round(recalcLoan * 100) / 100;
+        entry.fdBalance = Math.round(recalcFD * 100) / 100;
+        // For recovery entries, preserve the original interestDue and yogdanDue (set before payment)
+        // For other entries, use recalculated values
+        if (entry.receipt === "Recovery") {
+            // Preserve original due amounts (set before payment) - just round them
+            entry.interestDue = Math.round((entry.interestDue || 0) * 100) / 100;
+            entry.yogdanDue = Math.round((entry.yogdanDue || 0) * 100) / 100;
+        } else {
+            // For non-recovery entries, use recalculated values
+            entry.interestDue = Math.round(recalcInterest * 100) / 100;
+            // Ensure yogdanDue is set for all entries and properly formatted
+            if (entry.yogdanDue === undefined || entry.yogdanDue === null) {
+                entry.yogdanDue = 0;
+            } else {
+                entry.yogdanDue = Math.round(entry.yogdanDue * 100) / 100; // Round to 2 decimal places
+            }
+        }
+        if (entry.yogdanPaid === undefined || entry.yogdanPaid === null) {
+            entry.yogdanPaid = 0;
+        } else {
+            entry.yogdanPaid = Math.round(entry.yogdanPaid * 100) / 100; // Round to 2 decimal places
+        }
+
+        // Log each entry after recalculation for debugging
+        console.log('[MEMBER_LEDGER] Entry after recalculation', {
+            date: entry.date,
+            receipt: entry.receipt,
+            savingsBalance: entry.savingsBalance,
+            loanBalance: entry.loanBalance,
+            fdBalance: entry.fdBalance,
+            interestDue: entry.interestDue,
+            yogdanDue: entry.yogdanDue,
+            yogdanPaid: entry.yogdanPaid,
+            loanPaid: entry.loanPaid,
+            loanRecovered: entry.loanRecovered,
+            savingsDeposit: entry.savingsDeposit,
+            savingsWithdraw: entry.savingsWithdraw,
+            fdDeposit: entry.fdDeposit,
+            fdWithdraw: entry.fdWithdraw,
+            interestPaid: entry.interestPaid,
+            charges: entry.charges
+        });
+    });
+
+    console.log('[MEMBER_LEDGER] After recalculation', {
+        finalSavings: recalcSavings,
+        finalLoan: recalcLoan,
+        finalFD: recalcFD,
+        finalInterest: recalcInterest,
+        finalYogdanDue: recalcYogdanDue,
+        finalYogdanPaid: recalcYogdanPaid,
+        totalEntries: entries.length
     });
 
     // Calculate summary
@@ -817,7 +1211,11 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
         totalFdDeposit: entries.reduce((sum, e) => sum + (e.fdDeposit || 0), 0),
         totalFdWithdraw: entries.reduce((sum, e) => sum + (e.fdWithdraw || 0), 0),
         totalInterestPaid: entries.reduce((sum, e) => sum + (e.interestPaid || 0), 0),
-        totalYogdan: entries.reduce((sum, e) => sum + (e.yogdan || 0), 0),
+        // totalYogdanDue should only count from loan entries (not recovery entries) to get total from all loans
+        totalYogdanDue: entries
+            .filter(e => e.receipt && e.receipt.startsWith("Loan -"))
+            .reduce((sum, e) => sum + (e.yogdanDue || 0), 0),
+        totalYogdanPaid: entries.reduce((sum, e) => sum + (e.yogdanPaid || 0), 0),
         totalCharges: entries.reduce((sum, e) => {
             if (e.charges) {
                 return sum + Object.values(e.charges).reduce((chargeSum, amount) => chargeSum + (amount || 0), 0);
@@ -826,16 +1224,28 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
         }, 0),
         totalOther: entries.reduce((sum, e) => sum + (e.other || 0), 0),
         openingSavings: member.openingSaving || 0,
-        openingLoan: member.loanDetails?.amount || 0,
-        openingFD: member.fdDetails?.amount || 0,
-        openingInterest: member.loanDetails?.overdueInterest || 0,
-        openingYogdan: member.openingYogdan || 0,
+        openingLoan: 0, // Loans come from LoanMaster only
+        openingFD: 0, // FDs come from FDMaster only
+        openingInterest: member.isExistingMember && member.loanDetails?.overdueInterest ? member.loanDetails.overdueInterest : 0, // Overdue interest from member.loanDetails (for existing members)
+        openingYogdan: 0, // Yogdan calculated from loans in LoanMaster
         closingSavings: recalcSavings,
         closingLoan: recalcLoan,
         closingFD: recalcFD,
-        closingInterest: recalcInterest,
-        closingYogdan: runningYogdan, // Yogdan is only added in recoveries, not recalculated
+        closingInterest: recalcInterest, // Already calculated as remaining after payments
+        closingYogdanDue: Math.max(0, recalcYogdanDue - recalcYogdanPaid), // Remaining yogdan due after payments
+        closingYogdanPaid: recalcYogdanPaid,
     };
+
+    console.log('[MEMBER_LEDGER] Final summary', {
+        totalEntries: entries.length,
+        summary: {
+            totalSavingsDeposit: summary.totalSavingsDeposit,
+            totalLoanPaid: summary.totalLoanPaid,
+            totalFdDeposit: summary.totalFdDeposit,
+            totalYogdanDue: summary.totalYogdanDue,
+            totalYogdanPaid: summary.totalYogdanPaid
+        }
+    });
 
     return {
         entries,
@@ -860,6 +1270,31 @@ export const getMemberFinancialLedger = async (req, res) => {
 
         // Calculate ledger
         const ledger = await calculateMemberLedger(member, fromDate, toDate);
+
+        // Log the final ledger data before sending
+        console.log('[MEMBER_LEDGER] Final ledger data being sent to frontend', {
+            memberId: member._id,
+            memberCode: member.Member_Id,
+            entryCount: ledger.entries.length,
+            entries: ledger.entries.map(e => ({
+                date: e.date,
+                receipt: e.receipt,
+                savingsBalance: e.savingsBalance,
+                loanBalance: e.loanBalance,
+                fdBalance: e.fdBalance,
+                interestDue: e.interestDue,
+                yogdanDue: e.yogdanDue,
+                yogdanPaid: e.yogdanPaid,
+                loanPaid: e.loanPaid,
+                loanRecovered: e.loanRecovered,
+                savingsDeposit: e.savingsDeposit,
+                savingsWithdraw: e.savingsWithdraw,
+                fdDeposit: e.fdDeposit,
+                fdWithdraw: e.fdWithdraw,
+                interestPaid: e.interestPaid
+            })),
+            summary: ledger.summary
+        });
 
         return apiResponse.success(res, "Member financial ledger fetched successfully", {
             memberInfo: {

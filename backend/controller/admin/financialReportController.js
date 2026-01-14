@@ -1,5 +1,6 @@
 import apiResponse from "../../utility/apiResponse.js";
 import { GroupMaster, RecoveryMaster, LoanMaster, FDMaster, ExpenseMaster, PaymentMaster, BankTransaction, CashTransaction } from "../../model/index.js";
+import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 
 /**
  * Get Receipt & Payment Account for a date range
@@ -12,10 +13,15 @@ export const getReceiptPaymentAccount = async (req, res) => {
             return apiResponse.error(res, "groupId is required", 400);
         }
 
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        const group = accessCheck.group;
 
         // Parse dates - if not provided, use full range (no date filtering)
         let from = null;
@@ -545,10 +551,15 @@ export const getIncomeExpenseAccount = async (req, res) => {
             return apiResponse.error(res, "groupId is required", 400);
         }
 
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        const group = accessCheck.group;
 
         // Parse dates - if not provided, use full range (no date filtering)
         let from = null;
@@ -671,10 +682,15 @@ export const getBalanceSheet = async (req, res) => {
             return apiResponse.error(res, "asOnDate is required", 400);
         }
 
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        const group = accessCheck.group;
 
         // Parse date
         const asOn = new Date(asOnDate);

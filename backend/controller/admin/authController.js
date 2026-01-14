@@ -15,11 +15,17 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1d";
 // =========================
 export const registerAdmin = async (req, res) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, email, password, place } = req.body;
 
-        // Check if admin exists
-        const exists = await Admin.findOne({ email });
-        if (exists) return apiResponse.error(res, message.ADMIN_EXISTS);
+        // Check if admin exists with same email
+        const existsEmail = await Admin.findOne({ email });
+        if (existsEmail) return apiResponse.error(res, message.ADMIN_EXISTS);
+
+        // Check if place already exists (place must be unique)
+        const existsPlace = await Admin.findOne({ place });
+        if (existsPlace) {
+            return apiResponse.error(res, `Admin with place "${place}" already exists. Place must be unique.`, 400);
+        }
 
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
@@ -29,10 +35,11 @@ export const registerAdmin = async (req, res) => {
             name,
             email,
             password: hashedPassword,
+            place,
         });
 
-        // Generate JWT token
-        const token = jwt.sign({ id: admin._id, email: admin.email },
+        // Generate JWT token with place
+        const token = jwt.sign({ id: admin._id, email: admin.email, place: admin.place },
             JWT_SECRET, { expiresIn: JWT_EXPIRES_IN }
         );
 
@@ -40,6 +47,13 @@ export const registerAdmin = async (req, res) => {
         return apiResponse.success(res, message.ADMIN_REGISTERED, { admin, token });
 
     } catch (error) {
+        if (error.code === 11000) {
+            // Handle duplicate key error
+            const field = Object.keys(error.keyPattern)[0];
+            if (field === 'place') {
+                return apiResponse.error(res, `Place "${req.body.place}" already exists. Each place can only have one admin.`, 400);
+            }
+        }
         return apiResponse.error(res, error.message, 500);
     }
 };
@@ -58,8 +72,8 @@ export const loginAdmin = async (req, res) => {
         const match = await bcrypt.compare(password, admin.password);
         if (!match) return apiResponse.error(res, message.INVALID_CREDENTIALS);
 
-        // Generate JWT token
-        const token = jwt.sign({ id: admin._id, email: admin.email },
+        // Generate JWT token with place
+        const token = jwt.sign({ id: admin._id, email: admin.email, place: admin.place },
             JWT_SECRET, { expiresIn: JWT_EXPIRES_IN }
         );
 
@@ -68,6 +82,7 @@ export const loginAdmin = async (req, res) => {
             id: admin._id,
             name: admin.name,
             email: admin.email,
+            place: admin.place,
             createdAt: admin.createdAt,
             updatedAt: admin.updatedAt,
         };

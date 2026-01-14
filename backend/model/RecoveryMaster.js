@@ -11,6 +11,7 @@ const RecoveryMasterSchema = new mongoose.Schema({
 
     // Recovery session details
     date: { type: Date, required: true },
+    meetingSequence: { type: Number, default: 1 }, // For testing: sequence number for same-day meetings (1, 2, 3...)
     memberCount: { type: Number, default: 0 },
     groupPhoto: { type: String }, // base64 or URL
 
@@ -96,6 +97,19 @@ const RecoveryMasterSchema = new mongoose.Schema({
         totalAmount: { type: Number, default: 0 },
     },
 
+    // Cash denomination breakdown (for totalCash)
+    cashDenominations: {
+        note200: { type: Number, default: 0 },   // Number of ₹200 notes
+        note500: { type: Number, default: 0 },   // Number of ₹500 notes
+        note100: { type: Number, default: 0 },   // Number of ₹100 notes
+        note50: { type: Number, default: 0 },    // Number of ₹50 notes
+        note20: { type: Number, default: 0 },     // Number of ₹20 notes
+        note10: { type: Number, default: 0 },     // Number of ₹10 notes
+        note5: { type: Number, default: 0 },     // Number of ₹5 notes
+        note2: { type: Number, default: 0 },      // Number of ₹2 notes
+        note1: { type: Number, default: 0 },      // Number of ₹1 coins/notes
+    },
+
     // Status (for admin direct storage, always approved)
     status: { type: String, enum: ["approved", "rejected"], default: "approved" },
     createdBy: { type: String }, // Admin user ID or "admin"
@@ -103,6 +117,11 @@ const RecoveryMasterSchema = new mongoose.Schema({
 }, {
     timestamps: true,
 });
+
+// Add indexes for performance
+RecoveryMasterSchema.index({ groupId: 1, date: 1 });
+RecoveryMasterSchema.index({ 'recoveries.memberId': 1, date: 1 });
+RecoveryMasterSchema.index({ groupId: 1, date: 1, 'recoveries.memberId': 1 });
 
 export default mongoose.model("RecoveryMaster", RecoveryMasterSchema);
 

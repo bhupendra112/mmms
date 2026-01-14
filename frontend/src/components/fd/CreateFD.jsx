@@ -192,16 +192,6 @@ export default function CreateFD({ member, onClose, onSuccess }) {
         }
     };
 
-    const handlePaymentModeChange = (mode) => {
-        setPaymentMode({
-            ...paymentMode,
-            [mode]: !paymentMode[mode],
-        });
-        if (mode === "cash" && paymentMode.online) {
-            setOnlineRef("");
-            setSelectedBankId("");
-        }
-    };
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -329,7 +319,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                         handleChange={(e) => setAmount(e.target.value)}
                         placeholder="Enter FD amount"
                         min="0"
-                        step="0.01"
+                        step="1"
                         required
                     />
 
@@ -383,18 +373,20 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                         <div className="flex gap-4">
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input
-                                    type="checkbox"
+                                    type="radio"
+                                    name="fdPaymentMode"
                                     checked={paymentMode.cash}
-                                    onChange={() => handlePaymentModeChange("cash")}
+                                    onChange={() => setPaymentMode({ cash: true, online: false })}
                                     className="w-4 h-4"
                                 />
                                 <span>Cash</span>
                             </label>
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input
-                                    type="checkbox"
+                                    type="radio"
+                                    name="fdPaymentMode"
                                     checked={paymentMode.online}
-                                    onChange={() => handlePaymentModeChange("online")}
+                                    onChange={() => setPaymentMode({ cash: false, online: true })}
                                     className="w-4 h-4"
                                 />
                                 <span>Online</span>
@@ -433,14 +425,14 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                                     No banks found for this group. Please add a bank account first.
                                 </p>
                             )}
-                        <Input
-                            label="Online Payment Reference *"
-                            name="onlineRef"
-                            value={onlineRef}
-                            handleChange={(e) => setOnlineRef(e.target.value)}
-                            placeholder="Enter payment reference number"
-                            required
-                        />
+                            <Input
+                                label="Online Payment Reference *"
+                                name="onlineRef"
+                                value={onlineRef}
+                                handleChange={(e) => setOnlineRef(e.target.value)}
+                                placeholder="Enter payment reference number"
+                                required
+                            />
                         </div>
                     )}
 

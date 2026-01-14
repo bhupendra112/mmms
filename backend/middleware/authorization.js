@@ -15,8 +15,12 @@ export default function authAdmin(req, res, next) {
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         
-        // Set req.user with id
-        req.user = { id: decoded.id, email: decoded.email };
+        // Set req.user with id, email, and place
+        req.user = { 
+            id: decoded.id, 
+            email: decoded.email,
+            place: decoded.place 
+        };
         
         // Set req.admin with full decoded token (works for both admin and group)
         req.admin = decoded;

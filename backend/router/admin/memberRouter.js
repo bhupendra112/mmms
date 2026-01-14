@@ -10,11 +10,11 @@ router.get("/list", (req, res) => {
     return listMembers(req, res);
 });
 
-router.get("/by-group/:groupId", (req, res) => {
+router.get("/by-group/:groupId", authAdmin, (req, res) => {
     return listMembersByGroup(req, res);
 });
 
-router.get("/detail/:id", (req, res) => {
+router.get("/detail/:id", authAdmin, (req, res) => {
     return getMemberDetail(req, res);
 });
 
@@ -45,10 +45,15 @@ router.get("/export-ledger", authAdmin, (req, res) => {
 router.post("/register-member", authAdmin, (req, res, next) => {
     // Multer middleware with error handling
     upload.fields([
+        { name: 'Member_Photo', maxCount: 1 },
         { name: 'Voter_Id_File', maxCount: 1 },
         { name: 'Adhar_Id_File', maxCount: 1 },
+        { name: 'Bank_File', maxCount: 1 },
         { name: 'Ration_Card_File', maxCount: 1 },
-        { name: 'Job_Card_File', maxCount: 1 }
+        { name: 'Job_Card_File', maxCount: 1 },
+        { name: 'Adhar_Id_Pati_File', maxCount: 1 },
+        { name: 'Voter_Id_Pati_File', maxCount: 1 },
+        { name: 'Bank_Pati_File', maxCount: 1 }
     ])(req, res, (err) => {
         // Handle multer errors
         if (err) {

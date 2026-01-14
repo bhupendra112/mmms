@@ -13,6 +13,7 @@ import financialReportRouter from "./financialReportRouter.js"
 import cashToBankRouter from "./cashToBankRouter.js"
 import bankTransactionRouter from "./bankTransactionRouter.js"
 import cashAmountRouter from "./cashAmountRouter.js"
+import revenueRouter from "./revenueRouter.js"
 
 const router = express.Router();
 
@@ -32,6 +33,7 @@ const routeArray = [
     { path: "/cash-to-bank", route: cashToBankRouter },
     { path: "/bank-transaction", route: bankTransactionRouter },
     { path: "/cash-amount", route: cashAmountRouter },
+    { path: "/revenue", route: revenueRouter },
 ];
 
 // ✅ Register routes

@@ -1,5 +1,5 @@
 import express from "express";
-import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails } from "../../controller/admin/recoveryController.js";
+import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, getGroupRecoveryDetails, exportRecoveryPDF, getMemberRecoveryStatus } from "../../controller/admin/recoveryController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const Router = express.Router();
@@ -22,11 +22,26 @@ Router.get("/previous-data", authAdmin, getPreviousRecoveryData);
 // Get demand details for a member (without requiring recovery session)
 Router.get("/demand-details", authAdmin, getDemandDetails);
 
+// Get loan totals for a member (from LoanMaster and RecoveryMaster)
+Router.get("/loan-totals", authAdmin, getMemberLoanTotals);
+
+// Get remaining revenue demands for a member (from MemberRevenueDemand)
+Router.get("/revenue-remaining", authAdmin, getMemberRevenueRemaining);
+
 // List recoveries
 Router.get("/list", authAdmin, listRecoveries);
 
 // Get recovery detail
 Router.get("/detail/:id", authAdmin, getRecoveryDetail);
+
+// Get group recovery details
+Router.get("/group-details", authAdmin, getGroupRecoveryDetails);
+
+// Export recovery as PDF
+Router.get("/export-pdf", authAdmin, exportRecoveryPDF);
+
+// Get member recovery status for a specific date
+Router.get("/status/:memberId", authAdmin, getMemberRecoveryStatus);
 
 export default Router;
 

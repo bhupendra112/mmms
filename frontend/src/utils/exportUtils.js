@@ -494,3 +494,141 @@ export const exportMemberLedgerToPDF = (ledgerData, filename = 'Member_Ledger') 
     });
 };
 
+// Export detailed recovery session to Excel
+export const exportRecoveryDetailsToExcel = (recoveries, groupName, recoverySession, filename) => {
+    const data = recoveries.map((recovery) => {
+        const amounts = recovery.amounts || {};
+        const charges = amounts.charges || {};
+        const chargesDetails = Object.keys(charges).length > 0
+            ? Object.entries(charges)
+                .filter(([_, amount]) => parseFloat(amount) > 0)
+                .map(([name, amount]) => `${name}: ₹${Math.round(parseFloat(amount)).toLocaleString()}`)
+                .join(", ")
+            : "";
+
+        return {
+            'Member Code': recovery.memberCode || '',
+            'Member Name': recovery.memberName || '',
+            'Attendance': recovery.attendance || '',
+            'Saving': Math.round(parseFloat(amounts.saving || 0)),
+            'Loan': Math.round(parseFloat(amounts.loan || 0)),
+            'Interest': Math.round(parseFloat(amounts.interest || 0)),
+            'Yogdan': Math.round(parseFloat(amounts.yogdan || 0)),
+            'Mem Fees SHG': Math.round(parseFloat(amounts.memFeesSHG || 0)),
+            'Mem Fees Group': Math.round(parseFloat(amounts.memFeesGroup || 0)),
+            'Mem Fees Samiti': Math.round(parseFloat(amounts.memFeesSamiti || 0)),
+            'Penalty': Math.round(parseFloat(amounts.penalty || 0)),
+            'Other': Math.round(parseFloat(amounts.other || 0)),
+            'FD': Math.round(parseFloat(amounts.fd || 0)),
+            'Charges': chargesDetails || '',
+            'Charges Total': Object.values(charges).reduce((sum, amount) => sum + Math.round(parseFloat(amount || 0)), 0),
+            'Payment Mode': recovery.paymentMode?.cash && recovery.paymentMode?.online
+                ? 'Cash + Online'
+                : recovery.paymentMode?.cash
+                    ? 'Cash'
+                    : recovery.paymentMode?.online
+                        ? 'Online'
+                        : '',
+            'Online Reference': recovery.onlineRef || '',
+            'Total Amount': Math.round(parseFloat(recovery.total || 0))
+        };
+    });
+
+    // Add summary row
+    const totals = recoverySession.totals || {};
+    data.push({
+        'Member Code': 'TOTAL',
+        'Member Name': '',
+        'Attendance': '',
+        'Saving': '',
+        'Loan': '',
+        'Interest': '',
+        'Yogdan': '',
+        'Mem Fees SHG': '',
+        'Mem Fees Group': '',
+        'Mem Fees Samiti': '',
+        'Penalty': '',
+        'Other': '',
+        'FD': '',
+        'Charges': '',
+        'Charges Total': '',
+        'Payment Mode': `Cash: ₹${Math.round(totals.totalCash || 0).toLocaleString()} | Online: ₹${Math.round(totals.totalOnline || 0).toLocaleString()}`,
+        'Online Reference': '',
+        'Total Amount': Math.round(totals.totalAmount || 0)
+    });
+
+    exportToExcel(data, filename);
+};
+
+// Export detailed recovery session to PDF
+export const exportRecoveryDetailsToPDF = (recoveries, groupName, recoverySession, filename) => {
+    const headers = [
+        'Member Code',
+        'Member Name',
+        'Attendance',
+        'Saving',
+        'Loan',
+        'Interest',
+        'Yogdan',
+        'Mem Fees SHG',
+        'Mem Fees Group',
+        'Charges',
+        'Total',
+        'Payment Mode'
+    ];
+
+    const rows = recoveries.map((recovery) => {
+        const amounts = recovery.amounts || {};
+        const charges = amounts.charges || {};
+        const chargesTotal = Object.values(charges).reduce((sum, amount) => sum + Math.round(parseFloat(amount || 0)), 0);
+        const total = Math.round(parseFloat(recovery.total || 0));
+        const paymentMode = recovery.paymentMode?.cash && recovery.paymentMode?.online
+            ? 'Cash + Online'
+            : recovery.paymentMode?.cash
+                ? 'Cash'
+                : recovery.paymentMode?.online
+                    ? 'Online'
+                    : '—';
+
+        return [
+            recovery.memberCode || '',
+            recovery.memberName || '',
+            recovery.attendance || '',
+            `${Math.round(parseFloat(amounts.saving || 0))}`,
+            `${Math.round(parseFloat(amounts.loan || 0))}`,
+            `${Math.round(parseFloat(amounts.interest || 0))}`,
+            `${Math.round(parseFloat(amounts.yogdan || 0))}`,
+            `${Math.round(parseFloat(amounts.memFeesSHG || 0))}`,
+            `${Math.round(parseFloat(amounts.memFeesGroup || 0))}`,
+            `${chargesTotal}`,
+            `${total}`,
+            paymentMode
+        ];
+    });
+
+    // Add summary row
+    const totals = recoverySession.totals || {};
+    rows.push([
+        'TOTAL',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        `${Math.round(totals.totalAmount || 0)}`,
+        `Cash: ₹${Math.round(totals.totalCash || 0).toLocaleString()} | Online: ₹${Math.round(totals.totalOnline || 0).toLocaleString()}`
+    ]);
+
+    const recoveryDate = new Date(recoverySession.date).toLocaleDateString("en-GB");
+    exportToPDF(
+        `${groupName} - Recovery Details (${recoveryDate})`,
+        headers,
+        rows,
+        filename
+    );
+};
+

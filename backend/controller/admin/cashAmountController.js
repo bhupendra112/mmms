@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { CashAmount, GroupMaster } from '../../model/index.js';
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
+import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 
 /**
  * Internal helper function to add cash amount (can be called directly)
@@ -254,11 +255,15 @@ export const getCashAmount = async (req, res) => {
             return apiResponse.error(res, "Invalid group ID format", 400);
         }
 
-        // Get group
-        const group = await GroupMaster.findById(groupObjectId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupObjectId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        const group = accessCheck.group;
 
         // Get CashAmount record (create if doesn't exist, sync with group balance)
         let cashAmount = await CashAmount.findOne({ group: groupObjectId });

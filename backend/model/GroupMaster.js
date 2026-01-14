@@ -6,6 +6,7 @@ const GroupMasterSchema = new mongoose.Schema({
 
     cluster_name: { type: String },
     village: { type: String },
+    place: { type: String }, // Location/place associated with admin
 
     no_members: { type: Number },
     formation_date: { type: Date },

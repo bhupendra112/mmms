@@ -1,12 +1,42 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2 } from "lucide-react";
+import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2, Calendar, Receipt } from "lucide-react";
 import { Link } from "react-router-dom";
 import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges } from "../../services/groupService";
 import { getMembersByGroup, exportMemberLedger, updateMember, deleteMember } from "../../services/memberService";
 import { getLoans } from "../../services/loanService";
-import { getRecoveries } from "../../services/recoveryService";
+import { getRecoveries, getGroupRecoveryDetails } from "../../services/recoveryService";
 import { getFDsByGroup } from "../../services/fdService";
-import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
+import { exportMemberLedgerToExcel, exportMemberLedgerToPDF, exportRecoveryDetailsToExcel, exportRecoveryDetailsToPDF } from "../../utils/exportUtils";
+
+// Helper function to get full image URL
+const getImageUrl = (imagePath) => {
+    if (!imagePath) return null;
+
+    // Get backend origin - extract only protocol://host:port (no API paths)
+    const rawBaseURL = import.meta.env.VITE_BASE_URL || (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
+
+    let baseURL;
+    try {
+        // Try to parse as URL and extract origin (protocol://host:port)
+        const url = new URL(rawBaseURL);
+        baseURL = `${url.protocol}//${url.host}`; // Gets protocol://host:port
+    } catch {
+        // If parsing fails, extract origin manually
+        const match = rawBaseURL.match(/^(https?:\/\/[^/]+)/i);
+        baseURL = match ? match[1] : (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
+    }
+
+    // If imagePath already starts with http, return as is
+    if (imagePath.startsWith("http://") || imagePath.startsWith("https://")) {
+        return imagePath;
+    }
+
+    // Ensure imagePath starts with /
+    const cleanImagePath = imagePath.startsWith("/") ? imagePath : `/${imagePath}`;
+    const fullUrl = `${baseURL}${cleanImagePath}`;
+
+    return fullUrl;
+};
 
 export default function GroupManagement() {
     const [searchTerm, setSearchTerm] = useState("");
@@ -60,6 +90,9 @@ export default function GroupManagement() {
     const [showEditMemberModal, setShowEditMemberModal] = useState(false);
     const [editingMember, setEditingMember] = useState(null);
     const [editMemberForm, setEditMemberForm] = useState({});
+    const [recoveryDetails, setRecoveryDetails] = useState([]);
+    const [recoveryDetailsLoading, setRecoveryDetailsLoading] = useState(false);
+    const [selectedRecovery, setSelectedRecovery] = useState(null);
 
     const mapGroupToUI = (g) => {
         if (!g) return null;
@@ -104,6 +137,14 @@ export default function GroupManagement() {
     useEffect(() => {
         if (activeTab === "cash" && selectedGroup) {
             loadCashTransactions(selectedGroup);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, selectedGroup]);
+
+    // Load recovery details when recovery-details tab is active
+    useEffect(() => {
+        if (activeTab === "recovery-details" && selectedGroup) {
+            loadRecoveryDetails(selectedGroup);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, selectedGroup]);
@@ -178,6 +219,27 @@ export default function GroupManagement() {
         }
     };
 
+    const loadRecoveryDetails = async (groupId) => {
+        if (!groupId) return;
+        try {
+            setRecoveryDetailsLoading(true);
+            const filters = {};
+            if (dateRange.fromDate) filters.fromDate = dateRange.fromDate;
+            if (dateRange.toDate) filters.toDate = dateRange.toDate;
+            const res = await getGroupRecoveryDetails(groupId, filters);
+            if (res?.success && res?.data) {
+                setRecoveryDetails(Array.isArray(res.data) ? res.data : []);
+            } else {
+                setRecoveryDetails([]);
+            }
+        } catch (error) {
+            console.error("Failed to load recovery details:", error);
+            setRecoveryDetails([]);
+        } finally {
+            setRecoveryDetailsLoading(false);
+        }
+    };
+
     const handleViewBank = async (bankId) => {
         try {
             setBankDetailLoading(true);
@@ -190,6 +252,23 @@ export default function GroupManagement() {
             alert("Failed to load bank details");
         } finally {
             setBankDetailLoading(false);
+        }
+    };
+
+    const handleExportRecoveryDetails = (recovery, format) => {
+        if (!recovery || !recovery.recoveries || recovery.recoveries.length === 0) {
+            alert("No recovery data to export");
+            return;
+        }
+
+        const groupName = selectedGroupData?.name || selectedGroupRaw?.group_name || "Group";
+        const recoveryDate = new Date(recovery.date).toLocaleDateString("en-GB").replace(/\//g, "-");
+        const filename = `${groupName}_Recovery_${recoveryDate}`;
+
+        if (format === 'excel') {
+            exportRecoveryDetailsToExcel(recovery.recoveries, groupName, recovery, filename);
+        } else if (format === 'pdf') {
+            exportRecoveryDetailsToPDF(recovery.recoveries, groupName, recovery, filename);
         }
     };
 
@@ -765,6 +844,7 @@ export default function GroupManagement() {
                                         { id: "cash", label: "Cash Details", icon: Wallet },
                                         { id: "finance", label: "Finance", icon: DollarSign },
                                         { id: "charges", label: "Charges", icon: CreditCard },
+                                        { id: "recovery-details", label: "Recovery Details", icon: Receipt },
                                     ].map((tab) => {
                                         const Icon = tab.icon;
                                         return (
@@ -1496,6 +1576,338 @@ export default function GroupManagement() {
                                             >
                                                 Add First Charge
                                             </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {activeTab === "recovery-details" && (
+                                <div className="bg-white rounded-lg shadow-md p-6">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h3 className="text-xl font-semibold text-gray-800">Recovery Details</h3>
+                                        <div className="flex items-center gap-4">
+                                            {/* Date Range Filter */}
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="date"
+                                                    value={dateRange.fromDate}
+                                                    onChange={(e) => {
+                                                        setDateRange({ ...dateRange, fromDate: e.target.value });
+                                                        if (selectedGroup) {
+                                                            loadRecoveryDetails(selectedGroup);
+                                                        }
+                                                    }}
+                                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    placeholder="From Date"
+                                                />
+                                                <span className="text-gray-600">to</span>
+                                                <input
+                                                    type="date"
+                                                    value={dateRange.toDate}
+                                                    onChange={(e) => {
+                                                        setDateRange({ ...dateRange, toDate: e.target.value });
+                                                        if (selectedGroup) {
+                                                            loadRecoveryDetails(selectedGroup);
+                                                        }
+                                                    }}
+                                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    placeholder="To Date"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {recoveryDetailsLoading ? (
+                                        <div className="text-center py-12">
+                                            <p className="text-gray-600">Loading recovery details...</p>
+                                        </div>
+                                    ) : selectedRecovery ? (
+                                        <div className="space-y-6">
+                                            {/* Back Button */}
+                                            <button
+                                                onClick={() => setSelectedRecovery(null)}
+                                                className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium"
+                                            >
+                                                <X size={18} />
+                                                Back to List
+                                            </button>
+
+                                            {/* Recovery Session Header */}
+                                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 p-6">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <div>
+                                                        <h4 className="text-xl font-bold text-gray-800">
+                                                            Recovery Session - {new Date(selectedRecovery.date).toLocaleDateString("en-GB", {
+                                                                day: "2-digit",
+                                                                month: "2-digit",
+                                                                year: "numeric"
+                                                            })}
+                                                        </h4>
+                                                        {selectedRecovery.meetingSequence > 1 && (
+                                                            <p className="text-sm text-gray-600 mt-1">
+                                                                Meeting Sequence: {selectedRecovery.meetingSequence}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-4">
+                                                        <button
+                                                            onClick={() => handleExportRecoveryDetails(selectedRecovery, 'excel')}
+                                                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                                        >
+                                                            <Download size={16} />
+                                                            Export Excel
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleExportRecoveryDetails(selectedRecovery, 'pdf')}
+                                                            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+                                                        >
+                                                            <FileText size={16} />
+                                                            Export PDF
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Totals Summary */}
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                                                        <p className="text-sm text-gray-600 mb-1">Total Cash</p>
+                                                        <p className="text-2xl font-bold text-green-600">
+                                                            ₹{Math.round(selectedRecovery.totals?.totalCash || 0).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                                                        <p className="text-sm text-gray-600 mb-1">Total Online</p>
+                                                        <p className="text-2xl font-bold text-blue-600">
+                                                            ₹{Math.round(selectedRecovery.totals?.totalOnline || 0).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                                                        <p className="text-sm text-gray-600 mb-1">Grand Total</p>
+                                                        <p className="text-2xl font-bold text-purple-600">
+                                                            ₹{Math.round(selectedRecovery.totals?.totalAmount || 0).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Cash Denominations */}
+                                                {selectedRecovery.cashDenominations && selectedRecovery.totals?.totalCash > 0 && (
+                                                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                                                        <p className="text-sm font-semibold text-gray-700 mb-2">Cash Denominations</p>
+                                                        <div className="grid grid-cols-3 md:grid-cols-5 gap-2 text-sm">
+                                                            {selectedRecovery.cashDenominations.note500 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹500:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note500}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note200 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹200:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note200}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note100 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹100:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note100}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note50 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹50:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note50}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note20 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹20:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note20}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note10 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹10:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note10}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note5 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹5:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note5}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note2 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹2:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note2}</span>
+                                                                </div>
+                                                            )}
+                                                            {selectedRecovery.cashDenominations.note1 > 0 && (
+                                                                <div>
+                                                                    <span className="text-gray-600">₹1:</span> <span className="font-semibold">{selectedRecovery.cashDenominations.note1}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Group Photo */}
+                                                {selectedRecovery.groupPhoto && (
+                                                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                                                        <p className="text-sm font-semibold text-gray-700 mb-2">Group Photo</p>
+                                                        <img
+                                                            src={selectedRecovery.groupPhoto.startsWith('data:') ? selectedRecovery.groupPhoto : getImageUrl(selectedRecovery.groupPhoto)}
+                                                            alt="Group Photo"
+                                                            className="max-w-full h-auto rounded-lg cursor-pointer"
+                                                            onClick={() => {
+                                                                const imageUrl = selectedRecovery.groupPhoto.startsWith('data:') ? selectedRecovery.groupPhoto : getImageUrl(selectedRecovery.groupPhoto);
+                                                                window.open(imageUrl, '_blank');
+                                                            }}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Member Recovery Details Table */}
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full border-collapse">
+                                                    <thead>
+                                                        <tr className="bg-gray-100">
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Member Code</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Member Name</th>
+                                                            <th className="border p-3 text-center font-semibold text-gray-700">Attendance</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Saving</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Loan</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Interest</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Yogdan</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Mem Fees SHG</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Mem Fees Group</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Mem Fees Samiti</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Penalty</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Other</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">FD</th>
+                                                            <th className="border p-3 text-left font-semibold text-gray-700">Charges</th>
+                                                            <th className="border p-3 text-center font-semibold text-gray-700">Payment Mode</th>
+                                                            <th className="border p-3 text-right font-semibold text-gray-700">Total</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {selectedRecovery.recoveries && selectedRecovery.recoveries.length > 0 ? (
+                                                            selectedRecovery.recoveries.map((memberRec, idx) => {
+                                                                const amounts = memberRec.amounts || {};
+                                                                const saving = Math.round(parseFloat(amounts.saving || 0));
+                                                                const loan = Math.round(parseFloat(amounts.loan || 0));
+                                                                const interest = Math.round(parseFloat(amounts.interest || 0));
+                                                                const yogdan = Math.round(parseFloat(amounts.yogdan || 0));
+                                                                const memFeesSHG = Math.round(parseFloat(amounts.memFeesSHG || 0));
+                                                                const memFeesGroup = Math.round(parseFloat(amounts.memFeesGroup || 0));
+                                                                const memFeesSamiti = Math.round(parseFloat(amounts.memFeesSamiti || 0));
+                                                                const penalty = Math.round(parseFloat(amounts.penalty || 0));
+                                                                const other = Math.round(parseFloat(amounts.other || 0));
+                                                                const fd = Math.round(parseFloat(amounts.fd || 0));
+                                                                const charges = amounts.charges || {};
+                                                                const chargesTotal = Object.values(charges).reduce((sum, amount) => sum + Math.round(parseFloat(amount || 0)), 0);
+                                                                const chargesDetails = Object.keys(charges).length > 0
+                                                                    ? Object.entries(charges)
+                                                                        .filter(([_, amount]) => parseFloat(amount) > 0)
+                                                                        .map(([name, amount]) => `${name}: ₹${Math.round(parseFloat(amount)).toLocaleString()}`)
+                                                                        .join(", ")
+                                                                    : "—";
+                                                                const total = Math.round(parseFloat(memberRec.total || 0));
+                                                                const paymentMode = memberRec.paymentMode?.cash && memberRec.paymentMode?.online
+                                                                    ? "Cash + Online"
+                                                                    : memberRec.paymentMode?.cash
+                                                                        ? "Cash"
+                                                                        : memberRec.paymentMode?.online
+                                                                            ? "Online"
+                                                                            : "—";
+
+                                                                return (
+                                                                    <tr key={idx} className={`hover:bg-gray-50 ${memberRec.attendance === "absent" ? "bg-red-50" : ""}`}>
+                                                                        <td className="border p-3 text-gray-800">{memberRec.memberCode || "—"}</td>
+                                                                        <td className="border p-3 text-gray-800">{memberRec.memberName || "—"}</td>
+                                                                        <td className="border p-3 text-center">
+                                                                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${memberRec.attendance === "present" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                                                                                {memberRec.attendance === "present" ? "Present" : "Absent"}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="border p-3 text-right text-gray-800">{saving > 0 ? `₹${saving.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{loan > 0 ? `₹${loan.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{interest > 0 ? `₹${interest.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{yogdan > 0 ? `₹${yogdan.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{memFeesSHG > 0 ? `₹${memFeesSHG.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{memFeesGroup > 0 ? `₹${memFeesGroup.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{memFeesSamiti > 0 ? `₹${memFeesSamiti.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{penalty > 0 ? `₹${penalty.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{other > 0 ? `₹${other.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-right text-gray-800">{fd > 0 ? `₹${fd.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-3 text-left text-gray-800" title={chargesDetails}>
+                                                                            {chargesTotal > 0 ? `₹${chargesTotal.toLocaleString()}` : "—"}
+                                                                            {chargesDetails !== "—" && (
+                                                                                <span className="block text-xs text-gray-500 mt-1">{chargesDetails}</span>
+                                                                            )}
+                                                                        </td>
+                                                                        <td className="border p-3 text-center">
+                                                                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${paymentMode === "Cash" ? "bg-green-100 text-green-800" : paymentMode === "Online" ? "bg-blue-100 text-blue-800" : paymentMode === "Cash + Online" ? "bg-purple-100 text-purple-800" : "bg-gray-100 text-gray-800"}`}>
+                                                                                {paymentMode}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="border p-3 text-right font-semibold text-gray-800">{total > 0 ? `₹${total.toLocaleString()}` : "—"}</td>
+                                                                    </tr>
+                                                                );
+                                                            })
+                                                        ) : (
+                                                            <tr>
+                                                                <td colSpan="16" className="border p-6 text-center text-gray-600">
+                                                                    No recovery data available
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    ) : recoveryDetails.length > 0 ? (
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full border-collapse">
+                                                <thead>
+                                                    <tr className="bg-gray-100">
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Date</th>
+                                                        <th className="border p-3 text-center font-semibold text-gray-700">Meeting Sequence</th>
+                                                        <th className="border p-3 text-center font-semibold text-gray-700">Member Count</th>
+                                                        <th className="border p-3 text-right font-semibold text-gray-700">Total Cash</th>
+                                                        <th className="border p-3 text-right font-semibold text-gray-700">Total Online</th>
+                                                        <th className="border p-3 text-right font-semibold text-gray-700">Grand Total</th>
+                                                        <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {recoveryDetails.map((recovery) => (
+                                                        <tr key={recovery._id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedRecovery(recovery)}>
+                                                            <td className="border p-3 text-gray-800">
+                                                                {new Date(recovery.date).toLocaleDateString("en-GB", {
+                                                                    day: "2-digit",
+                                                                    month: "2-digit",
+                                                                    year: "numeric"
+                                                                })}
+                                                            </td>
+                                                            <td className="border p-3 text-center text-gray-800">{recovery.meetingSequence || 1}</td>
+                                                            <td className="border p-3 text-center text-gray-800">{recovery.memberCount || (recovery.recoveries?.length || 0)}</td>
+                                                            <td className="border p-3 text-right text-gray-800">₹{Math.round(recovery.totals?.totalCash || 0).toLocaleString()}</td>
+                                                            <td className="border p-3 text-right text-gray-800">₹{Math.round(recovery.totals?.totalOnline || 0).toLocaleString()}</td>
+                                                            <td className="border p-3 text-right font-semibold text-gray-800">₹{Math.round(recovery.totals?.totalAmount || 0).toLocaleString()}</td>
+                                                            <td className="border p-3 text-center">
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setSelectedRecovery(recovery);
+                                                                    }}
+                                                                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                >
+                                                                    View Details
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-12">
+                                            <Receipt size={48} className="mx-auto mb-4 text-gray-400" />
+                                            <p className="text-gray-600">No recovery sessions found</p>
                                         </div>
                                     )}
                                 </div>

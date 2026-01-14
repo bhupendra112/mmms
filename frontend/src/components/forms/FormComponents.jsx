@@ -1,6 +1,6 @@
 // Reusable Form Components with consistent styling
 
-export function Input({ label, name, value, handleChange, type = "text", required = false, placeholder = "", onKeyPress }) {
+export function Input({ label, name, value, handleChange, type = "text", required = false, placeholder = "", onKeyPress, disabled = false }) {
     return (
         <div className="flex flex-col">
             <label className="font-semibold mb-1.5 text-gray-700 text-sm">
@@ -15,7 +15,8 @@ export function Input({ label, name, value, handleChange, type = "text", require
                 onKeyPress={onKeyPress}
                 required={required}
                 placeholder={placeholder}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
+                disabled={disabled}
+                className={`w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm ${disabled ? 'bg-gray-100 cursor-not-allowed opacity-60' : ''}`}
             />
         </div>
     );

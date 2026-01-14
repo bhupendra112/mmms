@@ -26,11 +26,24 @@ export default function MemberRegistration() {
     Adhar_Id: "",
     Ration_Card: "",
     Job_Card: "",
+    Samagra_Id: "",
     // File uploads for identity documents
+    Member_Photo: null,
     Voter_Id_File: null,
     Adhar_Id_File: null,
+    Bank_File: null,
     Ration_Card_File: null,
     Job_Card_File: null,
+    // Spouse details
+    dt_birth_pati: "",
+    Age_Pati: "",
+    Adhar_Id_Pati: "",
+    cell_phone_pati: "",
+    Bank_Ac_Pati: "",
+    // Spouse document files
+    Adhar_Id_Pati_File: null,
+    Voter_Id_Pati_File: null,
+    Bank_Pati_File: null,
     Apl_Bpl_Etc: "",
     Desg: "",
     Bank_Name: "",
@@ -65,13 +78,74 @@ export default function MemberRegistration() {
       amount: "",
       loanDate: "",
       overdueInterest: "",
+      loanPaid: "",
       time_period: "",
       installment_amount: "",
     },
     openingYogdan: "",
     saving_per_member_snapshot: "",
   });
+  //auto calculate age
+  const autocalculateAge = () => {
+    if (!form.dt_birth) return;
 
+    const today = new Date();
+    const birthDate = new Date(form.dt_birth);
+
+    // Check if birth date is valid
+    if (isNaN(birthDate.getTime())) return;
+
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+
+    // Adjust age if birthday hasn't occurred this year
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      Age: age.toString()
+    }));
+  }
+
+  // Auto-calculate spouse age
+  const autocalculateAgePati = () => {
+    if (!form.dt_birth_pati) return;
+
+    const today = new Date();
+    const birthDate = new Date(form.dt_birth_pati);
+
+    // Check if birth date is valid
+    if (isNaN(birthDate.getTime())) return;
+
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+
+    // Adjust age if birthday hasn't occurred this year
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      Age_Pati: age.toString()
+    }));
+  }
+
+  // Auto-calculate age when birth date changes
+  useEffect(() => {
+    if (form.dt_birth) {
+      autocalculateAge();
+    }
+  }, [form.dt_birth]);
+
+  // Auto-calculate spouse age when spouse birth date changes
+  useEffect(() => {
+    if (form.dt_birth_pati) {
+      autocalculateAgePati();
+    }
+  }, [form.dt_birth_pati]);
   // Load groups list for admin mode (for dynamic group selection)
   useEffect(() => {
     if (!isAdminMode) return;
@@ -111,12 +185,12 @@ export default function MemberRegistration() {
   // Auto-populate saving_per_member_snapshot when isExistingMember is checked and group is selected
   useEffect(() => {
     if (!form.isExistingMember || !form.group_id) return;
-    
+
     const loadGroupSavingRate = async () => {
       try {
         const groupRes = await getGroupDetail(form.group_id);
         const group = groupRes?.data;
-        
+
         if (group) {
           setForm((prev) => ({
             ...prev,
@@ -127,7 +201,7 @@ export default function MemberRegistration() {
         console.error("Error loading group saving rate:", err);
       }
     };
-    
+
     loadGroupSavingRate();
   }, [form.isExistingMember, form.group_id]);
 
@@ -137,7 +211,7 @@ export default function MemberRegistration() {
     if (form.loanDetails.amount && form.loanDetails.time_period) {
       const loanAmount = parseFloat(form.loanDetails.amount || 0);
       const years = parseFloat(form.loanDetails.time_period || 0);
-      
+
       if (loanAmount > 0 && years > 0) {
         const months = years * 12; // Convert years to months
         const calculatedInstallment = (loanAmount / months).toFixed(2);
@@ -213,6 +287,24 @@ export default function MemberRegistration() {
     e.preventDefault();
 
     try {
+      // Validate age if birth date is provided
+      if (form.dt_birth && form.Age) {
+        const age = parseInt(form.Age, 10);
+        if (isNaN(age) || age < 10 || age > 120) {
+          alert("Age must be between 10 and 120. Please fill correct date of birth.");
+          return;
+        }
+      }
+
+      // Validate spouse age if spouse birth date is provided
+      if (form.dt_birth_pati && form.Age_Pati) {
+        const agePati = parseInt(form.Age_Pati, 10);
+        if (isNaN(agePati) || agePati < 10 || agePati > 120) {
+          alert("Spouse age must be between 10 and 120. Please fill correct date of birth.");
+          return;
+        }
+      }
+
       // Create FormData for file uploads
       const formData = new FormData();
 
@@ -229,7 +321,6 @@ export default function MemberRegistration() {
         if (value === null || value === undefined || value === '') {
           return;
         }
-
         // Handle nested objects (fdDetails, loanDetails)
         if (typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof File)) {
           formData.append(key, JSON.stringify(value));
@@ -243,7 +334,17 @@ export default function MemberRegistration() {
       });
 
       // Add file uploads if present
-      const fileFields = ['Voter_Id_File', 'Adhar_Id_File', 'Ration_Card_File', 'Job_Card_File'];
+      const fileFields = [
+        'Member_Photo',
+        'Voter_Id_File',
+        'Adhar_Id_File',
+        'Bank_File',
+        'Ration_Card_File',
+        'Job_Card_File',
+        'Adhar_Id_Pati_File',
+        'Voter_Id_Pati_File',
+        'Bank_Pati_File'
+      ];
       fileFields.forEach(fieldName => {
         if (form[fieldName] && form[fieldName] instanceof File) {
           formData.append(fieldName, form[fieldName]);
@@ -281,10 +382,21 @@ export default function MemberRegistration() {
         Adhar_Id: "",
         Ration_Card: "",
         Job_Card: "",
+        Samagra_Id: "",
+        Member_Photo: null,
         Voter_Id_File: null,
         Adhar_Id_File: null,
+        Bank_File: null,
         Ration_Card_File: null,
         Job_Card_File: null,
+        dt_birth_pati: "",
+        Age_Pati: "",
+        Adhar_Id_Pati: "",
+        cell_phone_pati: "",
+        Bank_Ac_Pati: "",
+        Adhar_Id_Pati_File: null,
+        Voter_Id_Pati_File: null,
+        Bank_Pati_File: null,
         Apl_Bpl_Etc: "",
         Desg: "",
         Bank_Name: "",
@@ -309,9 +421,9 @@ export default function MemberRegistration() {
         isExistingMember: false,
         openingSaving: "",
         fdDetails: { date: "", maturityDate: "", amount: "", interest: "" },
-                    loanDetails: { amount: "", loanDate: "", overdueInterest: "", time_period: "", installment_amount: "" },
+        loanDetails: { amount: "", loanDate: "", overdueInterest: "", loanPaid: "", time_period: "", installment_amount: "" },
         openingYogdan: "",
-                    saving_per_member_snapshot: "",
+        saving_per_member_snapshot: "",
       });
     } catch (error) {
       console.error("Error submitting member registration:", error);
@@ -427,6 +539,16 @@ export default function MemberRegistration() {
             required
             placeholder="Enter member full name"
           />
+          <div className="md:col-span-2">
+            <FileInput
+              label="Member Photo"
+              name="Member_Photo"
+              value={form.Member_Photo}
+              handleChange={handleChange}
+              accept="image/*"
+            />
+            <p className="text-xs text-gray-500 mt-1">Upload member's photo (like bank photo format)</p>
+          </div>
           <Input
             type="date"
             label="Join Date"
@@ -448,7 +570,8 @@ export default function MemberRegistration() {
             name="Age"
             value={form.Age}
             handleChange={handleChange}
-            placeholder="Enter age"
+            placeholder="Auto-calculated from birth date"
+            disabled={true}
           />
         </FormSection>
 
@@ -470,8 +593,58 @@ export default function MemberRegistration() {
           />
         </FormSection>
 
+        {/* Spouse Details */}
+        <FormSection title="Spouse (Pati) Details" icon={User}>
+          <Input
+            type="date"
+            label="Spouse Birth Date"
+            name="dt_birth_pati"
+            value={form.dt_birth_pati}
+            handleChange={handleChange}
+            placeholder="Enter spouse birth date"
+          />
+          <Input
+            type="number"
+            label="Spouse Age"
+            name="Age_Pati"
+            value={form.Age_Pati}
+            handleChange={handleChange}
+            placeholder="Auto-calculated from birth date"
+            disabled={true}
+          />
+          <Input
+            label="Spouse Aadhar Number"
+            name="Adhar_Id_Pati"
+            value={form.Adhar_Id_Pati}
+            handleChange={handleChange}
+            placeholder="Enter spouse Aadhar number"
+          />
+          <Input
+            type="tel"
+            label="Spouse Mobile Number"
+            name="cell_phone_pati"
+            value={form.cell_phone_pati}
+            handleChange={handleChange}
+            placeholder="Enter spouse mobile number"
+          />
+          <Input
+            label="Spouse Account Number"
+            name="Bank_Ac_Pati"
+            value={form.Bank_Ac_Pati}
+            handleChange={handleChange}
+            placeholder="Enter spouse bank account number"
+          />
+        </FormSection>
+
         {/* Identity Documents */}
         <FormSection title="Identity Documents" icon={IdCard}>
+          <Input
+            label="Samagra ID"
+            name="Samagra_Id"
+            value={form.Samagra_Id}
+            handleChange={handleChange}
+            placeholder="Enter Samagra ID number"
+          />
           <Input
             label="Voter ID"
             name="Voter_Id"
@@ -500,6 +673,13 @@ export default function MemberRegistration() {
             handleChange={handleChange}
             accept="image/*,.pdf"
           />
+          <FileInput
+            label="Bank Document"
+            name="Bank_File"
+            value={form.Bank_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
+          />
           <Input
             label="Ration Card Number"
             name="Ration_Card"
@@ -525,6 +705,31 @@ export default function MemberRegistration() {
             label="Job Card Document"
             name="Job_Card_File"
             value={form.Job_Card_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
+          />
+        </FormSection>
+
+        {/* Spouse Document Attachments */}
+        <FormSection title="Spouse (Pati) Document Attachments" icon={IdCard}>
+          <FileInput
+            label="Spouse Aadhar Document"
+            name="Adhar_Id_Pati_File"
+            value={form.Adhar_Id_Pati_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
+          />
+          <FileInput
+            label="Spouse Voter ID Document"
+            name="Voter_Id_Pati_File"
+            value={form.Voter_Id_Pati_File}
+            handleChange={handleChange}
+            accept="image/*,.pdf"
+          />
+          <FileInput
+            label="Spouse Bank Document"
+            name="Bank_Pati_File"
+            value={form.Bank_Pati_File}
             handleChange={handleChange}
             accept="image/*,.pdf"
           />
@@ -759,6 +964,44 @@ export default function MemberRegistration() {
             />
             <Input
               type="number"
+              label="Loan Paid (Amount Recovered So Far)"
+              name="loanDetails.loanPaid"
+              value={form.loanDetails.loanPaid}
+              handleChange={handleChange}
+              placeholder="Enter amount already paid towards loan"
+              min="0"
+              step="0.01"
+            />
+            {form.loanDetails.amount && form.loanDetails.loanPaid && parseFloat(form.loanDetails.amount) > 0 && (
+              <div className="md:col-span-2">
+                <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded-lg">
+                  <p className="text-sm text-gray-700">
+                    <strong>Remaining Loan Amount:</strong> ₹
+                    {(
+                      parseFloat(form.loanDetails.amount || 0) -
+                      parseFloat(form.loanDetails.loanPaid || 0)
+                    ).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Total Loan: ₹{parseFloat(form.loanDetails.amount || 0).toLocaleString("en-IN")} -
+                    Paid: ₹{parseFloat(form.loanDetails.loanPaid || 0).toLocaleString("en-IN")} =
+                    Remaining: ₹
+                    {(
+                      parseFloat(form.loanDetails.amount || 0) -
+                      parseFloat(form.loanDetails.loanPaid || 0)
+                    ).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </p>
+                </div>
+              </div>
+            )}
+            <Input
+              type="number"
               label="Time Period (Years)"
               name="loanDetails.time_period"
               value={form.loanDetails.time_period}
@@ -845,10 +1088,21 @@ export default function MemberRegistration() {
                     Adhar_Id: "",
                     Ration_Card: "",
                     Job_Card: "",
+                    Samagra_Id: "",
+                    Member_Photo: null,
                     Voter_Id_File: null,
                     Adhar_Id_File: null,
+                    Bank_File: null,
                     Ration_Card_File: null,
                     Job_Card_File: null,
+                    dt_birth_pati: "",
+                    Age_Pati: "",
+                    Adhar_Id_Pati: "",
+                    cell_phone_pati: "",
+                    Bank_Ac_Pati: "",
+                    Adhar_Id_Pati_File: null,
+                    Voter_Id_Pati_File: null,
+                    Bank_Pati_File: null,
                     Apl_Bpl_Etc: "",
                     Desg: "",
                     Bank_Name: "",

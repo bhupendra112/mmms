@@ -27,7 +27,7 @@ export const registerMember = async (data) => {
     });
     return res.data;
   }
-  
+
   // For regular JSON data, sanitize and send
   const payload = sanitizePayload(data);
   const res = await httpMember.post("/register-member", payload);
@@ -36,6 +36,7 @@ export const registerMember = async (data) => {
 
 export const getMembersByGroup = async (groupId) => {
   const res = await httpMember.get(`/by-group/${groupId}`);
+  console.log("getMemberDetail res ", res.data)
   return res.data;
 };
 
@@ -53,7 +54,7 @@ export const getMemberFinancialLedger = async (memberId, filters = {}) => {
   const params = { memberId };
   if (filters.fromDate) params.fromDate = filters.fromDate;
   if (filters.toDate) params.toDate = filters.toDate;
-  
+
   const res = await httpMember.get("/financial-ledger", { params });
   return res.data;
 };
@@ -64,7 +65,7 @@ export const exportMemberLedger = async (filters = {}) => {
   if (filters.groupId) params.groupId = filters.groupId;
   if (filters.fromDate) params.fromDate = filters.fromDate;
   if (filters.toDate) params.toDate = filters.toDate;
-  
+
   const res = await httpMember.get("/export-ledger", { params });
   return res.data;
 };

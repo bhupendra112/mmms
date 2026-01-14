@@ -16,17 +16,49 @@ import {
   Wifi,
   WifiOff,
   Plus,
+  CreditCard,
+  Wallet,
 } from "lucide-react";
 import { Input, Select } from "../../components/forms/FormComponents";
-import { exportRecoveryToExcel, exportRecoveryToPDF } from "../../utils/exportUtils";
+import { exportRecoveryToExcel } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { createApprovalRequest } from "../../services/approvalDB";
-import { registerRecovery, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails } from "../../services/recoveryService";
+import { registerRecovery, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, exportRecoveryPDF, getMemberRecoveryStatus } from "../../services/recoveryService";
 import { getLoans } from "../../services/loanService";
 import { getGroups, getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
 import { isMeetingDay, getNextMeetingDate, formatMeetingDateTime } from "../../utils/meetingDateUtils";
 import CreateFD from "../../components/fd/CreateFD";
+
+// Helper function to get full image URL
+const getImageUrl = (imagePath) => {
+  if (!imagePath) return null;
+
+  // Get backend origin - extract only protocol://host:port (no API paths)
+  const rawBaseURL = import.meta.env.VITE_BASE_URL || (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
+
+  let baseURL;
+  try {
+    // Try to parse as URL and extract origin (protocol://host:port)
+    const url = new URL(rawBaseURL);
+    baseURL = `${url.protocol}//${url.host}`; // Gets protocol://host:port
+  } catch {
+    // If parsing fails, extract origin manually
+    const match = rawBaseURL.match(/^(https?:\/\/[^/]+)/i);
+    baseURL = match ? match[1] : (import.meta.env.PROD ? "https://api.mmms.online" : "http://localhost:8080");
+  }
+
+  // If imagePath already starts with http, return as is
+  if (imagePath.startsWith("http://") || imagePath.startsWith("https://")) {
+    return imagePath;
+  }
+
+  // Ensure imagePath starts with /
+  const cleanImagePath = imagePath.startsWith("/") ? imagePath : `/${imagePath}`;
+  const fullUrl = `${baseURL}${cleanImagePath}`;
+
+  return fullUrl;
+};
 
 export default function DemandRecovery() {
   const { currentGroup, isOnline, isGroupPanel, isGroupLoading } = useGroup();
@@ -72,6 +104,27 @@ export default function DemandRecovery() {
   const [groupPhoto, setGroupPhoto] = useState(null);
   const [showCreateFD, setShowCreateFD] = useState(false);
   const [selectedMemberForFD, setSelectedMemberForFD] = useState(null);
+  const [cashDenominations, setCashDenominations] = useState({
+    note200: "",
+    note500: "",
+    note100: "",
+    note50: "",
+    note20: "",
+    note10: "",
+    note5: "",
+    note2: "",
+    note1: "",
+  });
+  const [showFullLoanRecovery, setShowFullLoanRecovery] = useState(false);
+  const [fullLoanRecoveryPaymentMode, setFullLoanRecoveryPaymentMode] = useState({ cash: false, online: false });
+  const [fullLoanRecoveryBankId, setFullLoanRecoveryBankId] = useState("");
+  const [fullLoanRecoveryOnlineRef, setFullLoanRecoveryOnlineRef] = useState("");
+  const [fullLoanRecoveryScreenshot, setFullLoanRecoveryScreenshot] = useState(null);
+  const [loanTotals, setLoanTotals] = useState({ totalLoanAmount: 0, totalLoanRecovered: 0, remainingLoanAmount: 0 });
+  const [loadingLoanTotals, setLoadingLoanTotals] = useState(false);
+  const [memberLoanTotals, setMemberLoanTotals] = useState({}); // Store loan totals for each member
+  const [memberRevenueRemaining, setMemberRevenueRemaining] = useState({}); // Store remaining revenue demands for each member
+  const [memberRecoveryStatus, setMemberRecoveryStatus] = useState({}); // Store recovery status for each member: { [memberId]: { recoveredToday: boolean, recovery: object } }
 
   // Determine active group: use currentGroup from context if available, otherwise use selectedGroup (admin)
   const activeGroup = currentGroup || selectedGroup;
@@ -113,7 +166,7 @@ export default function DemandRecovery() {
       });
   }, [activeGroup?.id]);
 
-  // Load previous recovery data when member changes
+  // Load previous recovery data and check recovery status when member changes
   useEffect(() => {
     if (!activeGroup?.id || !allMembers.length || currentMemberIndex < 0) return;
 
@@ -121,6 +174,26 @@ export default function DemandRecovery() {
     if (!member?.id) return;
 
     const today = new Date().toLocaleDateString("en-GB");
+
+    // Check recovery status for today
+    getMemberRecoveryStatus(member.id, activeGroup.id, today)
+      .then((res) => {
+        if (res?.success) {
+          setMemberRecoveryStatus(prev => ({
+            ...prev,
+            [member.id]: res.data
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error("Error loading recovery status:", err);
+        // Set as not recovered on error
+        setMemberRecoveryStatus(prev => ({
+          ...prev,
+          [member.id]: { recoveredToday: false, recovery: null }
+        }));
+      });
+
     getPreviousRecoveryData(activeGroup.id, member.id, today)
       .then((res) => {
         if (res?.success) {
@@ -147,9 +220,64 @@ export default function DemandRecovery() {
       .catch((err) => {
         console.error("Error loading demand details:", err);
       });
+
+    // Fetch loan totals and remaining amounts for auto-calculation
+    getMemberLoanTotals(activeGroup.id, member.id)
+      .then((res) => {
+        if (res?.success && res?.data) {
+          setMemberLoanTotals(prev => ({
+            ...prev,
+            [member.id]: {
+              // Loan data
+              totalLoanAmount: res.data.totalLoanAmount || 0,
+              totalLoanRecovered: res.data.totalLoanRecovered || 0,
+              remainingLoanAmount: res.data.remainingLoanAmount || 0,
+              // Yogdan data
+              openingYogdan: res.data.openingYogdan || 0,
+              totalYogdanRecovered: res.data.totalYogdanRecovered || 0,
+              remainingYogdanAmount: res.data.remainingYogdanAmount || 0,
+              // Overdue Interest data
+              openingOverdueInterest: res.data.openingOverdueInterest || 0,
+              totalOverdueInterestRecovered: res.data.totalOverdueInterestRecovered || 0,
+              remainingOverdueInterestAmount: res.data.remainingOverdueInterestAmount || 0,
+            }
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error("Error loading loan totals:", err);
+      });
+
+    // Fetch remaining revenue demands (membership fees, group fees) from MemberRevenueDemand
+    getMemberRevenueRemaining(activeGroup.id, member.id)
+      .then((res) => {
+        if (res?.success && res?.data) {
+          setMemberRevenueRemaining(prev => ({
+            ...prev,
+            [member.id]: {
+              membershipFeesSHG: {
+                remainingAmount: res.data.membershipFeesSHG?.remainingAmount || 0,
+                totalDemand: res.data.membershipFeesSHG?.totalDemand || 0,
+                totalPaid: res.data.membershipFeesSHG?.totalPaid || 0,
+                details: res.data.membershipFeesSHG?.details || []
+              },
+              membershipFeesGroup: {
+                remainingAmount: res.data.membershipFeesGroup?.remainingAmount || 0,
+                totalDemand: res.data.membershipFeesGroup?.totalDemand || 0,
+                totalPaid: res.data.membershipFeesGroup?.totalPaid || 0,
+                details: res.data.membershipFeesGroup?.details || []
+              },
+              hasUnpaidDemands: res.data.hasUnpaidDemands || false
+            }
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error("Error loading revenue remaining amounts:", err);
+      });
   }, [activeGroup?.id, currentMemberIndex, allMembers]);
 
-  // Demand summary (dynamic): uses new calculation logic with previous demands
+
   const getDemandSummary = (memberId) => {
     const recovery = recoveries.find((r) => r.memberId === memberId);
     const member = allMembers.find((m) => m.id === memberId);
@@ -157,6 +285,14 @@ export default function DemandRecovery() {
     // Priority 1: Use demandDetails from recovery if available (calculated by backend when saving)
     if (recovery?.demandDetails) {
       const dd = recovery.demandDetails;
+      // Get remaining amounts from API (prefer remaining amounts over recovery demandDetails for yogdan and overdueInterest)
+      const remainingAmounts = memberLoanTotals[memberId] || {};
+      const remainingYogdan = remainingAmounts.remainingYogdanAmount || 0;
+      const remainingOverdueInterest = remainingAmounts.remainingOverdueInterestAmount || 0;
+
+      // Get remaining revenue demands from MemberRevenueDemand API
+      const revenueRemaining = memberRevenueRemaining[memberId] || {};
+
       return {
         saving: {
           prev: dd.saving?.prevDemand || 0,
@@ -178,10 +314,13 @@ export default function DemandRecovery() {
         },
         interest: {
           prev: dd.interest?.prevDemand || 0,
-          curr: dd.interest?.currDemand || 0,
-          total: dd.interest?.totalDemand || 0,
+          // Use remaining overdueInterest from API if available (for existing members)
+          curr: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.currDemand || 0),
+          // Use remaining overdueInterest from API if available, otherwise use backend total
+          total: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.totalDemand || 0),
           actual: dd.interest?.actualPaid || 0,
-          unpaid: dd.interest?.unpaidDemand || 0,
+          // Use remaining overdueInterest - actual if available, otherwise use backend unpaid
+          unpaid: remainingOverdueInterest > 0 ? Math.max(0, remainingOverdueInterest - (dd.interest?.actualPaid || 0)) : (dd.interest?.unpaidDemand || 0),
           opening: dd.interest?.openingBalance || 0,
           closing: dd.interest?.closingBalance || 0,
         },
@@ -196,19 +335,29 @@ export default function DemandRecovery() {
         },
         yogdan: {
           prev: dd.yogdan?.prevDemand || 0,
-          curr: dd.yogdan?.currDemand || dd.yogdan?.totalDemand || 0,
-          total: dd.yogdan?.totalDemand || 0,
+          // Use remaining yogdan from API if available, otherwise use backend demandDetails
+          curr: remainingYogdan > 0 ? remainingYogdan : (dd.yogdan?.currDemand || dd.yogdan?.totalDemand || 0),
+          // Use remaining yogdan from API if available, otherwise use backend total
+          total: remainingYogdan > 0 ? remainingYogdan : (dd.yogdan?.totalDemand || 0),
           actual: recovery?.amounts?.yogdan || 0,
-          unpaid: dd.yogdan?.unpaidDemand || 0,
-          opening: dd.yogdan?.openingBalance || member?.openingYogdan || member?.raw?.openingYogdan || 0,
-          closing: dd.yogdan?.closingBalance || ((member?.openingYogdan || member?.raw?.openingYogdan || 0) + (recovery?.amounts?.yogdan || 0)),
+          // Use remaining yogdan - actual if available, otherwise use backend unpaid
+          unpaid: remainingYogdan > 0 ? Math.max(0, remainingYogdan - (recovery?.amounts?.yogdan || 0)) : (dd.yogdan?.unpaidDemand || 0),
+          opening: dd.yogdan?.openingBalance || 0, // Opening balance is only cumulative payments, NOT openingYogdan
+          closing: dd.yogdan?.closingBalance || (dd.yogdan?.openingBalance || 0) + (recovery?.amounts?.yogdan || 0),
         },
         memFeesSHG: {
           prev: 0,
-          curr: dd.membership?.membershipFeesDue || 0,
-          total: dd.membership?.membershipFeesDue || 0, // Total demand should be just the due amount
+          // Use remaining amount from MemberRevenueDemand API if available, otherwise use backend demandDetails
+          curr: (revenueRemaining?.membershipFeesSHG?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesSHG.remainingAmount)
+            : (dd.membership?.membershipFeesDue || 0),
+          total: (revenueRemaining?.membershipFeesSHG?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesSHG.remainingAmount)
+            : (dd.membership?.membershipFeesDue || 0),
           actual: recovery?.amounts?.memFeesSHG || 0,
-          unpaid: Math.max(0, (dd.membership?.membershipFeesDue || 0) - (recovery?.amounts?.memFeesSHG || 0)),
+          unpaid: (revenueRemaining?.membershipFeesSHG?.remainingAmount || 0) > 0
+            ? Math.max(0, (revenueRemaining.membershipFeesSHG.remainingAmount) - (recovery?.amounts?.memFeesSHG || 0))
+            : Math.max(0, (dd.membership?.membershipFeesDue || 0) - (recovery?.amounts?.memFeesSHG || 0)),
           opening: 0,
           closing: 0,
         },
@@ -223,10 +372,17 @@ export default function DemandRecovery() {
         },
         memFeesGroup: {
           prev: 0,
-          curr: dd.membership?.membershipGroupDue || 0,
-          total: dd.membership?.membershipGroupDue || 0, // Total demand should be just the due amount, not due + actual
-          actual: recovery?.amounts?.memFeesGroup || 0,
-          unpaid: Math.max(0, (dd.membership?.membershipGroupDue || 0) - (recovery?.amounts?.memFeesGroup || 0)),
+          // Use remaining amount from MemberRevenueDemand API if available, otherwise use backend demandDetails
+          curr: (revenueRemaining?.membershipFeesGroup?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesGroup.remainingAmount)
+            : (dd.membership?.membershipGroupDue || 0),
+          total: (revenueRemaining?.membershipFeesGroup?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesGroup.remainingAmount)
+            : (dd.membership?.membershipGroupDue || 0),
+          actual: dd.membership?.actualMemFeesGroup || 0,
+          unpaid: (revenueRemaining?.membershipFeesGroup?.remainingAmount || 0) > 0
+            ? Math.max(0, (revenueRemaining.membershipFeesGroup.remainingAmount) - (dd.membership?.actualMemFeesGroup || 0))
+            : Math.max(0, (dd.membership?.membershipGroupDue || 0) - (dd.membership?.actualMemFeesGroup || 0)),
           opening: 0,
           closing: 0,
         },
@@ -266,6 +422,14 @@ export default function DemandRecovery() {
     const backendDemandDetails = demandSummaries[memberId];
     if (backendDemandDetails) {
       const dd = backendDemandDetails;
+      // Get remaining amounts from API (prefer remaining amounts over backend demandDetails for yogdan and overdueInterest)
+      const remainingAmounts = memberLoanTotals[memberId] || {};
+      const remainingYogdan = remainingAmounts.remainingYogdanAmount || 0;
+      const remainingOverdueInterest = remainingAmounts.remainingOverdueInterestAmount || 0;
+
+      // Get remaining revenue demands from MemberRevenueDemand API
+      const revenueRemaining = memberRevenueRemaining[memberId] || {};
+
       return {
         saving: {
           prev: dd.saving?.prevDemand || 0,
@@ -287,10 +451,13 @@ export default function DemandRecovery() {
         },
         interest: {
           prev: dd.interest?.prevDemand || 0,
-          curr: dd.interest?.currDemand || 0,
-          total: dd.interest?.totalDemand || 0,
+          // Use remaining overdueInterest from API if available (for existing members)
+          curr: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.currDemand || 0),
+          // Use remaining overdueInterest from API if available, otherwise use backend total
+          total: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.totalDemand || 0),
           actual: recovery?.amounts?.interest || 0,
-          unpaid: dd.interest?.unpaidDemand || 0,
+          // Use remaining overdueInterest - actual if available, otherwise use backend unpaid
+          unpaid: remainingOverdueInterest > 0 ? Math.max(0, remainingOverdueInterest - (recovery?.amounts?.interest || 0)) : (dd.interest?.unpaidDemand || 0),
           opening: dd.interest?.openingBalance || 0,
           closing: dd.interest?.closingBalance || 0,
         },
@@ -309,15 +476,22 @@ export default function DemandRecovery() {
           total: dd.yogdan?.totalDemand || 0,
           actual: recovery?.amounts?.yogdan || 0,
           unpaid: dd.yogdan?.unpaidDemand || 0,
-          opening: dd.yogdan?.openingBalance || member?.openingYogdan || member?.raw?.openingYogdan || 0,
-          closing: dd.yogdan?.closingBalance || ((member?.openingYogdan || member?.raw?.openingYogdan || 0) + (recovery?.amounts?.yogdan || 0)),
+          opening: dd.yogdan?.openingBalance || 0, // Opening balance is only cumulative payments, NOT openingYogdan
+          closing: dd.yogdan?.closingBalance || (dd.yogdan?.openingBalance || 0) + (recovery?.amounts?.yogdan || 0),
         },
         memFeesSHG: {
           prev: 0,
-          curr: dd.membership?.membershipFeesDue || 0,
-          total: dd.membership?.membershipFeesDue || 0,
-          actual: recovery?.amounts?.memFeesSHG || 0,
-          unpaid: Math.max(0, (dd.membership?.membershipFeesDue || 0) - (recovery?.amounts?.memFeesSHG || 0)),
+          // Use remaining amount from MemberRevenueDemand API if available, otherwise use backend demandDetails
+          curr: (revenueRemaining?.membershipFeesSHG?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesSHG.remainingAmount)
+            : (dd.membership?.membershipFeesDue || 0),
+          total: (revenueRemaining?.membershipFeesSHG?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesSHG.remainingAmount)
+            : (dd.membership?.membershipFeesDue || 0),
+          actual: dd.membership?.actualMemFeesSHG || 0,
+          unpaid: (revenueRemaining?.membershipFeesSHG?.remainingAmount || 0) > 0
+            ? Math.max(0, (revenueRemaining.membershipFeesSHG.remainingAmount) - (dd.membership?.actualMemFeesSHG || 0))
+            : Math.max(0, (dd.membership?.membershipFeesDue || 0) - (dd.membership?.actualMemFeesSHG || 0)),
           opening: 0,
           closing: 0,
         },
@@ -332,10 +506,17 @@ export default function DemandRecovery() {
         },
         memFeesGroup: {
           prev: 0,
-          curr: dd.membership?.membershipGroupDue || 0,
-          total: dd.membership?.membershipGroupDue || 0,
-          actual: recovery?.amounts?.memFeesGroup || 0,
-          unpaid: Math.max(0, (dd.membership?.membershipGroupDue || 0) - (recovery?.amounts?.memFeesGroup || 0)),
+          // Use remaining amount from MemberRevenueDemand API if available, otherwise use backend demandDetails
+          curr: (revenueRemaining?.membershipFeesGroup?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesGroup.remainingAmount)
+            : (dd.membership?.membershipGroupDue || 0),
+          total: (revenueRemaining?.membershipFeesGroup?.remainingAmount || 0) > 0
+            ? (revenueRemaining.membershipFeesGroup.remainingAmount)
+            : (dd.membership?.membershipGroupDue || 0),
+          actual: dd.membership?.actualMemFeesGroup || 0,
+          unpaid: (revenueRemaining?.membershipFeesGroup?.remainingAmount || 0) > 0
+            ? Math.max(0, (revenueRemaining.membershipFeesGroup.remainingAmount) - (dd.membership?.actualMemFeesGroup || 0))
+            : Math.max(0, (dd.membership?.membershipGroupDue || 0) - (dd.membership?.actualMemFeesGroup || 0)),
           opening: 0,
           closing: 0,
         },
@@ -386,8 +567,15 @@ export default function DemandRecovery() {
     const openingSaving = member?.openingSaving || member?.raw?.openingSaving || 0;
     const openingLoan = member?.loanDetails?.amount || member?.raw?.loanDetails?.amount || 0;
     const openingFd = member?.fdDetails?.amount || member?.raw?.fdDetails?.amount || 0;
-    const openingYogdan = member?.openingYogdan || member?.raw?.openingYogdan || 0;
-    const openingInterest = member?.loanDetails?.overdueInterest || member?.raw?.loanDetails?.overdueInterest || 0;
+
+    // Get remaining amounts from API (prefer API data over member model)
+    const remainingAmounts = memberLoanTotals[memberId] || {};
+    const remainingYogdan = remainingAmounts.remainingYogdanAmount || 0;
+    const remainingOverdueInterest = remainingAmounts.remainingOverdueInterestAmount || 0;
+
+    // Fallback to member model if API data not available
+    const openingYogdan = remainingAmounts.openingYogdan || member?.openingYogdan || member?.raw?.openingYogdan || 0;
+    const openingInterest = remainingAmounts.openingOverdueInterest || member?.loanDetails?.overdueInterest || member?.raw?.loanDetails?.overdueInterest || 0;
 
     // Check if member is existing member
     const isExistingMember = member?.isExistingMember || member?.raw?.isExistingMember || false;
@@ -449,57 +637,13 @@ export default function DemandRecovery() {
     const loanOpeningBalance = 0; // Will be calculated by backend
     const loanClosingBalance = loanOpeningBalance + actualLoan;
 
-    // Calculate interest demand details (only for members with active loans)
-    // Calculate interest from loan date to meeting date
-    let interestCurrDemand = 0;
-    const hasLoan = activeLoan || openingLoan > 0;
-
-    if (hasLoan) {
-      // Get loan details
-      const loanAmount = activeLoan?.amount || openingLoan || 0;
-      const loanDate = activeLoan?.date ? new Date(activeLoan.date) :
-        (member?.loanDetails?.loanDate ? new Date(member.loanDetails.loanDate) :
-          (member?.raw?.loanDetails?.loanDate ? new Date(member.raw.loanDetails.loanDate) : null));
-
-      // Get meeting date (recovery date or today)
-      const meetingDate = recovery?.date ? new Date(recovery.date) : today;
-
-      // Get loan rate (prefer snapshot from loan, else use current group rate)
-      const loanRate = activeLoan?.loan_rate_snapshot ||
-        activeGroup?.raw?.loan_rate ||
-        activeGroup?.loan_rate || 0;
-
-      // Calculate interest if we have loan amount, loan date, and loan rate
-      // DAILY INTEREST CALCULATION (same as backend)
-      if (loanAmount > 0 && loanDate && loanRate > 0) {
-        // Normalize both dates to start of day for accurate day calculation
-        const loanDateStart = new Date(loanDate);
-        loanDateStart.setHours(0, 0, 0, 0);
-        const meetingDateStart = new Date(meetingDate);
-        meetingDateStart.setHours(0, 0, 0, 0);
-
-        // Calculate days between loan date and meeting date
-        const timeDiff = meetingDateStart.getTime() - loanDateStart.getTime();
-        const daysDiff = Math.max(0, Math.floor(timeDiff / (1000 * 60 * 60 * 24))); // Use floor, ensure non-negative
-
-        if (daysDiff > 0) {
-          // Check if it's a leap year for accurate calculation
-          const isLeapYear = (year) => {
-            return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-          };
-          const daysInYear = isLeapYear(meetingDate.getFullYear()) ? 366 : 365;
-
-          // Daily interest calculation: (loanAmount * annualRate / 100 / daysInYear) * numberOfDays
-          const interestBeforeRound = (loanAmount * loanRate / 100 / daysInYear) * daysDiff;
-          interestCurrDemand = Math.round(interestBeforeRound * 100) / 100;
-        }
-      } else {
-        // Fallback to opening interest if calculation not possible
-        interestCurrDemand = openingInterest || 0;
-      }
-    }
-
+    // Interest calculation - use remaining overdueInterest from API
+    // For existing members: overdueInterest is one-time until paid
+    // Get remaining overdueInterest from memberLoanTotals (calculated from opening - recovered)
+    const remainingOverdueInterestForInterest = memberLoanTotals[memberId]?.remainingOverdueInterestAmount || 0;
     const interestPrevDemand = prevData.interest.unpaidDemand || 0;
+    // Current demand = remaining overdueInterest (if not yet paid)
+    const interestCurrDemand = remainingOverdueInterestForInterest > 0 ? remainingOverdueInterestForInterest : 0;
     const interestTotalDemand = interestPrevDemand + interestCurrDemand;
     const interestUnpaidDemand = Math.max(0, interestTotalDemand - actualInterest);
     const interestOpeningBalance = 0; // Will be calculated by backend
@@ -586,9 +730,10 @@ export default function DemandRecovery() {
       interest: {
         prev: interestPrevDemand,
         curr: interestCurrDemand,
-        total: interestTotalDemand,
+        // Use remaining overdue interest from API if available
+        total: remainingOverdueInterestForInterest > 0 ? remainingOverdueInterestForInterest : interestTotalDemand,
         actual: actualInterest,
-        unpaid: interestUnpaidDemand,
+        unpaid: remainingOverdueInterestForInterest > 0 ? Math.max(0, remainingOverdueInterestForInterest - actualInterest) : interestUnpaidDemand,
         opening: interestOpeningBalance,
         closing: interestClosingBalance,
       },
@@ -603,49 +748,27 @@ export default function DemandRecovery() {
       },
       yogdan: {
         prev: 0,
-        curr: 0,
-        // Calculate Yogdan demand from active loans (1% of loan amount)
-        total: (() => {
-          let totalYogdanDue = 0;
-          // Get all active loans for this member
-          const memberLoans = Object.values(activeLoans).filter(
-            loan => loan.memberId === memberId || loan.memberId?.toString() === memberId?.toString()
-          );
-          // Sum up Yogdan amounts from all loans (1% of each loan amount)
-          memberLoans.forEach(loan => {
-            if (loan.yogdanAmount && loan.yogdanAmount > 0) {
-              totalYogdanDue += loan.yogdanAmount;
-            } else if (loan.amount) {
-              // Fallback: calculate 1% if yogdanAmount not set
-              totalYogdanDue += (loan.amount * 0.01);
-            }
-          });
-          return totalYogdanDue;
-        })(),
+        // Use remaining yogdan amount from API
+        curr: remainingYogdan,
+        total: remainingYogdan,
         actual: actualYogdan,
-        unpaid: (() => {
-          let totalYogdanDue = 0;
-          const memberLoans = Object.values(activeLoans).filter(
-            loan => loan.memberId === memberId || loan.memberId?.toString() === memberId?.toString()
-          );
-          memberLoans.forEach(loan => {
-            if (loan.yogdanAmount && loan.yogdanAmount > 0) {
-              totalYogdanDue += loan.yogdanAmount;
-            } else if (loan.amount) {
-              totalYogdanDue += (loan.amount * 0.01);
-            }
-          });
-          return Math.max(0, totalYogdanDue - (openingYogdan + actualYogdan));
-        })(),
-        opening: openingYogdan,
-        closing: openingYogdan + actualYogdan,
+        unpaid: Math.max(0, remainingYogdan - actualYogdan),
+        opening: openingYogdan, // Opening balance = openingYogdan from member model
+        closing: (remainingAmounts.totalYogdanRecovered || 0) + actualYogdan, // Closing = total recovered + actual paid
       },
       memFeesSHG: {
         prev: 0,
-        curr: membershipFeesDue,
-        total: membershipFeesDue, // Total demand should be just the due amount, not due + actual
+        // Use remaining amount from MemberRevenueDemand API if available, otherwise use calculated membershipFeesDue
+        curr: (memberRevenueRemaining[memberId]?.membershipFeesSHG?.remainingAmount || 0) > 0
+          ? (memberRevenueRemaining[memberId].membershipFeesSHG.remainingAmount)
+          : membershipFeesDue,
+        total: (memberRevenueRemaining[memberId]?.membershipFeesSHG?.remainingAmount || 0) > 0
+          ? (memberRevenueRemaining[memberId].membershipFeesSHG.remainingAmount)
+          : membershipFeesDue,
         actual: actualMemFeesSHG,
-        unpaid: Math.max(0, membershipFeesDue - actualMemFeesSHG),
+        unpaid: (memberRevenueRemaining[memberId]?.membershipFeesSHG?.remainingAmount || 0) > 0
+          ? Math.max(0, (memberRevenueRemaining[memberId].membershipFeesSHG.remainingAmount) - actualMemFeesSHG)
+          : Math.max(0, membershipFeesDue - actualMemFeesSHG),
         opening: 0,
         closing: 0,
       },
@@ -660,10 +783,17 @@ export default function DemandRecovery() {
       },
       memFeesGroup: {
         prev: 0,
-        curr: membershipGroupDue,
-        total: membershipGroupDue, // Total demand should be just the due amount, not due + actual
+        // Use remaining amount from MemberRevenueDemand API if available, otherwise use calculated membershipGroupDue
+        curr: (memberRevenueRemaining[memberId]?.membershipFeesGroup?.remainingAmount || 0) > 0
+          ? (memberRevenueRemaining[memberId].membershipFeesGroup.remainingAmount)
+          : membershipGroupDue,
+        total: (memberRevenueRemaining[memberId]?.membershipFeesGroup?.remainingAmount || 0) > 0
+          ? (memberRevenueRemaining[memberId].membershipFeesGroup.remainingAmount)
+          : membershipGroupDue,
         actual: actualMemFeesGroup,
-        unpaid: Math.max(0, membershipGroupDue - actualMemFeesGroup),
+        unpaid: (memberRevenueRemaining[memberId]?.membershipFeesGroup?.remainingAmount || 0) > 0
+          ? Math.max(0, (memberRevenueRemaining[memberId].membershipFeesGroup.remainingAmount) - actualMemFeesGroup)
+          : Math.max(0, membershipGroupDue - actualMemFeesGroup),
         opening: 0,
         closing: 0,
       },
@@ -821,6 +951,39 @@ export default function DemandRecovery() {
   );
   const currentMemberSummary = currentMember ? getDemandSummary(currentMember.id) : null;
 
+  // Get recovery status for current member
+  const currentMemberRecoveryStatus = currentMember ? memberRecoveryStatus[currentMember.id] : null;
+  const isAlreadyRecovered = currentMemberRecoveryStatus?.recoveredToday || false;
+
+  // Validation handler for amount fields (prevents entering more than due amount)
+  const handleAmountChange = (fieldName, value) => {
+    const numValue = parseFloat(value) || 0;
+    // Get max allowed value from currentMemberSummary (total due)
+    const maxValue = currentMemberSummary?.[fieldName]?.total || 0;
+
+    // For saving field, allow any value (no max restriction)
+    if (fieldName === 'saving') {
+      setAmountBreakup({ ...amountBreakup, [fieldName]: value });
+      setAutoCalculated(false);
+      return;
+    }
+
+    // For other fields, restrict to max value (total due)
+    if (value === '' || value === null || value === undefined) {
+      setAmountBreakup({ ...amountBreakup, [fieldName]: value });
+      setAutoCalculated(false);
+    } else if (numValue <= maxValue) {
+      setAmountBreakup({ ...amountBreakup, [fieldName]: value });
+      setAutoCalculated(false);
+    } else {
+      // Show alert if exceeds max
+      alert(`Amount cannot exceed the due amount of ₹${maxValue.toLocaleString()}`);
+      // Set to max value
+      setAmountBreakup({ ...amountBreakup, [fieldName]: maxValue.toString() });
+      setAutoCalculated(false);
+    }
+  };
+
   // Check if all members have recovery (including absent without recovery)
   const allMembersProcessed = allMembers.every((member) => {
     const recovery = recoveries.find((r) => r.memberId === member.id);
@@ -907,7 +1070,8 @@ export default function DemandRecovery() {
       const savingDue = parseFloat(summary?.saving?.total || 0) || 0;
       const loanDue = parseFloat(summary?.loan?.total || 0) || 0;
       const interestDue = parseFloat(summary?.interest?.total || 0) || 0;
-      const yogdanDue = parseFloat(summary?.yogdan?.total || summary?.yogdan?.unpaid || 0) || 0; // Yogdan demand from loans (1% of loan amount)
+      // Yogdan demand from backend (only from demandDetails, not frontend calculation)
+      const yogdanDue = parseFloat(summary?.yogdan?.total || summary?.yogdan?.unpaid || 0) || 0;
       const membershipFeesDue = parseFloat(summary?.memFeesSHG?.curr || 0) || 0; // Current month membership fees due
       const membershipGroupDue = parseFloat(summary?.memFeesGroup?.curr || 0) || 0; // Current month membership group due
 
@@ -941,6 +1105,8 @@ export default function DemandRecovery() {
       const chargesDue = summary?.charges?.chargesDue || {};
 
       // Priority 1: Yogdan (1% of loan amount - when loan is given) - FIRST PRIORITY
+      // Yogdan should be paid first when entering total amount
+      // Only use backend demand details (from getDemandSummary), not frontend calculations
       if (yogdanDue > 0 && remaining > 0) {
         const yogdanAmount = Math.min(yogdanDue, remaining);
         calculated.yogdan = yogdanAmount.toFixed(2);
@@ -997,8 +1163,14 @@ export default function DemandRecovery() {
         remaining -= savingAmount;
       }
 
-      // Priority 4: Loan (if due)
-      if (loanDue > 0 && remaining > 0) {
+      // Priority 4: Loan (if due and not fully paid)
+      // Check if loan is fully paid using loan totals from LoanMaster and RecoveryMaster
+      const currentMemberLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
+      const isLoanFullyPaid = currentMemberLoanTotals
+        ? (currentMemberLoanTotals.remainingLoanAmount <= 0 || currentMemberLoanTotals.totalLoanRecovered >= currentMemberLoanTotals.totalLoanAmount)
+        : false;
+
+      if (loanDue > 0 && remaining > 0 && !isLoanFullyPaid) {
         const loanAmount = Math.min(loanDue, remaining);
         calculated.loan = loanAmount.toFixed(2);
         remaining -= loanAmount;
@@ -1075,15 +1247,25 @@ export default function DemandRecovery() {
     });
   };
 
-  // Handle payment mode
+  // Handle payment mode - only one selection allowed (cash OR online)
   const handlePaymentModeChange = (mode) => {
-    setPaymentMode({
-      ...paymentMode,
-      [mode]: !paymentMode[mode],
-    });
-    // Clear bank selection if switching from online to cash
-    if (mode === "cash" && paymentMode.online) {
-      setSelectedBankId("");
+    if (mode === "cash") {
+      setPaymentMode({ cash: true, online: false });
+      setSelectedBankId(""); // Clear bank selection when switching to cash
+      setOnlineRef(""); // Clear online ref
+    } else if (mode === "online") {
+      setPaymentMode({ cash: false, online: true });
+    }
+  };
+
+  // Handle full loan recovery payment mode
+  const handleFullLoanRecoveryPaymentMode = (mode) => {
+    if (mode === "cash") {
+      setFullLoanRecoveryPaymentMode({ cash: true, online: false });
+      setFullLoanRecoveryBankId(""); // Clear bank selection when switching to cash
+      setFullLoanRecoveryOnlineRef(""); // Clear online ref
+    } else if (mode === "online") {
+      setFullLoanRecoveryPaymentMode({ cash: false, online: true });
     }
   };
 
@@ -1094,6 +1276,18 @@ export default function DemandRecovery() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setScreenshot(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle full loan recovery file upload
+  const handleFullLoanRecoveryFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFullLoanRecoveryScreenshot(reader.result);
       };
       reader.readAsDataURL(file);
     }
@@ -1121,15 +1315,15 @@ export default function DemandRecovery() {
 
   // Save current member recovery
   const handleSaveRecovery = async () => {
-    // Validate activeGroup exists
-    if (!activeGroup || !activeGroup.id) {
-      alert("Group information is missing. Please select a group.");
+    // Check if already recovered
+    if (isAlreadyRecovered) {
+      alert("Demand for this member has already been recovered today.");
       return;
     }
 
-    // Validate meeting day
-    if (!isMeetingDay(new Date(), activeGroup)) {
-      alert("Recovery can only be done on scheduled meeting days. Please check the meeting schedule.");
+    // Validate activeGroup exists
+    if (!activeGroup || !activeGroup.id) {
+      alert("Group information is missing. Please select a group.");
       return;
     }
 
@@ -1251,6 +1445,14 @@ export default function DemandRecovery() {
         screenshot: screenshot || null,
       };
 
+      console.log("[DEMAND_RECOVERY] Saving member recovery:", {
+        memberId: memberRecovery.memberId,
+        memberCode: memberRecovery.memberCode,
+        memberName: memberRecovery.memberName,
+        amounts: memberRecovery.amounts,
+        total: memberRecovery.total,
+        paymentMode: memberRecovery.paymentMode,
+      });
       await updateMemberRecovery(activeGroup.id, today, memberRecovery);
       await loadRecoveries();
 
@@ -1267,16 +1469,63 @@ export default function DemandRecovery() {
     }
   };
 
-  // Save group photo and finalize
-  const handleFinalize = async () => {
-    if (!groupPhoto) {
-      alert("Please take group photo");
+  // Fetch loan totals when modal opens
+  useEffect(() => {
+    if (showFullLoanRecovery && activeGroup?.id && currentMember?.id) {
+      setLoadingLoanTotals(true);
+      getMemberLoanTotals(activeGroup.id, currentMember.id)
+        .then((res) => {
+          if (res?.success && res?.data) {
+            setLoanTotals({
+              totalLoanAmount: res.data.totalLoanAmount || 0,
+              totalLoanRecovered: res.data.totalLoanRecovered || 0,
+              remainingLoanAmount: res.data.remainingLoanAmount || 0,
+            });
+          }
+        })
+        .catch((err) => {
+          console.error("Error loading loan totals:", err);
+          setLoanTotals({ totalLoanAmount: 0, totalLoanRecovered: 0, remainingLoanAmount: 0 });
+        })
+        .finally(() => {
+          setLoadingLoanTotals(false);
+        });
+    }
+  }, [showFullLoanRecovery, activeGroup?.id, currentMember?.id]);
+
+  // Handle full loan recovery submission
+  const handleFullLoanRecovery = async () => {
+    if (!activeGroup || !activeGroup.id) {
+      alert("Group information is missing. Please select a group.");
       return;
     }
 
-    // Validate meeting day
-    if (!isMeetingDay(new Date(), activeGroup)) {
-      alert("Recovery can only be finalized on scheduled meeting days. Please check the meeting schedule.");
+    if (!currentMember) {
+      alert("Member information is missing.");
+      return;
+    }
+
+    // Validate payment mode
+    if (!fullLoanRecoveryPaymentMode.cash && !fullLoanRecoveryPaymentMode.online) {
+      alert("Please select payment mode");
+      return;
+    }
+
+    if (fullLoanRecoveryPaymentMode.online && !fullLoanRecoveryOnlineRef.trim()) {
+      alert("Please enter online payment reference number");
+      return;
+    }
+
+    if (fullLoanRecoveryPaymentMode.online && !fullLoanRecoveryBankId) {
+      alert("Please select a bank for online payment");
+      return;
+    }
+
+    // Use remaining loan amount from loan totals (calculated from LoanMaster and RecoveryMaster)
+    const remainingLoanAmount = loanTotals.remainingLoanAmount || 0;
+    if (remainingLoanAmount <= 0) {
+      alert("No remaining loan amount to recover.");
+      setShowFullLoanRecovery(false);
       return;
     }
 
@@ -1284,8 +1533,128 @@ export default function DemandRecovery() {
       setLoading(true);
       const today = new Date().toLocaleDateString("en-GB");
 
-      // Update group photo in recovery session
-      await updateRecoveryPhoto(activeGroup.id, today, groupPhoto);
+      // Create recovery with full remaining loan amount
+      const memberRecovery = {
+        memberId: currentMember.id,
+        memberCode: currentMember.code,
+        memberName: currentMember.name,
+        attendance: "present",
+        recoveryByOther: false,
+        otherMemberId: null,
+        amounts: {
+          saving: 0,
+          loan: remainingLoanAmount, // Full remaining loan amount
+          fd: 0,
+          interest: 0,
+          yogdan: 0,
+          memFeesSHG: 0,
+          memFeesSamiti: 0,
+          memFeesGroup: 0,
+          penalty: 0,
+          other: 0,
+          charges: {},
+        },
+        paymentMode: fullLoanRecoveryPaymentMode,
+        onlineRef: fullLoanRecoveryPaymentMode.online ? fullLoanRecoveryOnlineRef : null,
+        bankId: fullLoanRecoveryPaymentMode.online ? fullLoanRecoveryBankId : null,
+        screenshot: fullLoanRecoveryScreenshot || null,
+      };
+
+      console.log("[FULL_LOAN_RECOVERY] Saving full loan recovery:", {
+        memberId: memberRecovery.memberId,
+        memberCode: memberRecovery.memberCode,
+        loanAmount: remainingLoanAmount,
+        paymentMode: memberRecovery.paymentMode,
+      });
+
+      await updateMemberRecovery(activeGroup.id, today, memberRecovery);
+      await loadRecoveries();
+
+      // Close modal and reset form
+      setShowFullLoanRecovery(false);
+      setFullLoanRecoveryPaymentMode({ cash: false, online: false });
+      setFullLoanRecoveryBankId("");
+      setFullLoanRecoveryOnlineRef("");
+      setFullLoanRecoveryScreenshot(null);
+
+      alert(`Full loan recovery of ₹${remainingLoanAmount.toLocaleString()} saved successfully!`);
+
+      // Reload to refresh demand details
+      const todayStr = new Date().toLocaleDateString("en-GB");
+      getDemandDetails(activeGroup.id, currentMember.id, todayStr)
+        .then((res) => {
+          if (res?.success && res?.data) {
+            setDemandSummaries(prev => ({
+              ...prev,
+              [currentMember.id]: res.data
+            }));
+          }
+        })
+        .catch((err) => {
+          console.error("Error reloading demand details:", err);
+        });
+    } catch (error) {
+      console.error("Error saving full loan recovery:", error);
+      alert(error?.response?.data?.message || error?.message || "Error saving full loan recovery");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Save group photo and finalize
+  const handleFinalize = async () => {
+    if (!groupPhoto) {
+      alert("Please take group photo");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const today = new Date().toLocaleDateString("en-GB");
+
+      // Validate cash denominations if totalCash > 0
+      if (totals.totalCash > 0) {
+        const calculatedTotal = (parseFloat(cashDenominations.note200) || 0) * 200 +
+          (parseFloat(cashDenominations.note500) || 0) * 500 +
+          (parseFloat(cashDenominations.note100) || 0) * 100 +
+          (parseFloat(cashDenominations.note50) || 0) * 50 +
+          (parseFloat(cashDenominations.note20) || 0) * 20 +
+          (parseFloat(cashDenominations.note10) || 0) * 10 +
+          (parseFloat(cashDenominations.note5) || 0) * 5 +
+          (parseFloat(cashDenominations.note2) || 0) * 2 +
+          (parseFloat(cashDenominations.note1) || 0) * 1;
+
+        // Round totalCash: if decimal >= 0.5, round up; otherwise round down
+        const roundedTotalCash = totals.totalCash >= 0
+          ? Math.floor(totals.totalCash) + (totals.totalCash % 1 >= 0.5 ? 1 : 0)
+          : Math.ceil(totals.totalCash) - (Math.abs(totals.totalCash) % 1 >= 0.5 ? 1 : 0);
+        const roundedCalculatedTotal = Math.round(calculatedTotal);
+
+        // Allow 1 rupee difference for rounding
+        if (Math.abs(roundedCalculatedTotal - roundedTotalCash) > 1) {
+          alert(`Cash denominations sum (₹${roundedCalculatedTotal.toLocaleString()}) does not match Total Cash (₹${roundedTotalCash.toLocaleString()}). Please verify the note counts.`);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Update group photo and cash denominations in recovery session
+      await updateRecoveryPhoto(
+        activeGroup.id,
+        today,
+        groupPhoto,
+        totals.totalCash > 0 ? {
+          note200: parseFloat(cashDenominations.note200) || 0,
+          note500: parseFloat(cashDenominations.note500) || 0,
+          note100: parseFloat(cashDenominations.note100) || 0,
+          note50: parseFloat(cashDenominations.note50) || 0,
+          note20: parseFloat(cashDenominations.note20) || 0,
+          note10: parseFloat(cashDenominations.note10) || 0,
+          note5: parseFloat(cashDenominations.note5) || 0,
+          note2: parseFloat(cashDenominations.note2) || 0,
+          note1: parseFloat(cashDenominations.note1) || 0,
+        } : null
+      );
 
       // For group panel, create approval request; for admin, recovery is already saved
       if (currentGroup) {
@@ -1309,6 +1678,17 @@ export default function DemandRecovery() {
       setCurrentMemberIndex(0);
       setCurrentStep(1);
       setGroupPhoto(null);
+      setCashDenominations({
+        note200: "",
+        note500: "",
+        note100: "",
+        note50: "",
+        note20: "",
+        note10: "",
+        note5: "",
+        note2: "",
+        note1: "",
+      });
       resetForm();
     } catch (error) {
       console.error("Error finalizing:", error);
@@ -1370,17 +1750,21 @@ export default function DemandRecovery() {
   return (
     <div className="max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-          <DollarSign size={32} />
-          Recovery Management
-        </h1>
-        <p className="text-gray-600 mt-2">
-          {activeGroup
-            ? `Enter recovery for all members of ${activeGroup.name}`
-            : isAdminMode
-              ? "Select a group to start recovery process"
-              : "Loading group information..."}
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+              <DollarSign size={32} />
+              Recovery Management
+            </h1>
+            <p className="text-gray-600 mt-2">
+              {activeGroup
+                ? `Enter recovery for all members of ${activeGroup.name}`
+                : isAdminMode
+                  ? "Select a group to start recovery process"
+                  : "Loading group information..."}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Step 0: Select Group (Admin only - when currentGroup is null) */}
@@ -1425,38 +1809,8 @@ export default function DemandRecovery() {
         </div>
       )}
 
-      {/* Meeting Date Check - Block access if not on meeting day */}
-      {currentStep === 1 && activeGroup && !isTodayMeetingDay && (
-        <div className="bg-white rounded-lg shadow-md p-8 text-center">
-          <div className="flex flex-col items-center gap-4">
-            <XCircle size={64} className="text-red-500" />
-            <h2 className="text-2xl font-bold text-gray-800">Recovery Not Available</h2>
-            <p className="text-lg text-gray-600">
-              Recovery can only be done on scheduled meeting days.
-            </p>
-            {nextMeetingDate && (
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-gray-600 mb-1">Next Meeting Date:</p>
-                <p className="text-xl font-semibold text-blue-700">
-                  {formatMeetingDateTime(nextMeetingDate, meetingTime)}
-                </p>
-              </div>
-            )}
-            <p className="text-sm text-gray-500 mt-4">
-              Today's date: {today.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })}
-            </p>
-            {activeGroup.raw?.meeting_date_1_day && (
-              <p className="text-sm text-gray-500">
-                Meeting days: {activeGroup.raw.meeting_date_1_day}
-                {activeGroup.raw.meeting_date_2_day && ` and ${activeGroup.raw.meeting_date_2_day}`} of each month
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Step 1: Recovery Entry */}
-      {currentStep === 1 && activeGroup && isTodayMeetingDay && (
+      {currentStep === 1 && activeGroup && (
         <div className="space-y-6">
           {/* Progress Bar */}
           <div className="bg-white rounded-lg shadow-md p-6">
@@ -1545,37 +1899,48 @@ export default function DemandRecovery() {
                   <User size={20} className="text-blue-600" />
                   {currentMember.name} ({currentMember.code})
                 </h3>
-                <button
-                  onClick={() => {
-                    // Get full member data from allMembers
-                    const fullMember = allMembers.find(m => m.id === currentMember.id);
-                    let memberData = null;
+                <div className="flex gap-2">
+                  {/*   <button
+                    onClick={() => {
+                      setShowFullLoanRecovery(true);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm shadow-md"
+                  >
+                    <CreditCard size={16} />
+                    Full Loan Recovery
+                  </button>*/}
+                  <button
+                    onClick={() => {
+                      // Get full member data from allMembers
+                      const fullMember = allMembers.find(m => m.id === currentMember.id);
+                      let memberData = null;
 
-                    if (fullMember?.raw) {
-                      // Use raw member data and ensure group is set
-                      memberData = {
-                        ...fullMember.raw,
-                        group: activeGroup?.raw || activeGroup?.id || fullMember.raw.group,
-                      };
-                    } else {
-                      // If raw data not available, construct member data
-                      memberData = {
-                        _id: currentMember.id,
-                        id: currentMember.id,
-                        Member_Id: currentMember.code,
-                        Member_Nm: currentMember.name,
-                        group: activeGroup?.raw || activeGroup?.id,
-                      };
-                    }
+                      if (fullMember?.raw) {
+                        // Use raw member data and ensure group is set
+                        memberData = {
+                          ...fullMember.raw,
+                          group: activeGroup?.raw || activeGroup?.id || fullMember.raw.group,
+                        };
+                      } else {
+                        // If raw data not available, construct member data
+                        memberData = {
+                          _id: currentMember.id,
+                          id: currentMember.id,
+                          Member_Id: currentMember.code,
+                          Member_Nm: currentMember.name,
+                          group: activeGroup?.raw || activeGroup?.id,
+                        };
+                      }
 
-                    setSelectedMemberForFD(memberData);
-                    setShowCreateFD(true);
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm shadow-md"
-                >
-                  <Plus size={16} />
-                  Create FD
-                </button>
+                      setSelectedMemberForFD(memberData);
+                      setShowCreateFD(true);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm shadow-md"
+                  >
+                    <Plus size={16} />
+                    Create FD
+                  </button>
+                </div>
               </div>
 
               {/* Demand Summary Table */}
@@ -1622,7 +1987,26 @@ export default function DemandRecovery() {
                           if (key === "charges" && data.chargesDue && Object.keys(data.chargesDue).length > 0) {
                             return true;
                           }
-                          // Hide these categories if all values are 0: yogdan, memFeesSHG, memFeesSamiti, memFeesGroup, penalty, other
+                          // Special handling for yogdan - show only if unpaid > 0 (not paid yet)
+                          if (key === "yogdan") {
+                            const hasYogdanUnpaid = data.unpaid > 0;
+                            return hasYogdanUnpaid;
+                          }
+                          // Special handling for memFeesSHG - show if has remaining amount from API OR if has any amount due
+                          if (key === "memFeesSHG") {
+                            const hasRemainingFromAPI = (memberRevenueRemaining[currentMember?.id]?.membershipFeesSHG?.remainingAmount || 0) > 0;
+                            const hasValue = data.prev > 0 || data.curr > 0 || data.total > 0 ||
+                              data.actual > 0 || data.unpaid > 0 || data.opening > 0 || data.closing > 0;
+                            return hasRemainingFromAPI || hasValue;
+                          }
+                          // Special handling for memFeesGroup - show if has remaining amount from API OR if has any amount due
+                          if (key === "memFeesGroup") {
+                            const hasRemainingFromAPI = (memberRevenueRemaining[currentMember?.id]?.membershipFeesGroup?.remainingAmount || 0) > 0;
+                            const hasValue = data.prev > 0 || data.curr > 0 || data.total > 0 ||
+                              data.actual > 0 || data.unpaid > 0 || data.opening > 0 || data.closing > 0;
+                            return hasRemainingFromAPI || hasValue;
+                          }
+                          // Hide these categories if all values are 0: memFeesSamiti, penalty, other
                           const hasValue = data.prev > 0 || data.curr > 0 || data.total > 0 ||
                             data.actual > 0 || data.unpaid > 0 || data.opening > 0 || data.closing > 0;
                           return hasValue;
@@ -1635,26 +2019,28 @@ export default function DemandRecovery() {
                                 <tr key={`charge-${chargeName}`} className="hover:bg-gray-50">
                                   <td className="border p-2 font-medium text-gray-800 pl-6">{chargeName}</td>
                                   <td className="border p-2 text-center text-gray-700">—</td>
-                                  <td className="border p-2 text-center text-gray-700">{data.chargesDue[chargeName] === 0 ? "—" : `₹${data.chargesDue[chargeName]}`}</td>
-                                  <td className="border p-2 text-center text-gray-700">{data.chargesDue[chargeName] === 0 ? "—" : `₹${data.chargesDue[chargeName]}`}</td>
-                                  <td className="border p-2 text-center text-gray-700">{(data.actualCharges?.[chargeName] || 0) === 0 ? "—" : `₹${data.actualCharges[chargeName]}`}</td>
-                                  <td className="border p-2 text-center text-gray-700">{Math.max(0, (data.chargesDue[chargeName] || 0) - (data.actualCharges?.[chargeName] || 0)) === 0 ? "—" : `₹${Math.max(0, (data.chargesDue[chargeName] || 0) - (data.actualCharges?.[chargeName] || 0))}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">{data.chargesDue[chargeName] === 0 ? "—" : `₹${Math.round(data.chargesDue[chargeName]).toLocaleString()}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">{data.chargesDue[chargeName] === 0 ? "—" : `₹${Math.round(data.chargesDue[chargeName]).toLocaleString()}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">{(data.actualCharges?.[chargeName] || 0) === 0 ? "—" : `₹${Math.round(data.actualCharges[chargeName]).toLocaleString()}`}</td>
+                                  <td className="border p-2 text-center text-gray-700">{Math.max(0, (data.chargesDue[chargeName] || 0) - (data.actualCharges?.[chargeName] || 0)) === 0 ? "—" : `₹${Math.round(Math.max(0, (data.chargesDue[chargeName] || 0) - (data.actualCharges?.[chargeName] || 0))).toLocaleString()}`}</td>
                                   <td className="border p-2 text-center text-gray-700">—</td>
                                   <td className="border p-2 text-center text-gray-700">—</td>
                                 </tr>
                               );
                             });
                           } else {
+                            // For interest and yogdan in receipt, show "due" (total) instead of "paid" (actual)
+                            const displayValue = (key === "interest" || key === "yogdan") ? data.total : data.actual;
                             rows.push(
                               <tr key={key} className="hover:bg-gray-50">
                                 <td className="border p-2 font-medium text-gray-800">{categoryNames[key] || key}</td>
-                                <td className="border p-2 text-center text-gray-700">{data.prev === 0 ? "—" : `₹${data.prev}`}</td>
-                                <td className="border p-2 text-center text-gray-700">{data.curr === 0 ? "—" : `₹${data.curr}`}</td>
-                                <td className="border p-2 text-center text-gray-700">{data.total === 0 ? "—" : `₹${data.total}`}</td>
-                                <td className="border p-2 text-center text-gray-700">{data.actual === 0 ? "—" : `₹${data.actual}`}</td>
-                                <td className="border p-2 text-center text-gray-700">{data.unpaid === 0 ? "—" : `₹${data.unpaid}`}</td>
-                                <td className="border p-2 text-center text-gray-700">{data.opening === 0 ? "—" : `₹${data.opening}`}</td>
-                                <td className="border p-2 text-center text-gray-700">{data.closing === 0 ? "—" : `₹${data.closing}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.prev === 0 ? "—" : `₹${Math.round(data.prev).toLocaleString()}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.curr === 0 ? "—" : `₹${Math.round(data.curr).toLocaleString()}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.total === 0 ? "—" : `₹${Math.round(data.total).toLocaleString()}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{displayValue === 0 ? "—" : `₹${Math.round(displayValue).toLocaleString()}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.unpaid === 0 ? "—" : `₹${Math.round(data.unpaid).toLocaleString()}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.opening === 0 ? "—" : `₹${Math.round(data.opening).toLocaleString()}`}</td>
+                                <td className="border p-2 text-center text-gray-700">{data.closing === 0 ? "—" : `₹${Math.round(data.closing).toLocaleString()}`}</td>
                               </tr>
                             );
                           }
@@ -1666,19 +2052,19 @@ export default function DemandRecovery() {
                       <td className="border p-2 text-center text-gray-800">—</td>
                       <td className="border p-2 text-center text-gray-800">—</td>
                       <td className="border p-2 text-center text-gray-800">
-                        ₹{Object.values(currentMemberSummary).reduce((sum, d) => {
+                        ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => {
                           const val = typeof d.total === 'number' ? d.total : parseFloat(d.total) || 0;
                           return sum + val;
-                        }, 0).toLocaleString()}
+                        }, 0)).toLocaleString()}
                       </td>
                       <td className="border p-2 text-center text-gray-800">
-                        ₹{Object.values(currentMemberSummary).reduce((sum, d) => sum + d.actual, 0)}
+                        ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => sum + d.actual, 0)).toLocaleString()}
                       </td>
                       <td className="border p-2 text-center text-gray-800">
-                        ₹{Object.values(currentMemberSummary).reduce((sum, d) => sum + d.unpaid, 0)}
+                        ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => sum + d.unpaid, 0)).toLocaleString()}
                       </td>
                       <td className="border p-2 text-center text-gray-800">
-                        ₹{Object.values(currentMemberSummary).reduce((sum, d) => sum + d.opening, 0)}
+                        ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => sum + d.opening, 0)).toLocaleString()}
                       </td>
                       <td className="border p-2 text-center text-gray-800">—</td>
                     </tr>
@@ -1767,8 +2153,25 @@ export default function DemandRecovery() {
                 )}
               </div>
 
+              {/* Show message if already recovered */}
+              {isAlreadyRecovered && (
+                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="text-blue-600" size={20} />
+                    <p className="text-sm text-blue-800 font-medium">
+                      Demand for this member has already been recovered today.
+                      {currentMemberRecoveryStatus?.recovery?.total && (
+                        <span className="ml-2">
+                          Amount: ₹{Math.round(currentMemberRecoveryStatus.recovery.total).toLocaleString()}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Amount Breakup - Only show if present or absent with recovery by other */}
-              {(attendance === "present" || (attendance === "absent" && recoveryByOther)) && (
+              {(attendance === "present" || (attendance === "absent" && recoveryByOther)) && !isAlreadyRecovered && (
                 <div className="mb-6">
                   <label className="block text-sm font-semibold text-gray-700 mb-3">
                     Enter Amount
@@ -1785,7 +2188,7 @@ export default function DemandRecovery() {
                           handleTotalAmountChange(e.target.value);
                         }}
                         placeholder="Enter total amount to auto-distribute"
-                        step="0.01"
+                        step="1"
                         min="0"
                       />
                       {autoCalculated && (
@@ -1808,7 +2211,7 @@ export default function DemandRecovery() {
                             setAutoCalculated(false); // Mark as manually edited
                           }}
                           placeholder="Enter saving amount"
-                          step="0.01"
+                          step="1"
                         />
                       )}
                       {(parseFloat(amountBreakup.loan) || 0) > 0 && (
@@ -1818,11 +2221,11 @@ export default function DemandRecovery() {
                           type="number"
                           value={amountBreakup.loan}
                           handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, loan: e.target.value });
-                            setAutoCalculated(false);
+                            handleAmountChange('loan', e.target.value);
                           }}
                           placeholder="Enter loan payment"
-                          step="0.01"
+                          step="1"
+                          max={currentMemberSummary?.loan?.total || undefined}
                         />
                       )}
                       {(parseFloat(amountBreakup.interest) || 0) > 0 && (
@@ -1832,41 +2235,51 @@ export default function DemandRecovery() {
                           type="number"
                           value={amountBreakup.interest}
                           handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, interest: e.target.value });
-                            setAutoCalculated(false);
+                            handleAmountChange('interest', e.target.value);
                           }}
                           placeholder="Enter interest payment"
-                          step="0.01"
+                          step="1"
+                          max={currentMemberSummary?.interest?.total || undefined}
                         />
                       )}
-                      {(parseFloat(amountBreakup.yogdan) || 0) > 0 && (
+                      {((parseFloat(amountBreakup.yogdan) || 0) > 0 || (currentMemberSummary?.yogdan?.unpaid || 0) > 0) && (
                         <Input
                           label="Yogdan (when loan is given)"
                           name="yogdan"
                           type="number"
                           value={amountBreakup.yogdan}
                           handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, yogdan: e.target.value });
-                            setAutoCalculated(false);
+                            handleAmountChange('yogdan', e.target.value);
                           }}
                           placeholder="Enter yogdan amount"
-                          step="0.01"
+                          step="1"
+                          max={currentMemberSummary?.yogdan?.total || undefined}
                         />
                       )}
-                      {(parseFloat(amountBreakup.memFeesSHG) || 0) > 0 && (
-                        <Input
-                          label="Member Fees SHG (Yearly)"
-                          name="memFeesSHG"
-                          type="number"
-                          value={amountBreakup.memFeesSHG}
-                          handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, memFeesSHG: e.target.value });
-                            setAutoCalculated(false);
-                          }}
-                          placeholder="Enter SHG fees"
-                          step="0.01"
-                        />
-                      )}
+                      {(() => {
+                        // Show memFeesSHG if user has entered amount OR if there's remaining amount from API
+                        const hasMemFeesSHGAmount = (parseFloat(amountBreakup.memFeesSHG) || 0) > 0;
+                        const hasMemFeesSHGRemaining = (currentMemberSummary?.memFeesSHG?.total || 0) > 0 ||
+                          (currentMemberSummary?.memFeesSHG?.unpaid || 0) > 0 ||
+                          (currentMemberSummary?.memFeesSHG?.curr || 0) > 0 ||
+                          (memberRevenueRemaining[currentMember?.id]?.membershipFeesSHG?.remainingAmount || 0) > 0;
+                        const shouldShowMemFeesSHG = hasMemFeesSHGAmount || hasMemFeesSHGRemaining;
+
+                        return shouldShowMemFeesSHG && (
+                          <Input
+                            label="Member Fees SHG (Yearly)"
+                            name="memFeesSHG"
+                            type="number"
+                            value={amountBreakup.memFeesSHG}
+                            handleChange={(e) => {
+                              handleAmountChange('memFeesSHG', e.target.value);
+                            }}
+                            placeholder="Enter SHG fees"
+                            step="1"
+                            max={currentMemberSummary?.memFeesSHG?.total || undefined}
+                          />
+                        );
+                      })()}
                       {(parseFloat(amountBreakup.memFeesSamiti) || 0) > 0 && (
                         <Input
                           label="Member Fees Samiti (Yearly)"
@@ -1874,27 +2287,37 @@ export default function DemandRecovery() {
                           type="number"
                           value={amountBreakup.memFeesSamiti}
                           handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, memFeesSamiti: e.target.value });
-                            setAutoCalculated(false);
+                            handleAmountChange('memFeesSamiti', e.target.value);
                           }}
                           placeholder="Enter Samiti fees"
-                          step="0.01"
+                          step="1"
+                          max={currentMemberSummary?.memFeesSamiti?.total || undefined}
                         />
                       )}
-                      {(parseFloat(amountBreakup.memFeesGroup) || 0) > 0 && (
-                        <Input
-                          label="Membership Group (Yearly)"
-                          name="memFeesGroup"
-                          type="number"
-                          value={amountBreakup.memFeesGroup}
-                          handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, memFeesGroup: e.target.value });
-                            setAutoCalculated(false);
-                          }}
-                          placeholder="Enter Membership Group fees"
-                          step="0.01"
-                        />
-                      )}
+                      {(() => {
+                        // Show memFeesGroup if user has entered amount OR if there's remaining amount from API
+                        const hasMemFeesGroupAmount = (parseFloat(amountBreakup.memFeesGroup) || 0) > 0;
+                        const hasMemFeesGroupRemaining = (currentMemberSummary?.memFeesGroup?.total || 0) > 0 ||
+                          (currentMemberSummary?.memFeesGroup?.unpaid || 0) > 0 ||
+                          (currentMemberSummary?.memFeesGroup?.curr || 0) > 0 ||
+                          (memberRevenueRemaining[currentMember?.id]?.membershipFeesGroup?.remainingAmount || 0) > 0;
+                        const shouldShowMemFeesGroup = hasMemFeesGroupAmount || hasMemFeesGroupRemaining;
+
+                        return shouldShowMemFeesGroup && (
+                          <Input
+                            label="Membership Group (Yearly)"
+                            name="memFeesGroup"
+                            type="number"
+                            value={amountBreakup.memFeesGroup}
+                            handleChange={(e) => {
+                              handleAmountChange('memFeesGroup', e.target.value);
+                            }}
+                            placeholder="Enter Membership Group fees"
+                            step="1"
+                            max={currentMemberSummary?.memFeesGroup?.total || undefined}
+                          />
+                        );
+                      })()}
                       {(parseFloat(amountBreakup.penalty) || 0) > 0 && (
                         <Input
                           label="Penalty"
@@ -1902,11 +2325,11 @@ export default function DemandRecovery() {
                           type="number"
                           value={amountBreakup.penalty}
                           handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, penalty: e.target.value });
-                            setAutoCalculated(false);
+                            handleAmountChange('penalty', e.target.value);
                           }}
                           placeholder="Enter penalty amount"
-                          step="0.01"
+                          step="1"
+                          max={currentMemberSummary?.penalty?.total || undefined}
                         />
                       )}
                       {(parseFloat(amountBreakup.other) || 0) > 0 && (
@@ -1916,11 +2339,11 @@ export default function DemandRecovery() {
                           type="number"
                           value={amountBreakup.other}
                           handleChange={(e) => {
-                            setAmountBreakup({ ...amountBreakup, other: e.target.value });
-                            setAutoCalculated(false);
+                            handleAmountChange('other', e.target.value);
                           }}
                           placeholder="Enter other amount"
-                          step="0.01"
+                          step="1"
+                          max={currentMemberSummary?.other?.total || undefined}
                         />
                       )}
                       {/* Dynamic Charges Input Fields */}
@@ -1939,17 +2362,40 @@ export default function DemandRecovery() {
                                   type="number"
                                   value={amountBreakup.charges?.[chargeName] || ""}
                                   handleChange={(e) => {
-                                    setAmountBreakup({
-                                      ...amountBreakup,
-                                      charges: {
-                                        ...amountBreakup.charges,
-                                        [chargeName]: e.target.value,
-                                      },
-                                    });
-                                    setAutoCalculated(false);
+                                    const numValue = parseFloat(e.target.value) || 0;
+                                    if (e.target.value === '' || e.target.value === null || e.target.value === undefined) {
+                                      setAmountBreakup({
+                                        ...amountBreakup,
+                                        charges: {
+                                          ...amountBreakup.charges,
+                                          [chargeName]: e.target.value,
+                                        },
+                                      });
+                                      setAutoCalculated(false);
+                                    } else if (numValue <= chargeDue) {
+                                      setAmountBreakup({
+                                        ...amountBreakup,
+                                        charges: {
+                                          ...amountBreakup.charges,
+                                          [chargeName]: e.target.value,
+                                        },
+                                      });
+                                      setAutoCalculated(false);
+                                    } else {
+                                      alert(`Amount cannot exceed the due amount of ₹${chargeDue.toLocaleString()}`);
+                                      setAmountBreakup({
+                                        ...amountBreakup,
+                                        charges: {
+                                          ...amountBreakup.charges,
+                                          [chargeName]: chargeDue.toString(),
+                                        },
+                                      });
+                                      setAutoCalculated(false);
+                                    }
                                   }}
                                   placeholder={`Enter ${chargeName} amount`}
-                                  step="0.01"
+                                  step="1"
+                                  max={chargeDue}
                                 />
                               );
                             }
@@ -1963,7 +2409,7 @@ export default function DemandRecovery() {
               )}
 
               {/* Payment Mode - Only show if present or absent with recovery by other */}
-              {(attendance === "present" || (attendance === "absent" && recoveryByOther)) && (
+              {(attendance === "present" || (attendance === "absent" && recoveryByOther)) && !isAlreadyRecovered && (
                 <div className="mb-6">
                   <label className="block text-sm font-semibold text-gray-700 mb-3">
                     Payment Mode *
@@ -1971,19 +2417,21 @@ export default function DemandRecovery() {
                   <div className="flex gap-4 mb-4">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
-                        type="checkbox"
+                        type="radio"
+                        name="paymentMode"
                         checked={paymentMode.cash}
                         onChange={() => handlePaymentModeChange("cash")}
-                        className="w-5 h-5 text-blue-600 rounded"
+                        className="w-5 h-5 text-blue-600"
                       />
                       <span className="font-medium text-gray-700">Cash</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
-                        type="checkbox"
+                        type="radio"
+                        name="paymentMode"
                         checked={paymentMode.online}
                         onChange={() => handlePaymentModeChange("online")}
-                        className="w-5 h-5 text-blue-600 rounded"
+                        className="w-5 h-5 text-blue-600"
                       />
                       <span className="font-medium text-gray-700">Online</span>
                     </label>
@@ -2067,9 +2515,18 @@ export default function DemandRecovery() {
                 </button>
                 <button
                   onClick={handleSaveRecovery}
-                  className="flex items-center gap-2 px-8 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md"
+                  disabled={isAlreadyRecovered}
+                  className={`flex items-center gap-2 px-8 py-2.5 font-semibold shadow-md ${isAlreadyRecovered
+                    ? "bg-gray-400 text-white cursor-not-allowed opacity-60"
+                    : "bg-green-600 text-white hover:bg-green-700"
+                    }`}
                 >
-                  {currentMemberIndex < allMembers.length - 1 ? (
+                  {isAlreadyRecovered ? (
+                    <>
+                      Recovered Today
+                      <CheckCircle size={18} />
+                    </>
+                  ) : currentMemberIndex < allMembers.length - 1 ? (
                     <>
                       Save & Next
                       <ArrowRight size={18} />
@@ -2106,7 +2563,23 @@ export default function DemandRecovery() {
                   Export Excel
                 </button>
                 <button
-                  onClick={() => exportRecoveryToPDF(recoveries, activeGroup.name, totals)}
+                  onClick={async () => {
+                    try {
+                      const today = new Date().toLocaleDateString("en-GB");
+                      const blob = await exportRecoveryPDF(activeGroup.id, today);
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${activeGroup.name || 'Recovery'}_${today.replace(/\//g, '-')}.pdf`;
+                      document.body.appendChild(a);
+                      a.click();
+                      window.URL.revokeObjectURL(url);
+                      document.body.removeChild(a);
+                    } catch (error) {
+                      console.error("Error exporting PDF:", error);
+                      alert("Failed to export PDF. Please try again.");
+                    }
+                  }}
                   className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm"
                 >
                   <FileText size={18} />
@@ -2117,23 +2590,249 @@ export default function DemandRecovery() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
               <div className="p-6 bg-green-50 rounded-lg border-l-4 border-green-500">
                 <p className="text-sm text-gray-600 mb-2">Total Cash</p>
-                <p className="text-3xl font-bold text-gray-800">₹{totals.totalCash.toLocaleString()}</p>
+                <p className="text-3xl font-bold text-gray-800">₹{Math.round(totals.totalCash).toLocaleString()}</p>
               </div>
               <div className="p-6 bg-blue-50 rounded-lg border-l-4 border-blue-500">
                 <p className="text-sm text-gray-600 mb-2">Total Online</p>
-                <p className="text-3xl font-bold text-gray-800">₹{totals.totalOnline.toLocaleString()}</p>
+                <p className="text-3xl font-bold text-gray-800">₹{Math.round(totals.totalOnline).toLocaleString()}</p>
               </div>
               <div className="p-6 bg-purple-50 rounded-lg border-l-4 border-purple-500">
                 <p className="text-sm text-gray-600 mb-2">Grand Total</p>
-                <p className="text-3xl font-bold text-gray-800">₹{totals.totalAmount.toLocaleString()}</p>
+                <p className="text-3xl font-bold text-gray-800">₹{Math.round(totals.totalAmount).toLocaleString()}</p>
               </div>
             </div>
 
+            {/* Cash Denomination Breakdown */}
+            {totals.totalCash > 0 && (
+              <div className="bg-gray-50 rounded-lg p-6 mb-6 border-2 border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                  <Wallet size={20} className="text-green-600" />
+                  Cash Denomination Breakdown
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹500 Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note500}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note500: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note500) || 0) * 500).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹200 Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note200}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note200: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note200) || 0) * 200).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹100 Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note100}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note100: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note100) || 0) * 100).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹50 Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note50}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note50: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note50) || 0) * 50).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹20 Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note20}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note20: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note20) || 0) * 20).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹10 Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note10}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note10: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note10) || 0) * 10).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹5 Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note5}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note5: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note5) || 0) * 5).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹2 Coins/Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note2}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note2: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note2) || 0) * 2).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      ₹1 Coins/Notes (Count)
+                    </label>
+                    <Input
+                      type="number"
+                      value={cashDenominations.note1}
+                      handleChange={(e) => {
+                        const value = e.target.value;
+                        setCashDenominations({ ...cashDenominations, note1: value });
+                      }}
+                      placeholder="0"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Amount: ₹{((parseFloat(cashDenominations.note1) || 0) * 1).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 p-4 bg-white rounded-lg border-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-700">Calculated Total:</span>
+                    {(() => {
+                      const calculatedTotal = (parseFloat(cashDenominations.note200) || 0) * 200 +
+                        (parseFloat(cashDenominations.note500) || 0) * 500 +
+                        (parseFloat(cashDenominations.note100) || 0) * 100 +
+                        (parseFloat(cashDenominations.note50) || 0) * 50 +
+                        (parseFloat(cashDenominations.note20) || 0) * 20 +
+                        (parseFloat(cashDenominations.note10) || 0) * 10 +
+                        (parseFloat(cashDenominations.note5) || 0) * 5 +
+                        (parseFloat(cashDenominations.note2) || 0) * 2 +
+                        (parseFloat(cashDenominations.note1) || 0) * 1;
+                      const roundedTotalCash = totals.totalCash >= 0
+                        ? Math.floor(totals.totalCash) + (totals.totalCash % 1 >= 0.5 ? 1 : 0)
+                        : Math.ceil(totals.totalCash) - (Math.abs(totals.totalCash) % 1 >= 0.5 ? 1 : 0);
+                      const roundedCalculatedTotal = Math.round(calculatedTotal);
+                      const isValid = Math.abs(roundedCalculatedTotal - roundedTotalCash) <= 1;
+
+                      return (
+                        <>
+                          <span className={`text-lg font-bold ${isValid ? "text-green-600" : "text-red-600"}`}>
+                            ₹{roundedCalculatedTotal.toLocaleString()}
+                          </span>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  {(() => {
+                    const calculatedTotal = (parseFloat(cashDenominations.note200) || 0) * 200 +
+                      (parseFloat(cashDenominations.note500) || 0) * 500 +
+                      (parseFloat(cashDenominations.note100) || 0) * 100 +
+                      (parseFloat(cashDenominations.note50) || 0) * 50 +
+                      (parseFloat(cashDenominations.note20) || 0) * 20 +
+                      (parseFloat(cashDenominations.note10) || 0) * 10 +
+                      (parseFloat(cashDenominations.note5) || 0) * 5 +
+                      (parseFloat(cashDenominations.note2) || 0) * 2 +
+                      (parseFloat(cashDenominations.note1) || 0) * 1;
+                    const roundedTotalCash = totals.totalCash >= 0
+                      ? Math.floor(totals.totalCash) + (totals.totalCash % 1 >= 0.5 ? 1 : 0)
+                      : Math.ceil(totals.totalCash) - (Math.abs(totals.totalCash) % 1 >= 0.5 ? 1 : 0);
+                    const roundedCalculatedTotal = Math.round(calculatedTotal);
+                    const isValid = Math.abs(roundedCalculatedTotal - roundedTotalCash) <= 1;
+
+                    return !isValid && (
+                      <p className="text-sm text-red-600 mt-2">
+                        ⚠️ Denominations total (₹{roundedCalculatedTotal.toLocaleString()}) does not match Total Cash (₹{roundedTotalCash.toLocaleString()}). Please verify.
+                      </p>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
             <div className="mb-6">
               <h3 className="font-semibold text-gray-800 mb-3">Members Recovery Status ({recoveries.length})</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {recoveries.map((recovery) => {
                   const member = allMembers.find((m) => m.id === recovery.memberId);
+                  const memberPhoto = member?.raw?.Member_Photo || member?.Member_Photo;
                   const isRecovered = recovery.attendance === "present" || (recovery.attendance === "absent" && recovery.recoveryByOther);
                   const amount = isRecovered
                     ? (recovery.amounts?.saving || 0) +
@@ -2147,13 +2846,34 @@ export default function DemandRecovery() {
                   return (
                     <div
                       key={recovery.id}
-                      className={`p-3 rounded-lg border-2 ${isRecovered
+                      className={`p-4 rounded-lg border-2 flex flex-col items-center ${isRecovered
                         ? "bg-green-50 border-green-200"
                         : "bg-red-50 border-red-200"
                         }`}
                     >
-                      <p className="font-medium text-gray-800">{member?.name}</p>
-                      <p className="text-sm text-gray-600">{member?.code}</p>
+                      {/* Member Photo */}
+                      {memberPhoto ? (
+                        <div className="mb-3 w-20 h-20 rounded-full overflow-hidden border-2 border-gray-300 flex-shrink-0">
+                          <img
+                            src={getImageUrl(memberPhoto)}
+                            alt={`${member?.name || "Member"} Photo`}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.target.style.display = "none";
+                              e.target.nextSibling?.classList.remove("hidden");
+                            }}
+                          />
+                          <div className="hidden w-full h-full bg-gray-200 flex items-center justify-center">
+                            <User size={32} className="text-gray-400" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mb-3 w-20 h-20 rounded-full bg-gray-200 flex items-center justify-center border-2 border-gray-300">
+                          <User size={32} className="text-gray-400" />
+                        </div>
+                      )}
+                      <p className="font-medium text-gray-800 text-center">{member?.name}</p>
+                      <p className="text-sm text-gray-600 text-center">{member?.code}</p>
                       <p className={`text-sm font-semibold mt-1 ${isRecovered ? "text-green-700" : "text-red-700"
                         }`}>
                         {isRecovered ? `₹${amount.toLocaleString()}` : "Absent - No Recovery"}
@@ -2249,6 +2969,200 @@ export default function DemandRecovery() {
           }}
         />
       )}
+
+      {/* Full Loan Recovery Modal */}
+      {/* {showFullLoanRecovery && currentMember && currentMemberSummary && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <CreditCard size={28} className="text-blue-600" />
+                Full Loan Recovery
+              </h2>
+              <button
+                onClick={() => {
+                  setShowFullLoanRecovery(false);
+                  setFullLoanRecoveryPaymentMode({ cash: false, online: false });
+                  setFullLoanRecoveryBankId("");
+                  setFullLoanRecoveryOnlineRef("");
+                  setFullLoanRecoveryScreenshot(null);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Member Info 
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-lg font-semibold text-gray-800">
+                  {currentMember.name} ({currentMember.code})
+                </p>
+              </div>
+
+              {/* Loan Details Summary 
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Loan Details</h3>
+                {loadingLoanTotals ? (
+                  <div className="text-center py-4">
+                    <p className="text-gray-600">Loading loan totals...</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                      <p className="text-sm text-gray-600 mb-1">Total Loan Amount</p>
+                      <p className="text-2xl font-bold text-gray-800">
+                        ₹{Math.round(loanTotals.totalLoanAmount || 0).toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        From LoanMaster (all approved loans)
+                      </p>
+                    </div>
+                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                      <p className="text-sm text-gray-600 mb-1">Recovered Amount</p>
+                      <p className="text-2xl font-bold text-green-600">
+                        ₹{Math.round(loanTotals.totalLoanRecovered || 0).toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">From RecoveryMaster (all recoveries)</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-4 border border-gray-200">
+                      <p className="text-sm text-gray-600 mb-1">Remaining Amount</p>
+                      <p className="text-2xl font-bold text-red-600">
+                        ₹{Math.round(loanTotals.remainingLoanAmount || 0).toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">To be recovered</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Payment Mode 
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-3">
+                  Payment Mode *
+                </label>
+                <div className="flex gap-4 mb-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="fullLoanRecoveryPaymentMode"
+                      checked={fullLoanRecoveryPaymentMode.cash}
+                      onChange={() => handleFullLoanRecoveryPaymentMode("cash")}
+                      className="w-5 h-5 text-blue-600"
+                    />
+                    <Wallet size={20} className="text-gray-600" />
+                    <span className="font-medium text-gray-700">Cash</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="fullLoanRecoveryPaymentMode"
+                      checked={fullLoanRecoveryPaymentMode.online}
+                      onChange={() => handleFullLoanRecoveryPaymentMode("online")}
+                      className="w-5 h-5 text-blue-600"
+                    />
+                    <CreditCard size={20} className="text-gray-600" />
+                    <span className="font-medium text-gray-700">Online</span>
+                  </label>
+                </div>
+
+                {fullLoanRecoveryPaymentMode.online && (
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-4">
+                    <Select
+                      label="Select Bank *"
+                      name="fullLoanRecoveryBankId"
+                      value={fullLoanRecoveryBankId}
+                      handleChange={(e) => setFullLoanRecoveryBankId(e.target.value)}
+                      options={groupBanks.length > 0
+                        ? groupBanks.map((bank) => {
+                          const balance = bank.available_balance !== undefined
+                            ? bank.available_balance
+                            : (bank.current_balance !== undefined
+                              ? bank.current_balance
+                              : (bank.opening_balance || 0));
+                          const balanceFormatted = `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                          return {
+                            value: bank._id || bank.id,
+                            label: `${bank.bank_name} - ${bank.account_no}${bank.short_name ? ` (${bank.short_name})` : ""} [Available: ${balanceFormatted}]`
+                          };
+                        })
+                        : [{ value: "", label: "No banks available" }]
+                      }
+                      required
+                    />
+                    {groupBanks.length === 0 && (
+                      <p className="text-sm text-red-600 mt-1">
+                        No banks found for this group. Please add a bank account first.
+                      </p>
+                    )}
+                    <Input
+                      label="Reference Number / Transaction ID *"
+                      name="fullLoanRecoveryOnlineRef"
+                      value={fullLoanRecoveryOnlineRef}
+                      handleChange={(e) => setFullLoanRecoveryOnlineRef(e.target.value)}
+                      placeholder="Enter reference number"
+                      required
+                    />
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Screenshot (Optional)
+                      </label>
+                      <label className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                        <Upload size={20} className="text-gray-600" />
+                        <span className="text-sm text-gray-700">Choose File</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleFullLoanRecoveryFileUpload}
+                          className="hidden"
+                        />
+                      </label>
+                      {fullLoanRecoveryScreenshot && (
+                        <img src={fullLoanRecoveryScreenshot} alt="Screenshot" className="mt-2 max-w-xs rounded-lg" />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons 
+              <div className="flex justify-end gap-4 pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => {
+                    setShowFullLoanRecovery(false);
+                    setFullLoanRecoveryPaymentMode({ cash: false, online: false });
+                    setFullLoanRecoveryBankId("");
+                    setFullLoanRecoveryOnlineRef("");
+                    setFullLoanRecoveryScreenshot(null);
+                  }}
+                  className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleFullLoanRecovery}
+                  disabled={loading}
+                  className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={18} />
+                      Recover Full Loan
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      */}
     </div>
   );
 }

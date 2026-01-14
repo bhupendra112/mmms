@@ -6,7 +6,8 @@ import Joi from "joi";
 export const adminRegisterValidationSchema = Joi.object({
     name: Joi.string().required(),
     email: Joi.string().email().required(),
-    password: Joi.string().min(6).required()
+    password: Joi.string().min(6).required(),
+    place: Joi.string().required().trim()
 });
 
 // ======================
@@ -119,6 +120,7 @@ export const registerGroupSchema = Joi.object({
     group_code: Joi.string().required(),
     cluster_name: Joi.string().optional(),
     village: Joi.string().optional(),
+    place: Joi.string().optional(), // Will be auto-assigned from admin's place
     no_members: Joi.number().optional(),
     formation_date: Joi.date().optional(),
     cluster: Joi.string().optional(),

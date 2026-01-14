@@ -5,19 +5,35 @@ import LoanMaster from "../../model/LoanMaster.js";
 import { GroupMaster, BankMaster } from "../../model/index.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
+import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
 
 export const createExpense = async (req, res) => {
     try {
         const payload = req.body || {};
 
-        // Verify group exists
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
         let groupDoc = null;
         if (payload.groupId) {
-            groupDoc = await GroupMaster.findById(payload.groupId);
+            const accessCheck = await verifyGroupAccess(payload.groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         } else if (payload.groupCode) {
-            groupDoc = await GroupMaster.findOne({ group_code: payload.groupCode });
+            const accessCheck = await verifyGroupAccessByCode(payload.groupCode, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         } else if (payload.groupName) {
-            groupDoc = await GroupMaster.findOne({ group_name: payload.groupName });
+            const accessCheck = await verifyGroupAccessByName(payload.groupName, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         }
 
         if (!groupDoc) {
@@ -178,12 +194,29 @@ export const listExpenses = async (req, res) => {
     try {
         const { groupId, groupCode, fromDate, toDate, expenseType } = req.query;
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
         const filter = {};
         if (groupId) {
+            // Verify group access
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
             filter.groupId = groupId;
         } else if (groupCode) {
-            const group = await GroupMaster.findOne({ group_code: groupCode });
-            if (group) filter.groupId = group._id;
+            // Verify group access by code
+            const accessCheck = await verifyGroupAccessByCode(groupCode, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            filter.groupId = accessCheck.group._id;
+        } else {
+            // If no group specified, filter by all groups in admin's place
+            const groups = await GroupMaster.find({ place: adminPlace }).select("_id").lean();
+            const groupIds = groups.map(g => g._id);
+            filter.groupId = { $in: groupIds };
         }
         if (expenseType) filter.expenseType = expenseType;
 

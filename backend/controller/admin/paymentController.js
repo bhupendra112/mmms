@@ -5,19 +5,33 @@ import Member from "../../model/Member.js";
 import { GroupMaster, BankMaster } from "../../model/index.js";
 import RecoveryMaster from "../../model/RecoveryMaster.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
+import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 
 // Get matured FDs
 export const getMaturedFDs = async (req, res) => {
     try {
         const { groupId, memberId } = req.query;
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
         const filter = {
             status: "active",
             maturityDate: { $lte: new Date() }, // Matured FDs
         };
 
         if (groupId) {
+            // Verify group access
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
             filter.groupId = groupId;
+        } else {
+            // If no group specified, filter by all groups in admin's place
+            const groups = await GroupMaster.find({ place: adminPlace }).select("_id").lean();
+            const groupIds = groups.map(g => g._id);
+            filter.groupId = { $in: groupIds };
         }
         if (memberId) {
             filter.memberId = memberId;
@@ -130,7 +144,15 @@ export const createPayment = async (req, res) => {
             return apiResponse.error(res, "Group ID is required", 400);
         }
 
-        // Verify group exists
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+        }
+        // Fetch group as Mongoose document (not lean) to use instance methods like recalculateCashBalance
         const group = await GroupMaster.findById(groupId);
         if (!group) {
             return apiResponse.error(res, "Group not found", 404);
@@ -398,8 +420,23 @@ export const getPayments = async (req, res) => {
     try {
         const { groupId, memberId, paymentType, status, fromDate, toDate } = req.query;
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
         const filter = {};
-        if (groupId) filter.groupId = groupId;
+        if (groupId) {
+            // Verify group access
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            filter.groupId = groupId;
+        } else {
+            // If no group specified, filter by all groups in admin's place
+            const groups = await GroupMaster.find({ place: adminPlace }).select("_id").lean();
+            const groupIds = groups.map(g => g._id);
+            filter.groupId = { $in: groupIds };
+        }
         if (memberId) filter.memberId = memberId;
         if (paymentType) filter.paymentType = paymentType;
         if (status) filter.status = status;
@@ -442,6 +479,17 @@ export const approvePayment = async (req, res) => {
             return apiResponse.error(res, "Payment not found", 404);
         }
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify payment's group belongs to admin's place
+        if (payment.groupId) {
+            const accessCheck = await verifyGroupAccess(payment.groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "You don't have access to this payment's group", 403);
+            }
+        }
+
         if (payment.status !== "pending") {
             return apiResponse.error(res, `Payment is already ${payment.status}`, 400);
         }
@@ -466,6 +514,17 @@ export const rejectPayment = async (req, res) => {
         const payment = await PaymentMaster.findById(id);
         if (!payment) {
             return apiResponse.error(res, "Payment not found", 404);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify payment's group belongs to admin's place
+        if (payment.groupId) {
+            const accessCheck = await verifyGroupAccess(payment.groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "You don't have access to this payment's group", 403);
+            }
         }
 
         if (payment.status !== "pending") {

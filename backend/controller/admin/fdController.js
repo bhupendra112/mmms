@@ -4,6 +4,7 @@ import { GroupMaster, BankMaster } from "../../model/index.js";
 import Member from "../../model/Member.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
+import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 
 // Create new FD
 export const createFD = async (req, res) => {
@@ -27,11 +28,15 @@ export const createFD = async (req, res) => {
             return apiResponse.error(res, "Group ID is required", 400);
         }
 
-        // Verify group exists and get FD rate
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        const group = accessCheck.group;
 
         // Get FD rate from group (snapshot)
         const fdRate = group.fd_rate;

@@ -4,19 +4,35 @@ import LoanMaster from "../../model/LoanMaster.js";
 import { GroupMaster, BankMaster } from "../../model/index.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
+import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
 
 export const registerLoan = async (req, res) => {
     try {
         const payload = req.body || {};
 
-        // Verify group exists
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group exists and belongs to admin's place
         let groupDoc = null;
         if (payload.groupId) {
-            groupDoc = await GroupMaster.findById(payload.groupId);
+            const accessCheck = await verifyGroupAccess(payload.groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         } else if (payload.groupCode) {
-            groupDoc = await GroupMaster.findOne({ group_code: payload.groupCode });
+            const accessCheck = await verifyGroupAccessByCode(payload.groupCode, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         } else if (payload.groupName) {
-            groupDoc = await GroupMaster.findOne({ group_name: payload.groupName });
+            const accessCheck = await verifyGroupAccessByName(payload.groupName, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            groupDoc = accessCheck.group;
         }
 
         if (!groupDoc) {
@@ -52,8 +68,13 @@ export const registerLoan = async (req, res) => {
         } else if (payload.paymentMode === "Cash") {
             // Check cash balance
             // Recalculate to get current cash balance
-            await groupDoc.recalculateCashBalance();
-            const cashBalance = groupDoc.current_cash_balance || 0;
+            // Refetch as Mongoose document (not lean) to access instance methods
+            const groupDocInstance = await GroupMaster.findById(groupDoc._id);
+            if (!groupDocInstance) {
+                return apiResponse.error(res, "Group not found", 404);
+            }
+            await groupDocInstance.recalculateCashBalance();
+            const cashBalance = groupDocInstance.current_cash_balance || 0;
             if (cashBalance < loanAmount) {
                 return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${loanAmount.toFixed(2)}`, 400);
             }
@@ -180,12 +201,29 @@ export const listLoans = async (req, res) => {
     try {
         const { groupId, groupCode, status, transactionType } = req.query;
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
         const filter = {};
         if (groupId) {
+            // Verify group access
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
             filter.groupId = groupId;
         } else if (groupCode) {
-            const group = await GroupMaster.findOne({ group_code: groupCode });
-            if (group) filter.groupId = group._id;
+            // Verify group access by code
+            const accessCheck = await verifyGroupAccessByCode(groupCode, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+            filter.groupId = accessCheck.group._id;
+        } else {
+            // If no group specified, filter by all groups in admin's place
+            const groups = await GroupMaster.find({ place: adminPlace }).select("_id").lean();
+            const groupIds = groups.map(g => g._id);
+            filter.groupId = { $in: groupIds };
         }
         if (status) filter.status = status;
         if (transactionType) filter.transactionType = transactionType;
@@ -237,10 +275,16 @@ export const approveLoan = async (req, res) => {
         }
 
         // Get group document
-        const group = await GroupMaster.findById(loan.groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify loan's group belongs to admin's place
+        const accessCheck = await verifyGroupAccess(loan.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this loan's group", 403);
         }
+        
+        const group = accessCheck.group;
 
         // Validate balance before approving
         const loanAmount = parseFloat(loan.amount || 0);
@@ -251,8 +295,13 @@ export const approveLoan = async (req, res) => {
                 return apiResponse.error(res, `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${loanAmount.toFixed(2)}`, 400);
             }
         } else if (loan.paymentMode === "Cash") {
-            await group.recalculateCashBalance();
-            const cashBalance = group.current_cash_balance || 0;
+            // Refetch as Mongoose document (not lean) to access instance methods
+            const groupInstance = await GroupMaster.findById(group._id);
+            if (!groupInstance) {
+                return apiResponse.error(res, "Group not found", 404);
+            }
+            await groupInstance.recalculateCashBalance();
+            const cashBalance = groupInstance.current_cash_balance || 0;
             if (cashBalance < loanAmount) {
                 return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${loanAmount.toFixed(2)}`, 400);
             }

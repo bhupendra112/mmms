@@ -38,6 +38,16 @@ const getImageUrl = (imagePath) => {
   return fullUrl;
 };
 
+// Helper function to format currency values (round to 2 decimal places and format)
+const formatCurrency = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  const numValue = parseFloat(value);
+  if (isNaN(numValue)) return 0;
+  // Round to 2 decimal places
+  const rounded = Math.round(numValue * 100) / 100;
+  return rounded;
+};
+
 export default function MemberDashboard() {
   const { id } = useParams();
   const [loading, setLoading] = useState(false);
@@ -92,22 +102,52 @@ export default function MemberDashboard() {
 
   const loadFinancialLedger = async () => {
     if (!id) return;
-    
+
     try {
       setLedgerLoading(true);
       setLedgerError("");
       const filters = {};
       if (fromDate) filters.fromDate = fromDate;
       if (toDate) filters.toDate = toDate;
-      
+
+      console.log('[MEMBER_DASHBOARD] Loading financial ledger', {
+        memberId: id,
+        filters
+      });
+
       const response = await getMemberFinancialLedger(id, filters);
+      console.log('[MEMBER_DASHBOARD] Financial ledger response', {
+        success: response?.success,
+        ledgerCount: response?.data?.ledger?.length || 0,
+        summary: response?.data?.summary
+      });
+
       if (response?.success && response?.data?.ledger) {
-        setLedgerData(response.data.ledger || []);
+        const ledgerEntries = response.data.ledger || [];
+        console.log('[MEMBER_DASHBOARD] ===== FINANCIAL LEDGER DATA RECEIVED =====');
+        console.log('[MEMBER_DASHBOARD] Entry count:', ledgerEntries.length);
+        console.log('[MEMBER_DASHBOARD] Full ledger entries:', ledgerEntries);
+        console.log('[MEMBER_DASHBOARD] YogdanDue values:', ledgerEntries.map(e => ({
+          date: e.date,
+          receipt: e.receipt,
+          yogdanDue: e.yogdanDue,
+          yogdanDueType: typeof e.yogdanDue,
+          yogdanPaid: e.yogdanPaid,
+          yogdanPaidType: typeof e.yogdanPaid
+        })));
+        console.log('[MEMBER_DASHBOARD] Summary:', response.data.summary);
+        setLedgerData(ledgerEntries);
       } else {
+        console.log('[MEMBER_DASHBOARD] No ledger data in response', {
+          response: response,
+          success: response?.success,
+          hasData: !!response?.data,
+          hasLedger: !!response?.data?.ledger
+        });
         setLedgerData([]);
       }
     } catch (error) {
-      console.error("Error loading financial ledger:", error);
+      console.error('[MEMBER_DASHBOARD] Error loading financial ledger:', error);
       setLedgerError(String(error || "Failed to load financial ledger"));
       setLedgerData([]);
     } finally {
@@ -663,21 +703,33 @@ export default function MemberDashboard() {
 
   // Filter ledger - backend already filters by date, but we can apply additional client-side filtering if needed
   const filteredLedger = useMemo(() => {
-    return filterByDate(ledger);
+    const filtered = filterByDate(ledger);
+    console.log('[MEMBER_DASHBOARD] ===== FILTERED LEDGER COMPUTED =====');
+    console.log('[MEMBER_DASHBOARD] Original ledger length:', ledger?.length || 0);
+    console.log('[MEMBER_DASHBOARD] Filtered ledger length:', filtered?.length || 0);
+    console.log('[MEMBER_DASHBOARD] Date filters:', { fromDate, toDate });
+    console.log('[MEMBER_DASHBOARD] Filtered ledger entries:', filtered);
+    console.log('[MEMBER_DASHBOARD] YogdanDue in filtered ledger:', filtered.map(e => ({
+      date: e.date,
+      receipt: e.receipt,
+      yogdanDue: e.yogdanDue,
+      yogdanPaid: e.yogdanPaid
+    })));
+    return filtered;
   }, [ledger, fromDate, toDate]);
 
   // Export table to Excel
   const exportTableToExcel = () => {
     const data = filteredLedger.map((row) => {
-      const chargesTotal = row.charges ? 
+      const chargesTotal = row.charges ?
         Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
       const chargesDetails = row.charges && Object.keys(row.charges).length > 0
         ? Object.entries(row.charges)
-            .filter(([_, amount]) => parseFloat(amount) > 0)
-            .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
-            .join(", ")
+          .filter(([_, amount]) => parseFloat(amount) > 0)
+          .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+          .join(", ")
         : "";
-      
+
       return {
         Date: formatDate(row.date),
         Receipt: row.receipt,
@@ -692,7 +744,8 @@ export default function MemberDashboard() {
         "FD Balance": row.fdBalance || 0,
         "Interest Due": row.interestDue || 0,
         "Interest Paid": row.interestPaid || 0,
-        "Yogdan": row.yogdan || 0,
+        "Yogdan Due": row.yogdanDue || 0,
+        "Yogdan Paid": row.yogdanPaid || 0,
         "Charges Total": chargesTotal,
         "Charges Details": chargesDetails,
       };
@@ -717,21 +770,22 @@ export default function MemberDashboard() {
       "FD Balance",
       "Interest Due",
       "Interest Paid",
-      "Yogdan",
+      "Yogdan Due",
+      "Yogdan Paid",
       "Charges Total",
       "Charges Details",
     ];
 
     const rows = filteredLedger.map((row) => {
-      const chargesTotal = row.charges ? 
+      const chargesTotal = row.charges ?
         Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
       const chargesDetails = row.charges && Object.keys(row.charges).length > 0
         ? Object.entries(row.charges)
-            .filter(([_, amount]) => parseFloat(amount) > 0)
-            .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
-            .join(", ")
+          .filter(([_, amount]) => parseFloat(amount) > 0)
+          .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+          .join(", ")
         : "";
-      
+
       return [
         formatDate(row.date),
         row.receipt.toString(),
@@ -746,7 +800,8 @@ export default function MemberDashboard() {
         `${row.fdBalance || 0}`,
         `${row.interestDue || 0}`,
         `${row.interestPaid || 0}`,
-        `${row.yogdan || 0}`,
+        `${row.yogdanDue || 0}`,
+        `${row.yogdanPaid || 0}`,
         `${chargesTotal}`,
         chargesDetails || "",
       ];
@@ -878,21 +933,22 @@ export default function MemberDashboard() {
         "FD Balance",
         "Interest Due",
         "Interest Paid",
-        "Yogdan",
+        "Yogdan Due",
+        "Yogdan Paid",
         "Charges Total",
         "Charges Details",
       ];
 
       const rows = filteredLedger.map((row) => {
-        const chargesTotal = row.charges ? 
+        const chargesTotal = row.charges ?
           Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
         const chargesDetails = row.charges && Object.keys(row.charges).length > 0
           ? Object.entries(row.charges)
-              .filter(([_, amount]) => parseFloat(amount) > 0)
-              .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
-              .join(", ")
+            .filter(([_, amount]) => parseFloat(amount) > 0)
+            .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+            .join(", ")
           : "";
-        
+
         return [
           formatDate(row.date),
           row.receipt.toString(),
@@ -907,7 +963,8 @@ export default function MemberDashboard() {
           `${row.fdBalance || 0}`,
           `${row.interestDue || 0}`,
           `${row.interestPaid || 0}`,
-          `${row.yogdan || 0}`,
+          `${row.yogdanDue || 0}`,
+          `${row.yogdanPaid || 0}`,
           `${chargesTotal}`,
           chargesDetails || "",
         ];
@@ -1057,150 +1114,195 @@ export default function MemberDashboard() {
         />
       )}
 
-      {/* Full Member Details */}
+      {/* Member Photo */}
+      {memberDoc?.Member_Photo && (
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <ImageIcon size={24} />
+            Member Photo
+          </h2>
+          <div className="flex justify-center">
+            <div className="relative">
+              {imageErrors[memberDoc.Member_Photo] ? (
+                <div className="flex items-center justify-center bg-gray-100 rounded-lg w-64 h-80">
+                  <div className="text-center">
+                    <ImageIcon size={48} className="mx-auto text-gray-400 mb-2" />
+                    <p className="text-gray-500 text-sm">Photo not available</p>
+                  </div>
+                </div>
+              ) : (
+                <img
+                  src={getImageUrl(memberDoc.Member_Photo)}
+                  alt="Member Photo"
+                  className="w-64 h-80 object-cover rounded-lg border-4 border-gray-300 shadow-lg"
+                  onError={() => handleImageError(memberDoc.Member_Photo)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Complete Member & Spouse Details - Side by Side */}
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
           <User size={24} />
-          Complete Member Details
+          Complete Member & Spouse Details
         </h2>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <tbody>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50 w-1/3">Member Code:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Member_Id || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Member Name:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Member_Nm || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Member Date:</td>
-                <td className="p-3 text-gray-800">{formatDate(memberDoc?.Member_Dt) || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Date of Joining:</td>
-                <td className="p-3 text-gray-800">{formatDate(memberDoc?.Dt_Join) || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Father/Husband Name:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.F_H_Name || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Father's Father Name:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.F_H_FatherName || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Voter ID:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Voter_Id || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Aadhar Number:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Adhar_Id || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Ration Card Number:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Ration_Card || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Job Card Number:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Job_Card || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">APL/BPL:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Apl_Bpl_Etc || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Designation:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Desg || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Bank Name:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Bank_Name || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Branch Name:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Br_Name || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Bank Account:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Bank_Ac || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">IFSC Code:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Ifsc_No || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Age:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Age || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Education Qualification:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Edu_Qual || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Annual Income:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Anual_Income ? `₹${memberDoc.Anual_Income.toLocaleString()}` : "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Profession:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Profession || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Caste:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Caste || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Religion:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Religion || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Mobile Number:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.cell_phone || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Date of Birth:</td>
-                <td className="p-3 text-gray-800">{formatDate(memberDoc?.dt_birth) || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Nominee 1:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.nominee_1 || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Nominee 2:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.nominee_2 || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Address Line 1:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.res_add1 || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Address Line 2:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.res_add2 || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Village:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Village || "-"}</td>
-              </tr>
-              <tr className="border-b border-gray-200">
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Group Name:</td>
-                <td className="p-3 text-gray-800">{memberDoc?.Group_Name || "-"}</td>
-              </tr>
-              <tr>
-                <td className="p-3 font-semibold text-gray-700 bg-gray-50">Registration Date:</td>
-                <td className="p-3 text-gray-800">{formatDate(memberDoc?.createdAt) || "-"}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Member Details Column */}
+          <div className="bg-blue-50 rounded-lg p-4 border-2 border-blue-200">
+            <h3 className="text-lg font-bold text-blue-800 mb-4 pb-2 border-b-2 border-blue-300">Member Details</h3>
+            <div className="space-y-2">
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Member Code:</span>
+                <span className="text-gray-800">{memberDoc?.Member_Id || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Member Name:</span>
+                <span className="text-gray-800">{memberDoc?.Member_Nm || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Date of Birth:</span>
+                <span className="text-gray-800">{formatDate(memberDoc?.dt_birth) || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Age:</span>
+                <span className="text-gray-800">{memberDoc?.Age || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Aadhar Number:</span>
+                <span className="text-gray-800">{memberDoc?.Adhar_Id || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Mobile Number:</span>
+                <span className="text-gray-800">{memberDoc?.cell_phone || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Bank Account:</span>
+                <span className="text-gray-800">{memberDoc?.Bank_Ac || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Samagra ID:</span>
+                <span className="text-gray-800">{memberDoc?.Samagra_Id || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Voter ID:</span>
+                <span className="text-gray-800">{memberDoc?.Voter_Id || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Date of Joining:</span>
+                <span className="text-gray-800">{formatDate(memberDoc?.Dt_Join) || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Father/Husband Name:</span>
+                <span className="text-gray-800">{memberDoc?.F_H_Name || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">Bank Name:</span>
+                <span className="text-gray-800">{memberDoc?.Bank_Name || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-blue-200 pb-1">
+                <span className="font-semibold text-gray-700">IFSC Code:</span>
+                <span className="text-gray-800">{memberDoc?.Ifsc_No || "-"}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Spouse (Pati) Details Column */}
+          <div className="bg-pink-50 rounded-lg p-4 border-2 border-pink-200">
+            <h3 className="text-lg font-bold text-pink-800 mb-4 pb-2 border-b-2 border-pink-300">Spouse (Pati) Details</h3>
+            <div className="space-y-2">
+              <div className="flex justify-between border-b border-pink-200 pb-1">
+                <span className="font-semibold text-gray-700">Spouse Name:</span>
+                <span className="text-gray-800">{memberDoc?.F_H_Name || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-pink-200 pb-1">
+                <span className="font-semibold text-gray-700">Date of Birth:</span>
+                <span className="text-gray-800">{formatDate(memberDoc?.dt_birth_pati) || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-pink-200 pb-1">
+                <span className="font-semibold text-gray-700">Age:</span>
+                <span className="text-gray-800">{memberDoc?.Age_Pati || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-pink-200 pb-1">
+                <span className="font-semibold text-gray-700">Aadhar Number:</span>
+                <span className="text-gray-800">{memberDoc?.Adhar_Id_Pati || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-pink-200 pb-1">
+                <span className="font-semibold text-gray-700">Mobile Number:</span>
+                <span className="text-gray-800">{memberDoc?.cell_phone_pati || "-"}</span>
+              </div>
+              <div className="flex justify-between border-b border-pink-200 pb-1">
+                <span className="font-semibold text-gray-700">Bank Account:</span>
+                <span className="text-gray-800">{memberDoc?.Bank_Ac_Pati || "-"}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Additional Member Details */}
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-800 mb-4">Additional Information</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Ration Card:</span>
+              <span className="text-gray-800">{memberDoc?.Ration_Card || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Job Card:</span>
+              <span className="text-gray-800">{memberDoc?.Job_Card || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Education:</span>
+              <span className="text-gray-800">{memberDoc?.Edu_Qual || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Profession:</span>
+              <span className="text-gray-800">{memberDoc?.Profession || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Annual Income:</span>
+              <span className="text-gray-800">{memberDoc?.Anual_Income ? `₹${memberDoc.Anual_Income.toLocaleString()}` : "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Caste:</span>
+              <span className="text-gray-800">{memberDoc?.Caste || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Religion:</span>
+              <span className="text-gray-800">{memberDoc?.Religion || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">APL/BPL:</span>
+              <span className="text-gray-800">{memberDoc?.Apl_Bpl_Etc || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Designation:</span>
+              <span className="text-gray-800">{memberDoc?.Desg || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Village:</span>
+              <span className="text-gray-800">{memberDoc?.Village || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Address:</span>
+              <span className="text-gray-800">{memberDoc?.res_add1 || "-"}</span>
+            </div>
+            <div className="flex justify-between border-b border-gray-200 pb-2">
+              <span className="font-semibold text-gray-700">Group Name:</span>
+              <span className="text-gray-800">{memberDoc?.Group_Name || "-"}</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Identity Documents with Images */}
-      {(memberDoc?.Voter_Id_File || memberDoc?.Adhar_Id_File || memberDoc?.Ration_Card_File || memberDoc?.Job_Card_File) && (
+      {/* Identity Documents with Images - Member */}
+      {(memberDoc?.Voter_Id_File || memberDoc?.Adhar_Id_File || memberDoc?.Bank_File || memberDoc?.Ration_Card_File || memberDoc?.Job_Card_File) && (
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
             <IdCard size={24} />
-            Identity Documents
+            Member Identity Documents
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {memberDoc?.Voter_Id_File && (
@@ -1273,6 +1375,41 @@ export default function MemberDashboard() {
               </div>
             )}
 
+            {memberDoc?.Bank_File && (
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-700 mb-2">Bank Document</h3>
+                <p className="text-sm text-gray-600 mb-3">Account: {memberDoc?.Bank_Ac || "-"}</p>
+                <div className="relative">
+                  {imageErrors[memberDoc.Bank_File] ? (
+                    <div className="flex items-center justify-center bg-gray-100 rounded-lg h-48">
+                      <div className="text-center">
+                        <ImageIcon size={48} className="mx-auto text-gray-400 mb-2" />
+                        <p className="text-gray-500 text-sm">Image not available</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <img
+                      src={getImageUrl(memberDoc.Bank_File)}
+                      alt="Bank Document"
+                      className="w-full h-auto rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                      onError={() => handleImageError(memberDoc.Bank_File)}
+                    />
+                  )}
+                  {!imageErrors[memberDoc.Bank_File] && (
+                    <a
+                      href={getImageUrl(memberDoc.Bank_File)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      <ImageIcon size={16} />
+                      View Full Size
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
             {memberDoc?.Ration_Card_File && (
               <div className="border border-gray-200 rounded-lg p-4">
                 <h3 className="font-semibold text-gray-700 mb-2">Ration Card Document</h3>
@@ -1331,6 +1468,121 @@ export default function MemberDashboard() {
                   {!imageErrors[memberDoc.Job_Card_File] && (
                     <a
                       href={getImageUrl(memberDoc.Job_Card_File)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      <ImageIcon size={16} />
+                      View Full Size
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Spouse Document Attachments */}
+      {(memberDoc?.Adhar_Id_Pati_File || memberDoc?.Voter_Id_Pati_File || memberDoc?.Bank_Pati_File) && (
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <IdCard size={24} />
+            Spouse (Pati) Document Attachments
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {memberDoc?.Adhar_Id_Pati_File && (
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-700 mb-2">Spouse Aadhar Document</h3>
+                <p className="text-sm text-gray-600 mb-3">Aadhar Number: {memberDoc?.Adhar_Id_Pati || "-"}</p>
+                <div className="relative">
+                  {imageErrors[memberDoc.Adhar_Id_Pati_File] ? (
+                    <div className="flex items-center justify-center bg-gray-100 rounded-lg h-48">
+                      <div className="text-center">
+                        <ImageIcon size={48} className="mx-auto text-gray-400 mb-2" />
+                        <p className="text-gray-500 text-sm">Image not available</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <img
+                      src={getImageUrl(memberDoc.Adhar_Id_Pati_File)}
+                      alt="Spouse Aadhar Document"
+                      className="w-full h-auto rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                      onError={() => handleImageError(memberDoc.Adhar_Id_Pati_File)}
+                    />
+                  )}
+                  {!imageErrors[memberDoc.Adhar_Id_Pati_File] && (
+                    <a
+                      href={getImageUrl(memberDoc.Adhar_Id_Pati_File)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      <ImageIcon size={16} />
+                      View Full Size
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {memberDoc?.Voter_Id_Pati_File && (
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-700 mb-2">Spouse Voter ID Document</h3>
+                <div className="relative">
+                  {imageErrors[memberDoc.Voter_Id_Pati_File] ? (
+                    <div className="flex items-center justify-center bg-gray-100 rounded-lg h-48">
+                      <div className="text-center">
+                        <ImageIcon size={48} className="mx-auto text-gray-400 mb-2" />
+                        <p className="text-gray-500 text-sm">Image not available</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <img
+                      src={getImageUrl(memberDoc.Voter_Id_Pati_File)}
+                      alt="Spouse Voter ID Document"
+                      className="w-full h-auto rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                      onError={() => handleImageError(memberDoc.Voter_Id_Pati_File)}
+                    />
+                  )}
+                  {!imageErrors[memberDoc.Voter_Id_Pati_File] && (
+                    <a
+                      href={getImageUrl(memberDoc.Voter_Id_Pati_File)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      <ImageIcon size={16} />
+                      View Full Size
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {memberDoc?.Bank_Pati_File && (
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-700 mb-2">Spouse Bank Document</h3>
+                <p className="text-sm text-gray-600 mb-3">Account: {memberDoc?.Bank_Ac_Pati || "-"}</p>
+                <div className="relative">
+                  {imageErrors[memberDoc.Bank_Pati_File] ? (
+                    <div className="flex items-center justify-center bg-gray-100 rounded-lg h-48">
+                      <div className="text-center">
+                        <ImageIcon size={48} className="mx-auto text-gray-400 mb-2" />
+                        <p className="text-gray-500 text-sm">Image not available</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <img
+                      src={getImageUrl(memberDoc.Bank_Pati_File)}
+                      alt="Spouse Bank Document"
+                      className="w-full h-auto rounded-lg border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity"
+                      onError={() => handleImageError(memberDoc.Bank_Pati_File)}
+                    />
+                  )}
+                  {!imageErrors[memberDoc.Bank_Pati_File] && (
+                    <a
+                      href={getImageUrl(memberDoc.Bank_Pati_File)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
@@ -1821,7 +2073,7 @@ export default function MemberDashboard() {
                     const memFeesGroup = parseFloat(amounts.memFeesGroup || 0);
                     const memFeesSamiti = parseFloat(amounts.memFeesSamiti || 0);
                     const other = parseFloat(amounts.other || 0);
-                    const chargesTotal = amounts.charges ? 
+                    const chargesTotal = amounts.charges ?
                       Object.values(amounts.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
                     const total = saving + loan + fd + interest + yogdan + memFeesSHG + memFeesGroup + memFeesSamiti + other + chargesTotal;
                     const mode = recovery.paymentMode?.cash && recovery.paymentMode?.online
@@ -1847,9 +2099,9 @@ export default function MemberDashboard() {
                         <td className="border border-gray-300 p-3 text-right" title={
                           amounts.charges && Object.keys(amounts.charges).length > 0
                             ? Object.entries(amounts.charges)
-                                .filter(([_, amount]) => parseFloat(amount) > 0)
-                                .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
-                                .join(", ")
+                              .filter(([_, amount]) => parseFloat(amount) > 0)
+                              .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+                              .join(", ")
                             : ""
                         }>
                           ₹{chargesTotal.toLocaleString()}
@@ -1918,7 +2170,7 @@ export default function MemberDashboard() {
                     <th colSpan={2} className="border border-gray-300 p-3 text-center font-semibold">
                       Interest
                     </th>
-                    <th className="border border-gray-300 p-3 text-center font-semibold">
+                    <th colSpan={2} className="border border-gray-300 p-3 text-center font-semibold">
                       Yogdan
                     </th>
                     <th className="border border-gray-300 p-3 text-center font-semibold">
@@ -1937,52 +2189,124 @@ export default function MemberDashboard() {
                     <th className="border border-gray-300 p-2 text-center font-medium">Balance</th>
                     <th className="border border-gray-300 p-2 text-center font-medium">Due</th>
                     <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
-                    <th className="border border-gray-300 p-2 text-center font-medium">Amount</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Due</th>
+                    <th className="border border-gray-300 p-2 text-center font-medium">Paid</th>
                     <th className="border border-gray-300 p-2 text-center font-medium">Details</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredLedger.length === 0 ? (
                     <tr>
-                      <td colSpan={16} className="text-center p-6 text-gray-500">
+                      <td colSpan={17} className="text-center p-6 text-gray-500">
                         No records found for the selected date range
                       </td>
                     </tr>
                   ) : (
                     filteredLedger.map((row, i) => {
                       // Calculate total charges amount
-                      const chargesTotal = row.charges ? 
+                      const chargesTotal = row.charges ?
                         Object.values(row.charges).reduce((sum, amount) => sum + (parseFloat(amount) || 0), 0) : 0;
                       // Format charges details for display
                       const chargesDetails = row.charges && Object.keys(row.charges).length > 0
                         ? Object.entries(row.charges)
-                            .filter(([_, amount]) => parseFloat(amount) > 0)
-                            .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
-                            .join(", ")
+                          .filter(([_, amount]) => parseFloat(amount) > 0)
+                          .map(([name, amount]) => `${name}: ₹${parseFloat(amount).toLocaleString()}`)
+                          .join(", ")
                         : "—";
-                      
+
+                      // Format all numeric values properly
+                      const formattedSavingsDeposit = formatCurrency(row.savingsDeposit);
+                      const formattedSavingsWithdraw = formatCurrency(row.savingsWithdraw);
+                      const formattedSavingsBalance = formatCurrency(row.savingsBalance);
+                      const formattedLoanPaid = formatCurrency(row.loanPaid);
+                      const formattedLoanRecovered = formatCurrency(row.loanRecovered);
+                      const formattedLoanBalance = formatCurrency(row.loanBalance);
+                      const formattedFdDeposit = formatCurrency(row.fdDeposit);
+                      const formattedFdWithdraw = formatCurrency(row.fdWithdraw);
+                      const formattedFdBalance = formatCurrency(row.fdBalance);
+
+                      // For recovery entries, show remaining due (due - paid) instead of total due before payment
+                      // For other entries, show the due amount as is
+                      let displayInterestDue = row.interestDue || 0;
+                      let displayYogdanDue = row.yogdanDue || 0;
+                      if (row.receipt === "Recovery") {
+                        // Calculate remaining due after payment
+                        displayInterestDue = Math.max(0, (row.interestDue || 0) - (row.interestPaid || 0));
+                        displayYogdanDue = Math.max(0, (row.yogdanDue || 0) - (row.yogdanPaid || 0));
+                      }
+
+                      const formattedInterestDue = formatCurrency(displayInterestDue);
+                      const formattedInterestPaid = formatCurrency(row.interestPaid);
+                      const formattedYogdanDue = formatCurrency(displayYogdanDue);
+                      const formattedYogdanPaid = formatCurrency(row.yogdanPaid);
+
+                      // Log each row being rendered for debugging
+                      console.log('[MEMBER_DASHBOARD] Rendering ledger row', {
+                        index: i,
+                        date: row.date,
+                        receipt: row.receipt,
+                        rawYogdanDue: row.yogdanDue,
+                        rawYogdanPaid: row.yogdanPaid,
+                        formattedYogdanDue,
+                        formattedYogdanPaid,
+                        rawInterestDue: row.interestDue,
+                        formattedInterestDue,
+                        rawLoanPaid: row.loanPaid,
+                        formattedLoanPaid,
+                        fullRow: row
+                      });
+
                       return (
                         <tr key={i} className="hover:bg-gray-50">
                           <td className="border border-gray-300 p-3">{formatDate(row.date)}</td>
                           <td className="border border-gray-300 p-3">{row.receipt}</td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.savingsDeposit || 0}</td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.savingsWithdraw || 0}</td>
-                          <td className="border border-gray-300 p-3 text-right font-semibold">
-                            ₹{row.savingsBalance || 0}
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedSavingsDeposit > 0 ? `₹${formattedSavingsDeposit.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
                           </td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.loanPaid || 0}</td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.loanRecovered || 0}</td>
-                          <td className="border border-gray-300 p-3 text-right font-semibold">
-                            ₹{row.loanBalance || 0}
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedSavingsWithdraw > 0 ? `₹${formattedSavingsWithdraw.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
                           </td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.fdDeposit || 0}</td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.fdWithdraw || 0}</td>
                           <td className="border border-gray-300 p-3 text-right font-semibold">
-                            ₹{row.fdBalance || 0}
+                            {formattedSavingsBalance > 0 ? `₹${formattedSavingsBalance.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
                           </td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.interestDue || 0}</td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.interestPaid || 0}</td>
-                          <td className="border border-gray-300 p-3 text-right">₹{row.yogdan || 0}</td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedLoanPaid > 0 ? `₹${formattedLoanPaid.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedLoanRecovered > 0 ? `₹${formattedLoanRecovered.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right font-semibold">
+                            {formattedLoanBalance > 0 ? `₹${formattedLoanBalance.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedFdDeposit > 0 ? `₹${formattedFdDeposit.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedFdWithdraw > 0 ? `₹${formattedFdWithdraw.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right font-semibold">
+                            {formattedFdBalance > 0 ? `₹${formattedFdBalance.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedInterestDue > 0
+                              ? `₹${formattedInterestDue.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+                              : (row.receipt === "Recovery" ? "₹0" : "—")}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedInterestPaid > 0
+                              ? `₹${formattedInterestPaid.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+                              : (row.receipt === "Recovery" ? "₹0" : "—")}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedYogdanDue > 0
+                              ? `₹${formattedYogdanDue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : (row.receipt === "Recovery" ? "₹0.00" : "—")}
+                          </td>
+                          <td className="border border-gray-300 p-3 text-right">
+                            {formattedYogdanPaid > 0
+                              ? `₹${formattedYogdanPaid.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : (row.receipt === "Recovery" ? "₹0.00" : "—")}
+                          </td>
                           <td className="border border-gray-300 p-3 text-right" title={chargesDetails}>
                             {chargesTotal > 0 ? `₹${chargesTotal.toLocaleString()}` : "—"}
                           </td>

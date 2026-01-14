@@ -4,6 +4,7 @@ import { BankMaster, GroupMaster, Member, LoanMaster, RecoveryMaster } from "../
 import BankTransaction from "../../model/BankTransaction.js";
 import CashTransaction from "../../model/CashTransaction.js";
 import { addBankValidationSchema, updateGroupSchema, updateBankValidationSchema } from "../../validation/adminValidation.js";
+import { verifyGroupAccess, verifyGroupAccessByCode } from "../../utility/groupAccessHelper.js";
 
 export const registerGroup = async (req, res) => {
     try {
@@ -14,6 +15,13 @@ export const registerGroup = async (req, res) => {
             cluster_name
         } = req.body;
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        if (!adminPlace) {
+            return apiResponse.error(res, "Admin place not found. Please ensure you are logged in.", 400);
+        }
+        
         // Check if group exists with same code in same village/cluster
         // Uniqueness is based on group_code + village (or cluster_name if village is not provided)
         const query = { group_code };
@@ -29,8 +37,14 @@ export const registerGroup = async (req, res) => {
             return apiResponse.error(res, `Group with code "${group_code}" already exists in ${location}`, 400);
         }
 
+        // Add admin's place to group data
+        const groupData = {
+            ...req.body,
+            place: adminPlace // Associate group with admin's place
+        };
+
         // Create new group
-        const newGroup = await GroupMaster.create(req.body);
+        const newGroup = await GroupMaster.create(groupData);
 
         return apiResponse.success(res, message.GROUP_REGISTERED, newGroup);
 
@@ -109,8 +123,16 @@ export const listBanksByGroup = async (req, res) => {
         const { groupId } = req.params;
         if (!groupId) return apiResponse.error(res, "groupId is required", 400);
 
-        const group = await GroupMaster.findById(groupId).lean();
-        if (!group) return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+        }
+        
+        const group = accessCheck.group;
 
         // Get banks for the group
         const banks = await BankMaster.find({ group_id: groupId }).sort({ createdAt: -1 }).lean();
@@ -146,7 +168,16 @@ export const listBanksByGroup = async (req, res) => {
 // ------------------------------------------------------------------
 export const listGroups = async (req, res) => {
     try {
-        const groups = await GroupMaster.find({})
+        // Get admin's place from token (stored in req.user or req.admin)
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Build query - filter by place if admin has a place
+        const query = {};
+        if (adminPlace) {
+            query.place = adminPlace;
+        }
+        
+        const groups = await GroupMaster.find(query)
             .sort({ createdAt: -1 })
             .lean();
         return apiResponse.success(res, "Groups fetched successfully", groups);
@@ -165,10 +196,16 @@ export const getGroupDetail = async (req, res) => {
             return apiResponse.error(res, "Group id is required", 400);
         }
 
-        let group = await GroupMaster.findById(id).populate("bankmaster").populate("bankmasters").lean();
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(id, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        
+        let group = await GroupMaster.findById(id).populate("bankmaster").populate("bankmasters").lean();
 
         // Always include all banks for this group
         const banks = await BankMaster.find({ group_id: group._id }).sort({ createdAt: -1 }).lean();
@@ -197,23 +234,16 @@ export const getGroupByCode = async (req, res) => {
             return apiResponse.error(res, "group_code is required", 400);
         }
 
-        // Build query - if village or cluster_name provided, use them to find specific group
-        const query = { group_code };
-        if (village) {
-            query.village = village;
-        } else if (cluster_name) {
-            query.cluster_name = cluster_name;
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access by code
+        const accessCheck = await verifyGroupAccessByCode(group_code, adminPlace, village, cluster_name);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
-
-        let group = await GroupMaster.findOne(query).populate("bankmaster").populate("bankmasters").lean();
-        if (!group) {
-            // If no village/cluster specified and not found, check if multiple groups exist
-            const count = await GroupMaster.countDocuments({ group_code });
-            if (count > 1) {
-                return apiResponse.error(res, `Multiple groups found with code "${group_code}". Please specify village or cluster_name.`, 400);
-            }
-            return apiResponse.error(res, "Group not found", 404);
-        }
+        
+        let group = await GroupMaster.findById(accessCheck.group._id).populate("bankmaster").populate("bankmasters").lean();
 
         const banks = await BankMaster.find({ group_id: group._id }).sort({ createdAt: -1 }).lean();
 
@@ -238,10 +268,21 @@ export const getBankDetail = async (req, res) => {
             return apiResponse.error(res, "Bank id is required", 400);
         }
 
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
         // Get bank details
         const bank = await BankMaster.findById(bankId).lean();
         if (!bank) {
             return apiResponse.error(res, "Bank not found", 404);
+        }
+
+        // Verify bank's associated group belongs to admin's place
+        if (bank.group_id) {
+            const accessCheck = await verifyGroupAccess(bank.group_id, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "You don't have access to this bank's group", 403);
+            }
         }
 
         // Calculate current balance and available balance
@@ -317,11 +358,16 @@ export const getCashTransactions = async (req, res) => {
             return apiResponse.error(res, "groupId is required", 400);
         }
 
-        // Verify group exists
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        
+        const group = await GroupMaster.findById(groupId);
 
         // Get current cash balance
         await group.recalculateCashBalance();
@@ -388,10 +434,16 @@ export const updateGroup = async (req, res) => {
             return apiResponse.error(res, error.details[0].message, 400);
         }
 
-        const group = await GroupMaster.findById(id);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(id, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        
+        const group = await GroupMaster.findById(id);
 
         // If group_code is being updated, check for duplicates in same village/cluster
         if (req.body.group_code && req.body.group_code !== group.group_code) {
@@ -528,10 +580,16 @@ export const addGroupCharge = async (req, res) => {
             return apiResponse.error(res, "frequency must be 'yearly' or 'monthly' for recurring charges", 400);
         }
 
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        
+        const group = await GroupMaster.findById(groupId);
 
         const newCharge = {
             name,
@@ -567,10 +625,16 @@ export const updateGroupCharge = async (req, res) => {
             return apiResponse.error(res, "groupId and chargeId are required", 400);
         }
 
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        
+        const group = await GroupMaster.findById(groupId);
 
         if (!group.charges || group.charges.length === 0) {
             return apiResponse.error(res, "No charges found for this group", 404);
@@ -619,10 +683,16 @@ export const deleteGroupCharge = async (req, res) => {
             return apiResponse.error(res, "groupId and chargeId are required", 400);
         }
 
-        const group = await GroupMaster.findById(groupId);
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        
+        const group = await GroupMaster.findById(groupId);
 
         if (!group.charges || group.charges.length === 0) {
             return apiResponse.error(res, "No charges found for this group", 404);
@@ -651,10 +721,16 @@ export const getGroupCharges = async (req, res) => {
             return apiResponse.error(res, "groupId is required", 400);
         }
 
-        const group = await GroupMaster.findById(groupId).select("charges");
-        if (!group) {
-            return apiResponse.error(res, "Group not found", 404);
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+        
+        // Verify group access
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
+        
+        const group = await GroupMaster.findById(groupId).select("charges");
 
         const charges = group.charges || [];
 

@@ -7,7 +7,8 @@ function RegisterAdmin() {
     name: "",
     email: "",
     password: "",
-    confirmPassword: ""
+    confirmPassword: "",
+    place: ""
   });
 const navigate = useNavigate();
   const [message, setMessage] = useState("");
@@ -28,7 +29,8 @@ const navigate = useNavigate();
       const response = await registerAdminService({
         name: form.name,
         email: form.email,
-        password: form.password
+        password: form.password,
+        place: form.place
       });
 
       setMessage("✅ Registered Successfully!");
@@ -69,6 +71,17 @@ const navigate = useNavigate();
           className="border p-2 rounded"
           required
         />
+
+        <input
+          type="text"
+          name="place"
+          placeholder="Place/Location (Unique)"
+          value={form.place}
+          onChange={handleChange}
+          className="border p-2 rounded"
+          required
+        />
+        <p className="text-xs text-gray-500 -mt-2">Each place can only have one admin</p>
 
         <input
           type="password"

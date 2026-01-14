@@ -23,6 +23,13 @@ const AdminSchema = new mongoose.Schema({
         minlength: 6,
     },
 
+    place: {
+        type: String,
+        required: true,
+        unique: true,
+        trim: true,
+    },
+
     // Profile fields
     phone: {
         type: String,

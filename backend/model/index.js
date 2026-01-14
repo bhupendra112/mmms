@@ -10,6 +10,7 @@ import ExpenseMaster from "./ExpenseMaster.js";
 import BankTransaction from "./BankTransaction.js";
 import CashTransaction from "./CashTransaction.js";
 import CashAmount from "./CashAmount.js";
+import MemberRevenueDemand from "./MemberRevenueDemand.js";
 
 export {
     Admin,
@@ -23,5 +24,6 @@ export {
     ExpenseMaster,
     BankTransaction,
     CashTransaction,
-    CashAmount
+    CashAmount,
+    MemberRevenueDemand
 };

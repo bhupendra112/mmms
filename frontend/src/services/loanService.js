@@ -30,6 +30,7 @@ export const getLoans = async (groupId = null) => {
 
 export const getLoanDetail = async (id) => {
   const res = await httpLoan.get(`/detail/${id}`);
+  console.log("getLoanDetail res", res.data)
   return res.data;
 };
 
