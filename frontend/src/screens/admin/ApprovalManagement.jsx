@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
     CheckCircle,
     XCircle,
@@ -24,6 +24,7 @@ export default function ApprovalManagement() {
     const [filter, setFilter] = useState("pending"); // pending, approved, rejected, all
     const [groups, setGroups] = useState([]);
     const [selectedGroupId, setSelectedGroupId] = useState(""); // "" means all
+    const [selectedClusterKey, setSelectedClusterKey] = useState("");
     const [selectedApproval, setSelectedApproval] = useState(null);
     const [rejectionReason, setRejectionReason] = useState("");
     const [loading, setLoading] = useState(true);
@@ -44,6 +45,8 @@ export default function ApprovalManagement() {
                         id: g._id,
                         name: g.group_name,
                         code: g.group_code,
+                        clusterName: g.cluster_name || "",
+                        clusterCode: g.cluster_code || "",
                     }))
                 );
             })
@@ -52,6 +55,24 @@ export default function ApprovalManagement() {
                 setGroups([]);
             });
     }, []);
+
+    const clusterOptions = useMemo(() => {
+        const uniqueClusters = Array.from(
+            new Set(groups.map((g) => `${g.clusterName}|${g.clusterCode}`))
+        );
+        return uniqueClusters.map((key) => {
+            const [name, code] = key.split("|");
+            return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
+        });
+    }, [groups]);
+
+    const groupOptions = useMemo(() => {
+        if (!selectedClusterKey) return [];
+        const [cName, cCode] = selectedClusterKey.split("|");
+        return groups
+            .filter((g) => g.clusterName === cName && g.clusterCode === cCode)
+            .map((g) => ({ value: g.id, label: `${g.name} ${g.code ? `(${g.code})` : ""}` }));
+    }, [groups, selectedClusterKey]);
 
     const loadApprovals = async () => {
         setLoading(true);
@@ -376,16 +397,35 @@ export default function ApprovalManagement() {
                     <Filter size={20} className="text-gray-600" />
                     <span className="font-semibold text-gray-700">Filter:</span>
                     <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-700">Cluster:</span>
+                        <select
+                            value={selectedClusterKey}
+                            onChange={(e) => {
+                                setSelectedClusterKey(e.target.value);
+                                setSelectedGroupId("");
+                            }}
+                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        >
+                            <option value="">All Clusters</option>
+                            {clusterOptions.map((c) => (
+                                <option key={c.value} value={c.value}>
+                                    {c.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-gray-700">Group:</span>
                         <select
                             value={selectedGroupId}
                             onChange={(e) => setSelectedGroupId(e.target.value)}
                             className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            disabled={!selectedClusterKey}
                         >
                             <option value="">All Groups</option>
-                            {groups.map((g) => (
-                                <option key={g.id} value={g.id}>
-                                    {g.name} {g.code ? `(${g.code})` : ""}
+                            {groupOptions.map((g) => (
+                                <option key={g.value} value={g.value}>
+                                    {g.label}
                                 </option>
                             ))}
                         </select>

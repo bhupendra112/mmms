@@ -41,6 +41,7 @@ const getImageUrl = (imagePath) => {
 export default function GroupManagement() {
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGroup, setSelectedGroup] = useState(null);
+    const [selectedClusterKey, setSelectedClusterKey] = useState("");
     const [activeTab, setActiveTab] = useState("overview"); // overview, members, bank, cash, finance, charges
     const [groups, setGroupsState] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
@@ -103,6 +104,8 @@ export default function GroupManagement() {
             name: g.group_name || g.name,
             village: g.village,
             cluster: g.cluster || g.cluster_name,
+            clusterName: g.cluster_name || g.cluster || "",
+            clusterCode: g.cluster_code || "",
             formationDate: g.formation_date ? new Date(g.formation_date).toLocaleDateString("en-GB") : "",
             noMembers: g.memberCount ?? g.no_members ?? 0,
             bankDetails: bank
@@ -149,16 +152,31 @@ export default function GroupManagement() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, selectedGroup]);
 
+    const clusterOptions = useMemo(() => {
+        const uniqueClusters = Array.from(
+            new Set(groups.map((g) => `${g.clusterName}|${g.clusterCode}`))
+        );
+        return uniqueClusters.map((key) => {
+            const [name, code] = key.split("|");
+            return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
+        });
+    }, [groups]);
+
     const filteredGroups = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
-        if (!q) return groups;
-        return groups.filter(
+        if (!selectedClusterKey) return [];
+        const [cName, cCode] = selectedClusterKey.split("|");
+        const scoped = groups.filter(
+            (group) => group.clusterName === cName && group.clusterCode === cCode
+        );
+        if (!q) return scoped;
+        return scoped.filter(
             (group) =>
                 (group.name || "").toLowerCase().includes(q) ||
                 (group.code || "").toLowerCase().includes(q) ||
                 (group.village || "").toLowerCase().includes(q)
         );
-    }, [groups, searchTerm]);
+    }, [groups, searchTerm, selectedClusterKey]);
 
     const loadGroupDetail = async (groupId) => {
         if (!groupId) return;
@@ -743,6 +761,23 @@ export default function GroupManagement() {
                 {/* Left Sidebar - Groups List */}
                 <div className="lg:col-span-1">
                     <div className="bg-white rounded-lg shadow-md p-4 mb-4">
+                        <select
+                            value={selectedClusterKey}
+                            onChange={(e) => {
+                                setSelectedClusterKey(e.target.value);
+                                setSelectedGroup(null);
+                                setSelectedGroupData(null);
+                                setSelectedGroupRaw(null);
+                            }}
+                            className="w-full mb-4 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        >
+                            <option value="">Select Cluster</option>
+                            {clusterOptions.map((c) => (
+                                <option key={c.value} value={c.value}>
+                                    {c.label}
+                                </option>
+                            ))}
+                        </select>
                         <div className="relative mb-4">
                             <Search className="absolute left-3 top-3 text-gray-400" size={20} />
                             <input
@@ -769,43 +804,49 @@ export default function GroupManagement() {
                             </h3>
                         </div>
                         <div className="max-h-[600px] overflow-y-auto">
-                            {filteredGroups.map((group) => (
-                                <div
-                                    key={group.id}
-                                    onClick={() => {
-                                        setSelectedGroup(group.id);
-                                        setSelectedGroupData(group);
-                                        setActiveTab("overview");
-                                        loadGroupDetail(group.id);
-                                        loadGroupMembers(group.id);
-                                        loadBanks(group.id);
-                                        calculateFinance(group.id);
-                                        loadGroupCharges(group.id);
-                                    }}
-                                    className={`p-4 border-b cursor-pointer transition-colors ${selectedGroup === group.id
-                                        ? "bg-blue-50 border-l-4 border-l-blue-600"
-                                        : "hover:bg-gray-50"
-                                        }`}
-                                >
-                                    <div className="flex items-start justify-between">
-                                        <div className="flex-1">
-                                            <p className="font-semibold text-gray-800">{group.name}</p>
-                                            <p className="text-sm text-gray-600">Code: {group.code}</p>
-                                            <p className="text-sm text-gray-500">{group.village}</p>
-                                            <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                                                <span className="flex items-center gap-1">
-                                                    <Users size={14} />
-                                                    {group.noMembers} members
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <Building2
-                                            className={selectedGroup === group.id ? "text-blue-600" : "text-gray-400"}
-                                            size={20}
-                                        />
-                                    </div>
+                            {!selectedClusterKey ? (
+                                <div className="p-4 text-center text-gray-500">
+                                    Please select a cluster to view groups.
                                 </div>
-                            ))}
+                            ) : (
+                                filteredGroups.map((group) => (
+                                    <div
+                                        key={group.id}
+                                        onClick={() => {
+                                            setSelectedGroup(group.id);
+                                            setSelectedGroupData(group);
+                                            setActiveTab("overview");
+                                            loadGroupDetail(group.id);
+                                            loadGroupMembers(group.id);
+                                            loadBanks(group.id);
+                                            calculateFinance(group.id);
+                                            loadGroupCharges(group.id);
+                                        }}
+                                        className={`p-4 border-b cursor-pointer transition-colors ${selectedGroup === group.id
+                                            ? "bg-blue-50 border-l-4 border-l-blue-600"
+                                            : "hover:bg-gray-50"
+                                            }`}
+                                    >
+                                        <div className="flex items-start justify-between">
+                                            <div className="flex-1">
+                                                <p className="font-semibold text-gray-800">{group.name}</p>
+                                                <p className="text-sm text-gray-600">Code: {group.code}</p>
+                                                <p className="text-sm text-gray-500">{group.village}</p>
+                                                <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                                                    <span className="flex items-center gap-1">
+                                                        <Users size={14} />
+                                                        {group.noMembers} members
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <Building2
+                                                className={selectedGroup === group.id ? "text-blue-600" : "text-gray-400"}
+                                                size={20}
+                                            />
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
                 </div>

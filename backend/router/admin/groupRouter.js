@@ -1,6 +1,6 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail, getCashTransactions, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges } from "../../controller/admin/groupController.js";
+import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail, getCashTransactions, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, listClusters } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
@@ -24,6 +24,9 @@ router.put("/update/:id", authAdmin, updateGroup);
 router.get("/list", authAdmin, (req, res) => {
     return listGroups(req, res);
 });
+
+// LIST ALL CLUSTERS
+router.get("/list-clusters", authAdmin, listClusters);
 
 // GROUP DETAIL BY CODE (must come before :groupId route)
 router.get("/by-code/:group_code", authAdmin, (req, res) => {

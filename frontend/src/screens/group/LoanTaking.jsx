@@ -11,6 +11,7 @@ import {
     Search,
     Wallet,
     CreditCard,
+    LayoutGrid,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Input, Select } from "../../components/forms/FormComponents";
@@ -29,6 +30,7 @@ export default function LoanTaking() {
     const [selectedGroup, setSelectedGroup] = useState(null); // For admin: selected group from list
     const [groups, setGroups] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
+    const [selectedCluster, setSelectedCluster] = useState(null); // { name, code }
     const [allMembers, setAllMembers] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
     const [currentStep, setCurrentStep] = useState(() => (isAdminMode ? 0 : 1)); // 0: Select Group (admin only), 1: Loan Taking Form
@@ -79,6 +81,8 @@ export default function LoanTaking() {
                         name: g.group_name,
                         code: g.group_code,
                         village: g.village,
+                        cluster_name: g.cluster_name,
+                        cluster_code: g.cluster_code,
                         memberCount: g.memberCount ?? g.no_members ?? 0,
                     }))
                 );
@@ -369,40 +373,78 @@ export default function LoanTaking() {
                 </p>
             </div>
 
-            {/* Step 0: Select Group (Admin only - when currentGroup is null) */}
+            {/* Step 0: Select Cluster & Group (Admin only - when currentGroup is null) */}
             {isAdminMode && currentStep === 0 && (
                 <div className="bg-white rounded-lg shadow-md p-6">
-                    <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                        <Building2 size={24} className="text-blue-600" />
-                        Select Group
-                    </h2>
-                    <p className="text-gray-600 mb-6">Please select a group to proceed with loan taking</p>
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                            <Building2 size={24} className="text-blue-600" />
+                            {selectedCluster ? `Groups in ${selectedCluster.name}` : "Select Cluster"}
+                        </h2>
+                        {selectedCluster && (
+                            <button
+                                onClick={() => setSelectedCluster(null)}
+                                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                                ← Back to Clusters
+                            </button>
+                        )}
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {groupsLoading ? (
                             <div className="col-span-full text-center py-8 text-gray-500">
-                                <p>Loading groups…</p>
+                                <p>Loading...</p>
                             </div>
                         ) : (
                             <>
-                                {groups.map((group) => (
-                                    <div
-                                        key={group.id}
-                                        onClick={() => handleSelectGroup(group)}
-                                        className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
-                                    >
-                                        <div className="flex items-center gap-3 mb-3">
-                                            <Building2 className="text-blue-600" size={32} />
-                                            <div>
-                                                <p className="font-semibold text-gray-800 text-lg">{group.name}</p>
-                                                <p className="text-sm text-gray-600">Code: {group.code || "-"}</p>
+                                {/* Show Clusters */}
+                                {!selectedCluster && Array.from(new Set(groups.map(g => `${g.cluster_name}|${g.cluster_code}`))).map((clusterKey) => {
+                                    const [name, code] = clusterKey.split('|');
+                                    const clusterGroups = groups.filter(g => g.cluster_name === name && g.cluster_code === code);
+                                    return (
+                                        <div
+                                            key={clusterKey}
+                                            onClick={() => setSelectedCluster({ name, code })}
+                                            className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                                        >
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <LayoutGrid className="text-blue-600" size={32} />
+                                                <div>
+                                                    <p className="font-semibold text-gray-800 text-lg">{name || "No Cluster Name"}</p>
+                                                    <p className="text-sm text-gray-600">Code: {code || "No Code"}</p>
+                                                </div>
+                                            </div>
+                                            <div className="text-sm text-gray-600">
+                                                <p>Groups: {clusterGroups.length}</p>
                                             </div>
                                         </div>
-                                        <div className="text-sm text-gray-600">
-                                            <p>Village: {group.village || "-"}</p>
-                                            <p className="mt-1">Members: {group.memberCount || 0}</p>
+                                    );
+                                })}
+
+                                {/* Show Groups in Selected Cluster */}
+                                {selectedCluster && groups
+                                    .filter(g => g.cluster_name === selectedCluster.name && g.cluster_code === selectedCluster.code)
+                                    .map((group) => (
+                                        <div
+                                            key={group.id}
+                                            onClick={() => handleSelectGroup(group)}
+                                            className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                                        >
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <Building2 className="text-blue-600" size={32} />
+                                                <div>
+                                                    <p className="font-semibold text-gray-800 text-lg">{group.name}</p>
+                                                    <p className="text-sm text-gray-600">Code: {group.code || "-"}</p>
+                                                </div>
+                                            </div>
+                                            <div className="text-sm text-gray-600">
+                                                <p>Village: {group.village || "-"}</p>
+                                                <p className="mt-1">Members: {group.memberCount || 0}</p>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    ))}
+
                                 {groups.length === 0 && (
                                     <div className="col-span-full text-center py-8 text-gray-500">
                                         <p>No groups found.</p>

@@ -18,6 +18,7 @@ import {
   Plus,
   CreditCard,
   Wallet,
+  LayoutGrid,
 } from "lucide-react";
 import { Input, Select } from "../../components/forms/FormComponents";
 import { exportRecoveryToExcel } from "../../utils/exportUtils";
@@ -65,6 +66,7 @@ export default function DemandRecovery() {
   const isAdminMode = !isGroupPanel;
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
+  const [selectedCluster, setSelectedCluster] = useState(null); // { name, code }
   const [allMembers, setAllMembers] = useState([]);
   const [recoveries, setRecoveries] = useState([]);
   const [currentMemberIndex, setCurrentMemberIndex] = useState(0);
@@ -314,13 +316,10 @@ export default function DemandRecovery() {
         },
         interest: {
           prev: dd.interest?.prevDemand || 0,
-          // Use remaining overdueInterest from API if available (for existing members)
-          curr: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.currDemand || 0),
-          // Use remaining overdueInterest from API if available, otherwise use backend total
-          total: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.totalDemand || 0),
+          curr: dd.interest?.currDemand || 0,
+          total: dd.interest?.totalDemand || 0,
           actual: dd.interest?.actualPaid || 0,
-          // Use remaining overdueInterest - actual if available, otherwise use backend unpaid
-          unpaid: remainingOverdueInterest > 0 ? Math.max(0, remainingOverdueInterest - (dd.interest?.actualPaid || 0)) : (dd.interest?.unpaidDemand || 0),
+          unpaid: dd.interest?.unpaidDemand || 0,
           opening: dd.interest?.openingBalance || 0,
           closing: dd.interest?.closingBalance || 0,
         },
@@ -451,13 +450,10 @@ export default function DemandRecovery() {
         },
         interest: {
           prev: dd.interest?.prevDemand || 0,
-          // Use remaining overdueInterest from API if available (for existing members)
-          curr: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.currDemand || 0),
-          // Use remaining overdueInterest from API if available, otherwise use backend total
-          total: remainingOverdueInterest > 0 ? remainingOverdueInterest : (dd.interest?.totalDemand || 0),
-          actual: recovery?.amounts?.interest || 0,
-          // Use remaining overdueInterest - actual if available, otherwise use backend unpaid
-          unpaid: remainingOverdueInterest > 0 ? Math.max(0, remainingOverdueInterest - (recovery?.amounts?.interest || 0)) : (dd.interest?.unpaidDemand || 0),
+          curr: dd.interest?.currDemand || 0,
+          total: dd.interest?.totalDemand || 0,
+          actual: dd.interest?.actualPaid || 0,
+          unpaid: dd.interest?.unpaidDemand || 0,
           opening: dd.interest?.openingBalance || 0,
           closing: dd.interest?.closingBalance || 0,
         },
@@ -842,6 +838,8 @@ export default function DemandRecovery() {
             code: g.group_code,
             name: g.group_name,
             village: g.village,
+            cluster_name: g.cluster_name,
+            cluster_code: g.cluster_code,
             memberCount: g.memberCount ?? g.no_members ?? 0,
             raw: g,
           }))
@@ -1767,42 +1765,102 @@ export default function DemandRecovery() {
         </div>
       </div>
 
-      {/* Step 0: Select Group (Admin only - when currentGroup is null) */}
+      {/* Step 0: Select Cluster & Group (Admin only - when currentGroup is null) */}
       {isAdminMode && currentStep === 0 && (
         <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <Building2 size={24} className="text-blue-600" />
-            Select Group
-          </h2>
-          <p className="text-gray-600 mb-6">Please select a group to proceed with demand recovery</p>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+              <Building2 size={24} className="text-blue-600" />
+              {selectedCluster ? `Groups in ${selectedCluster.name}` : "Select Cluster"}
+            </h2>
+            {selectedCluster && (
+              <button
+                onClick={() => setSelectedCluster(null)}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                ← Back to Clusters
+              </button>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {groupsLoading && (
               <div className="col-span-full text-center py-8 text-gray-500">
-                <p>Loading groups...</p>
+                <p>Loading...</p>
               </div>
             )}
-            {!groupsLoading && groups.map((group) => (
-              <div
-                key={group.id}
-                onClick={() => handleSelectGroup(group)}
-                className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <Building2 className="text-blue-600" size={32} />
-                  <div>
-                    <p className="font-semibold text-gray-800 text-lg">{group.name}</p>
-                    <p className="text-sm text-gray-600">Code: {group.code || group.id}</p>
+
+            {/* Show Clusters */}
+            {!groupsLoading && !selectedCluster && (() => {
+              const clusterKeys = Array.from(new Set(groups.map(g => `${g.cluster_name || ""}|${g.cluster_code || ""}`)));
+              return clusterKeys.map((clusterKey) => {
+                const [name, code] = clusterKey.split('|');
+                const clusterGroups = groups.filter(g => (g.cluster_name || "") === name && (g.cluster_code || "") === code);
+                if (clusterGroups.length === 0) return null; // Skip clusters with no groups
+                const displayName = (name || code) ? (name || "No Name") : "Unassigned";
+                const displayCode = code || (name ? "" : "No Code");
+                return (
+                  <div
+                    key={clusterKey}
+                    onClick={() => setSelectedCluster({ name: name || "", code: code || "" })}
+                    className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <LayoutGrid className="text-blue-600" size={32} />
+                      <div>
+                        <p className="font-semibold text-gray-800 text-lg">{displayName}</p>
+                        <p className="text-sm text-gray-600">Code: {displayCode}</p>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      <p>Groups: {clusterGroups.length}</p>
+                    </div>
                   </div>
+                );
+              }).filter(Boolean);
+            })()}
+
+            {/* Show Groups in Selected Cluster */}
+            {!groupsLoading && selectedCluster && (() => {
+              const clusterGroups = groups.filter(g => (g.cluster_name || "") === (selectedCluster.name || "") && (g.cluster_code || "") === (selectedCluster.code || ""));
+              return clusterGroups.length > 0 ? (
+                clusterGroups.map((group) => (
+                  <div
+                    key={group.id}
+                    onClick={() => handleSelectGroup(group)}
+                    className={`p-6 border-2 rounded-lg cursor-pointer transition-colors ${selectedGroup?.id === group.id
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-gray-200 hover:border-blue-500 hover:bg-blue-50"
+                      }`}
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <Building2 className="text-blue-600" size={32} />
+                      <div>
+                        <p className="font-semibold text-gray-800 text-lg">{group.name}</p>
+                        <p className="text-sm text-gray-600">Code: {group.code || group.id}</p>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      <p>Village: {group.village}</p>
+                      <p className="mt-1">Members: {group.memberCount ?? 0}</p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="col-span-full text-center py-8 text-gray-500">
+                  <p>No groups found in this cluster.</p>
                 </div>
-                <div className="text-sm text-gray-600">
-                  <p>Village: {group.village}</p>
-                  <p className="mt-1">Members: {group.memberCount ?? 0}</p>
-                </div>
-              </div>
-            ))}
-            {!groupsLoading && groups.length === 0 && (
+              );
+            })()}
+
+            {!groupsLoading && !selectedCluster && groups.length === 0 && (
               <div className="col-span-full text-center py-8 text-gray-500">
-                <p>No groups found.</p>
+                <p>No clusters found.</p>
+              </div>
+            )}
+            {!groupsLoading && selectedCluster && groups.filter(g => (g.cluster_name || "") === (selectedCluster.name || "") && (g.cluster_code || "") === (selectedCluster.code || "")).length === 0 && (
+              <div className="col-span-full text-center py-8 text-gray-500">
+                <p>No groups found in this cluster.</p>
               </div>
             )}
           </div>
@@ -2029,8 +2087,8 @@ export default function DemandRecovery() {
                               );
                             });
                           } else {
-                            // For interest and yogdan in receipt, show "due" (total) instead of "paid" (actual)
-                            const displayValue = (key === "interest" || key === "yogdan") ? data.total : data.actual;
+                            // For yogdan in receipt, show "due" (total) instead of "paid" (actual)
+                            const displayValue = (key === "yogdan") ? data.total : data.actual;
                             rows.push(
                               <tr key={key} className="hover:bg-gray-50">
                                 <td className="border p-2 font-medium text-gray-800">{categoryNames[key] || key}</td>

@@ -12,6 +12,7 @@ export default function BankDetails() {
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGroup, setSelectedGroup] = useState(null);
+    const [selectedClusterKey, setSelectedClusterKey] = useState("");
     const [groups, setGroupsState] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [banks, setBanks] = useState([]);
@@ -48,6 +49,8 @@ export default function BankDetails() {
                     id: g._id,
                     name: g.group_name,
                     code: g.group_code,
+                    clusterName: g.cluster_name || "",
+                    clusterCode: g.cluster_code || "",
                 }));
                 setGroupsState(mapped);
 
@@ -55,6 +58,7 @@ export default function BankDetails() {
                     const selected = mapped.find((g) => g.id === preselectGroupId);
                     if (selected) {
                         setSelectedGroup(selected);
+                        setSelectedClusterKey(`${selected.clusterName}|${selected.clusterCode}`);
                         loadBanks(selected.id);
                     }
                 }
@@ -171,15 +175,30 @@ export default function BankDetails() {
         }
     };
 
+    const clusterOptions = useMemo(() => {
+        const uniqueClusters = Array.from(
+            new Set(groups.map((g) => `${g.clusterName}|${g.clusterCode}`))
+        );
+        return uniqueClusters.map((key) => {
+            const [name, code] = key.split("|");
+            return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
+        });
+    }, [groups]);
+
     const filteredGroups = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
-        if (!q) return groups;
-        return groups.filter(
+        if (!selectedClusterKey) return [];
+        const [cName, cCode] = selectedClusterKey.split("|");
+        const scoped = groups.filter(
+            (group) => group.clusterName === cName && group.clusterCode === cCode
+        );
+        if (!q) return scoped;
+        return scoped.filter(
             (group) =>
                 (group.name || "").toLowerCase().includes(q) ||
                 (group.code || "").toLowerCase().includes(q)
         );
-    }, [groups, searchTerm]);
+    }, [groups, searchTerm, selectedClusterKey]);
 
     return (
         <div className="max-w-6xl mx-auto">
@@ -197,6 +216,19 @@ export default function BankDetails() {
                     <Building2 size={24} className="text-blue-600" />
                     Select Group
                 </h2>
+                <div className="mb-4">
+                    <Select
+                        label="Select Cluster"
+                        name="cluster_selection"
+                        value={selectedClusterKey}
+                        handleChange={(e) => {
+                            setSelectedClusterKey(e.target.value);
+                            setSelectedGroup(null);
+                        }}
+                        options={clusterOptions}
+                        required
+                    />
+                </div>
                 <div className="relative mb-4">
                     <Search className="absolute left-3 top-3 text-gray-400" size={20} />
                     <input
@@ -208,7 +240,11 @@ export default function BankDetails() {
                     />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {filteredGroups.length > 0 ? (
+                    {!selectedClusterKey ? (
+                        <div className="col-span-full text-center py-8 text-gray-500">
+                            <p>Please select a cluster to view groups.</p>
+                        </div>
+                    ) : filteredGroups.length > 0 ? (
                         filteredGroups.map((group) => (
                             <div
                                 key={group.id}

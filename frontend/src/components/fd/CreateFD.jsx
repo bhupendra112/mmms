@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { X, DollarSign, Calendar, Wallet, CreditCard } from "lucide-react";
 import { Input, Select } from "../forms/FormComponents";
 import { createFD } from "../../services/fdService";
@@ -9,6 +9,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
     const [loading, setLoading] = useState(false);
     const [groups, setGroups] = useState([]);
     const [selectedGroupId, setSelectedGroupId] = useState("");
+    const [selectedClusterKey, setSelectedClusterKey] = useState("");
     const [amount, setAmount] = useState("");
     const [timePeriod, setTimePeriod] = useState("");
     const [paymentMode, setPaymentMode] = useState({ cash: false, online: false });
@@ -34,6 +35,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                         );
                         if (memberGroup) {
                             setSelectedGroupId(memberGroup._id);
+                            setSelectedClusterKey(`${memberGroup.cluster_name || ""}|${memberGroup.cluster_code || ""}`);
                         }
                     }
                 })
@@ -44,8 +46,32 @@ export default function CreateFD({ member, onClose, onSuccess }) {
             // Member has group info
             const groupId = member.group._id || member.group;
             setSelectedGroupId(groupId);
+            if (member.group?.cluster_name || member.group?.cluster_code) {
+                setSelectedClusterKey(`${member.group.cluster_name || ""}|${member.group.cluster_code || ""}`);
+            }
         }
     }, [member]);
+
+    const clusterOptions = useMemo(() => {
+        const uniqueClusters = Array.from(
+            new Set(groups.map((g) => `${g.cluster_name || ""}|${g.cluster_code || ""}`))
+        );
+        return uniqueClusters.map((key) => {
+            const [name, code] = key.split("|");
+            return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
+        });
+    }, [groups]);
+
+    const groupOptions = useMemo(() => {
+        if (!selectedClusterKey) return [];
+        const [cName, cCode] = selectedClusterKey.split("|");
+        return groups
+            .filter((g) => (g.cluster_name || "") === cName && (g.cluster_code || "") === cCode)
+            .map((g) => ({
+                value: g._id,
+                label: `${g.group_name} (${g.group_code})`,
+            }));
+    }, [groups, selectedClusterKey]);
 
     // Load FD rate and banks when group is selected
     useEffect(() => {
@@ -220,17 +246,27 @@ export default function CreateFD({ member, onClose, onSuccess }) {
 
                     {/* Group Selection (if needed) */}
                     {!member?.group && groups.length > 0 && (
-                        <div>
+                        <div className="space-y-4">
                             <Select
-                                label="Group *"
+                                label="Select Cluster *"
+                                name="cluster_selection"
+                                value={selectedClusterKey}
+                                handleChange={(e) => {
+                                    setSelectedClusterKey(e.target.value);
+                                    setSelectedGroupId("");
+                                    setSelectedBankId("");
+                                }}
+                                options={clusterOptions}
+                                required
+                            />
+                            <Select
+                                label="Select Group *"
                                 name="groupId"
                                 value={selectedGroupId}
                                 handleChange={(e) => setSelectedGroupId(e.target.value)}
-                                options={groups.map((g) => ({
-                                    value: g._id,
-                                    label: `${g.group_name} (${g.group_code})`,
-                                }))}
+                                options={groupOptions}
                                 required
+                                disabled={!selectedClusterKey}
                             />
                         </div>
                     )}

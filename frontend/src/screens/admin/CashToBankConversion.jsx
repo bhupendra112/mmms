@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
     Building2,
     DollarSign,
@@ -12,6 +12,7 @@ import {
     Banknote,
     Wallet,
     CreditCard,
+    LayoutGrid,
 } from "lucide-react";
 import { useAdmin } from "../../contexts/AdminContext";
 import { useGroup } from "../../contexts/GroupContext";
@@ -34,6 +35,7 @@ export default function CashToBankConversion() {
 
     // State
     const [groups, setGroups] = useState([]);
+    const [selectedCluster, setSelectedCluster] = useState(null); // { name, code }
     const [selectedGroup, setSelectedGroup] = useState(null);
     const [recoveries, setRecoveries] = useState([]);
     const [recoveriesWithCash, setRecoveriesWithCash] = useState([]);
@@ -61,7 +63,12 @@ export default function CashToBankConversion() {
             getGroups()
                 .then((res) => {
                     const list = Array.isArray(res?.data) ? res.data : [];
-                    setGroups(list);
+                    setGroups(list.map(g => ({
+                        ...g,
+                        id: g._id,
+                        cluster_name: g.cluster_name || "",
+                        cluster_code: g.cluster_code || "",
+                    })));
                 })
                 .catch((err) => {
                     console.error("Failed to load groups:", err);
@@ -185,6 +192,13 @@ export default function CashToBankConversion() {
                 });
         }
     }, [isAdminMode, activeTab]);
+
+    const filteredGroups = useMemo(() => {
+        if (!selectedCluster || !isAdminMode) return [];
+        return groups.filter(
+            (g) => g.cluster_name === selectedCluster.name && g.cluster_code === selectedCluster.code
+        );
+    }, [groups, selectedCluster, isAdminMode]);
 
     // Calculate total cash amount for a recovery
     const calculateCashAmount = (recovery) => {
@@ -429,23 +443,83 @@ export default function CashToBankConversion() {
                     {/* Group Selection (Admin only) */}
                     {isAdminMode && (
                         <div className="bg-white rounded-lg shadow-md p-6">
-                            <h2 className="text-xl font-semibold text-gray-800 mb-4">Select Group</h2>
-                            <Select
-                                label="Group"
-                                value={selectedGroup?._id || ""}
-                                handleChange={(e) => {
-                                    const group = groups.find((g) => g._id === e.target.value);
-                                    setSelectedGroup(group || null);
-                                    setSelectedRecovery(null);
-                                }}
-                                options={[
-                                    { value: "", label: "Select a group" },
-                                    ...groups.map((g) => ({
-                                        value: g._id,
-                                        label: `${g.group_name} (${g.group_code})`,
-                                    })),
-                                ]}
-                            />
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                                    <Building2 size={24} className="text-blue-600" />
+                                    {selectedCluster ? `Groups in ${selectedCluster.name}` : "Select Cluster"}
+                                </h2>
+                                {selectedCluster && (
+                                    <button
+                                        onClick={() => {
+                                            setSelectedCluster(null);
+                                            setSelectedGroup(null);
+                                            setSelectedRecovery(null);
+                                        }}
+                                        className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                                    >
+                                        ← Back to Clusters
+                                    </button>
+                                )}
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {!selectedCluster ? (
+                                    Array.from(new Set(groups.map(g => `${g.cluster_name || ""}|${g.cluster_code || ""}`))).map((clusterKey) => {
+                                        const [name, code] = clusterKey.split('|');
+                                        const clusterGroups = groups.filter(g => (g.cluster_name || "") === name && (g.cluster_code || "") === code);
+                                        return (
+                                            <div
+                                                key={clusterKey}
+                                                onClick={() => setSelectedCluster({ name, code })}
+                                                className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                                            >
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <LayoutGrid className="text-blue-600" size={32} />
+                                                    <div>
+                                                        <p className="font-semibold text-gray-800 text-lg">{name || "No Cluster Name"}</p>
+                                                        <p className="text-sm text-gray-600">Code: {code || "No Code"}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-sm text-gray-600">
+                                                    <p>Groups: {clusterGroups.length}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                ) : (
+                                    filteredGroups.map((g) => (
+                                        <div
+                                            key={g._id || g.id}
+                                            onClick={() => {
+                                                setSelectedGroup(g);
+                                                setSelectedRecovery(null);
+                                            }}
+                                            className={`p-6 border-2 rounded-lg cursor-pointer transition-colors ${
+                                                selectedGroup?._id === g._id || selectedGroup?.id === g.id
+                                                    ? "border-blue-500 bg-blue-50"
+                                                    : "border-gray-200 hover:border-blue-500 hover:bg-blue-50"
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <Building2 className="text-blue-600" size={32} />
+                                                <div>
+                                                    <p className="font-semibold text-gray-800 text-lg">{g.group_name || g.name}</p>
+                                                    <p className="text-sm text-gray-600">Code: {g.group_code || g.code}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                                {!selectedCluster && groups.length === 0 && (
+                                    <div className="col-span-full text-center py-8 text-gray-500">
+                                        <p>No clusters found.</p>
+                                    </div>
+                                )}
+                                {selectedCluster && filteredGroups.length === 0 && (
+                                    <div className="col-span-full text-center py-8 text-gray-500">
+                                        <p>No groups found in this cluster.</p>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { DollarSign, Calendar, Banknote, Search, Filter, CheckCircle, XCircle, Clock, Eye, Wallet, CreditCard } from "lucide-react";
 import { Input, Select, FormSection } from "../../components/forms/FormComponents";
 import {
@@ -39,6 +39,8 @@ export default function PaymentManagement() {
   // Common State
   const [groups, setGroups] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [selectedClusterKey, setSelectedClusterKey] = useState("");
+  const [historyClusterKey, setHistoryClusterKey] = useState("");
   const [banks, setBanks] = useState([]);
   const [banksLoading, setBanksLoading] = useState(false);
   const [groupCashBalance, setGroupCashBalance] = useState(0);
@@ -91,12 +93,40 @@ export default function PaymentManagement() {
         id: g._id,
         name: g.group_name,
         code: g.group_code,
+        clusterName: g.cluster_name || "",
+        clusterCode: g.cluster_code || "",
       })));
     } catch (err) {
       console.error("Error loading groups:", err);
       setError("Failed to load groups");
     }
   };
+
+  const clusterOptions = useMemo(() => {
+    const uniqueClusters = Array.from(
+      new Set(groups.map(g => `${g.clusterName}|${g.clusterCode}`))
+    );
+    return uniqueClusters.map(key => {
+      const [name, code] = key.split("|");
+      return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
+    });
+  }, [groups]);
+
+  const groupOptions = useMemo(() => {
+    if (!selectedClusterKey) return [];
+    const [cName, cCode] = selectedClusterKey.split("|");
+    return groups
+      .filter(g => g.clusterName === cName && g.clusterCode === cCode)
+      .map(g => ({ value: g.id, label: `${g.name} (${g.code})` }));
+  }, [groups, selectedClusterKey]);
+
+  const historyGroupOptions = useMemo(() => {
+    if (!historyClusterKey) return [];
+    const [cName, cCode] = historyClusterKey.split("|");
+    return groups
+      .filter(g => g.clusterName === cName && g.clusterCode === cCode)
+      .map(g => ({ value: g.id, label: `${g.name} (${g.code})` }));
+  }, [groups, historyClusterKey]);
 
   const loadBanks = async (groupId) => {
     if (!groupId) return;
@@ -483,14 +513,30 @@ export default function PaymentManagement() {
 
       {/* Group Selection */}
       <div className="mb-6">
-        <Select
-          label="Select Group"
-          name="groupId"
-          value={selectedGroupId}
-          options={[{ value: "", label: "All Groups" }, ...groups.map(g => ({ value: g.id, label: `${g.name} (${g.code})` }))]}
-          handleChange={(e) => setSelectedGroupId(e.target.value)}
-          required={activeTab !== "history"}
-        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Select
+            label="Select Cluster"
+            name="cluster_selection"
+            value={selectedClusterKey}
+            options={clusterOptions}
+            handleChange={(e) => {
+              setSelectedClusterKey(e.target.value);
+              setSelectedGroupId("");
+              setSelectedFD(null);
+              setSelectedMember(null);
+            }}
+            required={activeTab !== "history"}
+          />
+          <Select
+            label="Select Group"
+            name="groupId"
+            value={selectedGroupId}
+            options={[{ value: "", label: "Select Group" }, ...groupOptions]}
+            handleChange={(e) => setSelectedGroupId(e.target.value)}
+            required={activeTab !== "history"}
+            disabled={!selectedClusterKey}
+          />
+        </div>
       </div>
 
       {error && (
@@ -861,11 +907,22 @@ export default function PaymentManagement() {
         <div className="space-y-6">
           <FormSection title="Filters" icon={Filter}>
             <Select
+              label="Cluster"
+              name="historyCluster"
+              value={historyClusterKey}
+              options={[{ value: "", label: "All Clusters" }, ...clusterOptions]}
+              handleChange={(e) => {
+                setHistoryClusterKey(e.target.value);
+                setHistoryFilters({ ...historyFilters, groupId: "" });
+              }}
+            />
+            <Select
               label="Group"
               name="groupId"
               value={historyFilters.groupId}
-              options={[{ value: "", label: "All Groups" }, ...groups.map(g => ({ value: g.id, label: `${g.name} (${g.code})` }))]}
+              options={[{ value: "", label: "All Groups" }, ...historyGroupOptions]}
               handleChange={(e) => setHistoryFilters({ ...historyFilters, groupId: e.target.value })}
+              disabled={!historyClusterKey}
             />
             <Select
               label="Payment Type"

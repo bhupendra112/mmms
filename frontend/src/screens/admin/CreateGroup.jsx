@@ -1,6 +1,6 @@
-import React, { useState } from "react";
-import { createGroup } from "../../services/groupService";
-import { PlusCircle, Building2, Users, Calendar, DollarSign, FileText } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { createGroup, getClusters } from "../../services/groupService";
+import { PlusCircle, Building2, Users, Calendar, DollarSign, FileText, LayoutGrid } from "lucide-react";
 import { Input, Select, TextArea, FormSection } from "../../components/forms/FormComponents";
 import Loader, { OverlayLoader } from "../../components/common/Loader";
 import ErrorMessage from "../../components/common/ErrorMessage";
@@ -14,6 +14,7 @@ export default function CreateGroup() {
         group_name: "",
         group_code: "",
         cluster_name: "",
+        cluster_code: "",
         village: "",
         no_members: "",
         formation_date: "",
@@ -35,11 +36,49 @@ export default function CreateGroup() {
         loan_rate: "",
     });
 
+    const [clusters, setClusters] = useState([]);
+    const [selectedClusterId, setSelectedClusterId] = useState("");
+    const [isNewCluster, setIsNewCluster] = useState(false);
+
+    useEffect(() => {
+        fetchClusters();
+    }, []);
+
+    const fetchClusters = async () => {
+        try {
+            const res = await getClusters();
+            if (res.success) {
+                setClusters(res.data);
+            }
+        } catch (err) {
+            console.error("Failed to fetch clusters:", err);
+        }
+    };
+
     const govtOptions = ["Yes", "No"];
     const projectOptions = ["NRLM", "Other"];
 
     const handleChange = (e) => {
         setForm({ ...form, [e.target.name]: e.target.value });
+    };
+
+    const handleClusterChange = (e) => {
+        const val = e.target.value;
+        setSelectedClusterId(val);
+        
+        if (val === "NEW") {
+            setIsNewCluster(true);
+            setForm({ ...form, cluster_name: "", cluster_code: "" });
+        } else if (val) {
+            const cluster = clusters.find(c => `${c.cluster_name}|${c.cluster_code}` === val);
+            if (cluster) {
+                setIsNewCluster(false);
+                setForm({ ...form, cluster_name: cluster.cluster_name, cluster_code: cluster.cluster_code });
+            }
+        } else {
+            setIsNewCluster(false);
+            setForm({ ...form, cluster_name: "", cluster_code: "" });
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -53,6 +92,7 @@ export default function CreateGroup() {
                 group_name: "",
                 group_code: "",
                 cluster_name: "",
+                cluster_code: "",
                 village: "",
                 no_members: "",
                 formation_date: "",
@@ -73,8 +113,19 @@ export default function CreateGroup() {
                 fd_rate: "",
                 loan_rate: "",
             });
+            setSelectedClusterId("");
+            setIsNewCluster(false);
+            fetchClusters(); // Refresh clusters list
         }
     };
+
+    const clusterOptions = [
+        ...clusters.map(c => ({
+            value: `${c.cluster_name}|${c.cluster_code}`,
+            label: `${c.cluster_name} (${c.cluster_code || 'No Code'})`
+        })),
+        { value: "NEW", label: "+ Add New Cluster" }
+    ];
 
     return (
         <div className="max-w-6xl mx-auto">
@@ -124,13 +175,6 @@ export default function CreateGroup() {
                         placeholder="Enter village name"
                     />
                     <Input
-                        label="Cluster Name"
-                        name="cluster_name"
-                        value={form.cluster_name}
-                        handleChange={handleChange}
-                        placeholder="Enter cluster name"
-                    />
-                    <Input
                         type="number"
                         label="Number of Members"
                         name="no_members"
@@ -138,6 +182,56 @@ export default function CreateGroup() {
                         handleChange={handleChange}
                         placeholder="Enter number of members"
                     />
+                </FormSection>
+
+                {/* Cluster Information */}
+                <FormSection title="Cluster Information" icon={LayoutGrid}>
+                    <Select
+                        label="Select Cluster"
+                        name="cluster_selection"
+                        value={selectedClusterId}
+                        handleChange={handleClusterChange}
+                        options={clusterOptions}
+                        required
+                    />
+                    {isNewCluster && (
+                        <>
+                            <Input
+                                label="New Cluster Name"
+                                name="cluster_name"
+                                value={form.cluster_name}
+                                handleChange={handleChange}
+                                required
+                                placeholder="Enter new cluster name"
+                            />
+                            <Input
+                                label="New Cluster Code"
+                                name="cluster_code"
+                                value={form.cluster_code}
+                                handleChange={handleChange}
+                                required
+                                placeholder="Enter new cluster code"
+                            />
+                        </>
+                    )}
+                    {!isNewCluster && selectedClusterId && (
+                        <>
+                            <Input
+                                label="Cluster Name"
+                                name="cluster_name"
+                                value={form.cluster_name}
+                                handleChange={handleChange}
+                                disabled
+                            />
+                            <Input
+                                label="Cluster Code"
+                                name="cluster_code"
+                                value={form.cluster_code}
+                                handleChange={handleChange}
+                                disabled
+                            />
+                        </>
+                    )}
                 </FormSection>
 
                 {/* Formation & Dates */}
@@ -327,6 +421,7 @@ export default function CreateGroup() {
                                         group_name: "",
                                         group_code: "",
                                         cluster_name: "",
+                                        cluster_code: "",
                                         village: "",
                                         no_members: "",
                                         formation_date: "",
@@ -347,6 +442,8 @@ export default function CreateGroup() {
                                         fd_rate: "",
                                         loan_rate: "",
                                     });
+                                    setSelectedClusterId("");
+                                    setIsNewCluster(false);
                                 }
                             }}
                             className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors"

@@ -10,6 +10,7 @@ export default function AdminLoanManagement() {
     const [groups, setGroupsState] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState(null); // {id,name,code,village}
+    const [selectedClusterKey, setSelectedClusterKey] = useState("");
 
     const [loans, setLoans] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -39,6 +40,8 @@ export default function AdminLoanManagement() {
                         code: g.group_code,
                         village: g.village,
                         memberCount: g.memberCount ?? g.no_members ?? 0,
+                        clusterName: g.cluster_name || "",
+                        clusterCode: g.cluster_code || "",
                     }))
                 );
             })
@@ -101,6 +104,22 @@ export default function AdminLoanManagement() {
         });
     }, [filtered]);
 
+    const clusterOptions = useMemo(() => {
+        const uniqueClusters = Array.from(
+            new Set(groups.map((g) => `${g.clusterName}|${g.clusterCode}`))
+        );
+        return uniqueClusters.map((key) => {
+            const [name, code] = key.split("|");
+            return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
+        });
+    }, [groups]);
+
+    const filteredGroups = useMemo(() => {
+        if (!selectedClusterKey) return [];
+        const [cName, cCode] = selectedClusterKey.split("|");
+        return groups.filter((g) => g.clusterName === cName && g.clusterCode === cCode);
+    }, [groups, selectedClusterKey]);
+
     if (!selectedGroup) {
         return (
             <div className="max-w-7xl mx-auto">
@@ -117,11 +136,29 @@ export default function AdminLoanManagement() {
                         <Building2 size={24} className="text-blue-600" />
                         Select Group
                     </h2>
+                    <div className="mb-4">
+                        <select
+                            value={selectedClusterKey}
+                            onChange={(e) => {
+                                setSelectedClusterKey(e.target.value);
+                                setSelectedGroup(null);
+                                setLoans([]);
+                            }}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        >
+                            <option value="">Select Cluster</option>
+                            {clusterOptions.map((c) => (
+                                <option key={c.value} value={c.value}>
+                                    {c.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                     {groupsLoading ? (
                         <p className="text-gray-600">Loading groups…</p>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {groups.map((g) => (
+                            {filteredGroups.map((g) => (
                                 <div
                                     key={g.id}
                                     onClick={() => {
@@ -143,9 +180,14 @@ export default function AdminLoanManagement() {
                                     </div>
                                 </div>
                             ))}
-                            {groups.length === 0 && (
+                            {selectedClusterKey && filteredGroups.length === 0 && (
                                 <div className="col-span-full text-center py-8 text-gray-500">
-                                    <p>No groups found.</p>
+                                    <p>No groups found in this cluster.</p>
+                                </div>
+                            )}
+                            {!selectedClusterKey && (
+                                <div className="col-span-full text-center py-8 text-gray-500">
+                                    <p>Please select a cluster to view groups.</p>
                                 </div>
                             )}
                         </div>

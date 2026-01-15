@@ -8,6 +8,7 @@ import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/
 export default function AdminMembers() {
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGroup, setSelectedGroup] = useState(null); // {id, name, code}
+    const [selectedClusterKey, setSelectedClusterKey] = useState("");
     const [groups, setGroupsState] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
     const [members, setMembers] = useState([]);
@@ -91,6 +92,8 @@ export default function AdminMembers() {
                         name: g.group_name,
                         code: g.group_code,
                         memberCount: g.no_members ?? 0,
+                        clusterName: g.cluster_name || "",
+                        clusterCode: g.cluster_code || "",
                     }))
                 );
             })
@@ -113,15 +116,30 @@ export default function AdminMembers() {
             .finally(() => setMembersLoading(false));
     }, [selectedGroup?.id]);
 
+    const clusterOptions = useMemo(() => {
+        const uniqueClusters = Array.from(
+            new Set(groups.map((g) => `${g.clusterName}|${g.clusterCode}`))
+        );
+        return uniqueClusters.map((key) => {
+            const [name, code] = key.split("|");
+            return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
+        });
+    }, [groups]);
+
     const filteredGroups = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
-        if (!q) return groups;
-        return groups.filter(
+        if (!selectedClusterKey) return [];
+        const [cName, cCode] = selectedClusterKey.split("|");
+        const scoped = groups.filter(
+            (group) => group.clusterName === cName && group.clusterCode === cCode
+        );
+        if (!q) return scoped;
+        return scoped.filter(
             (group) =>
                 (group.name || "").toLowerCase().includes(q) ||
                 (group.code || "").toLowerCase().includes(q)
         );
-    }, [groups, searchTerm]);
+    }, [groups, searchTerm, selectedClusterKey]);
 
     return (
         <div className="max-w-7xl mx-auto">
@@ -138,6 +156,24 @@ export default function AdminMembers() {
             {/* Group Selection */}
             <div className="bg-white rounded-lg shadow-md p-6 mb-6">
                 <h2 className="text-xl font-semibold text-gray-800 mb-4">Select Group to View Members</h2>
+                <div className="mb-4">
+                    <select
+                        value={selectedClusterKey}
+                        onChange={(e) => {
+                            setSelectedClusterKey(e.target.value);
+                            setSelectedGroup(null);
+                            setMembers([]);
+                        }}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                        <option value="">Select Cluster</option>
+                        {clusterOptions.map((c) => (
+                            <option key={c.value} value={c.value}>
+                                {c.label}
+                            </option>
+                        ))}
+                    </select>
+                </div>
                 <div className="relative mb-4">
                     <Search className="absolute left-3 top-3 text-gray-400" size={20} />
                     <input
@@ -150,25 +186,31 @@ export default function AdminMembers() {
                 </div>
                 {groupsLoading && <p className="text-gray-600 mb-4">Loading groups…</p>}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {filteredGroups.map((group) => (
-                        <div
-                            key={group.id}
-                            onClick={() => setSelectedGroup(group)}
-                            className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${selectedGroup?.id === group.id
-                                ? "border-blue-500 bg-blue-50"
-                                : "border-gray-200 hover:border-blue-300"
-                                }`}
-                        >
-                            <div className="flex items-center gap-3">
-                                <Building2 className="text-blue-500" size={24} />
-                                <div>
-                                    <p className="font-semibold text-gray-800">{group.name}</p>
-                                    <p className="text-sm text-gray-600">Code: {group.code}</p>
-                                    <p className="text-sm text-gray-500">Members: {group.memberCount}</p>
+                    {!selectedClusterKey ? (
+                        <div className="col-span-full text-center py-8 text-gray-500">
+                            <p>Please select a cluster to view groups.</p>
+                        </div>
+                    ) : (
+                        filteredGroups.map((group) => (
+                            <div
+                                key={group.id}
+                                onClick={() => setSelectedGroup(group)}
+                                className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${selectedGroup?.id === group.id
+                                    ? "border-blue-500 bg-blue-50"
+                                    : "border-gray-200 hover:border-blue-300"
+                                    }`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <Building2 className="text-blue-500" size={24} />
+                                    <div>
+                                        <p className="font-semibold text-gray-800">{group.name}</p>
+                                        <p className="text-sm text-gray-600">Code: {group.code}</p>
+                                        <p className="text-sm text-gray-500">Members: {group.memberCount}</p>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        ))
+                    )}
                 </div>
             </div>
 

@@ -119,6 +119,7 @@ export const registerGroupSchema = Joi.object({
     group_name: Joi.string().required(),
     group_code: Joi.string().required(),
     cluster_name: Joi.string().optional(),
+    cluster_code: Joi.string().optional(),
     village: Joi.string().optional(),
     place: Joi.string().optional(), // Will be auto-assigned from admin's place
     no_members: Joi.number().optional(),
@@ -182,6 +183,7 @@ export const updateGroupSchema = Joi.object({
     group_name: Joi.string().optional(),
     group_code: Joi.string().optional(),
     cluster_name: Joi.string().optional(),
+    cluster_code: Joi.string().optional(),
     village: Joi.string().optional(),
     no_members: Joi.number().optional(),
     formation_date: Joi.date().optional(),

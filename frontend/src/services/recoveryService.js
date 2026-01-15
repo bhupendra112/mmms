@@ -98,6 +98,7 @@ export const getDemandDetails = async (groupId, memberId, date, testMode = false
     params.testMode = 'true';
   }
   const res = await httpRecovery.get("/demand-details", { params });
+  console.log("demand details : ", res.data)
   return res.data;
 };
 
@@ -133,7 +134,7 @@ export const getGroupRecoveryDetails = async (groupId, filters = {}, testMode = 
 
 export const exportRecoveryPDF = async (groupId, date) => {
   const params = { groupId, date };
-  const res = await httpRecovery.get("/export-pdf", { 
+  const res = await httpRecovery.get("/export-pdf", {
     params,
     responseType: 'blob' // Important: expect binary data
   });

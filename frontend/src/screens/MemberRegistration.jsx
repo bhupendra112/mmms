@@ -15,6 +15,7 @@ export default function MemberRegistration() {
 
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
+  const [selectedClusterKey, setSelectedClusterKey] = useState("");
   const [form, setForm] = useState({
     Member_Id: "",
     Member_Nm: "",
@@ -242,12 +243,24 @@ export default function MemberRegistration() {
     }
   }, [form.loanDetails.amount, form.loanDetails.time_period]);
 
-  const groupOptions = useMemo(() => {
-    return groups.map((g) => ({
-      value: g._id,
-      label: `${g.group_name} (${g.group_code})`,
-    }));
+  const clusterOptions = useMemo(() => {
+    const uniqueClusters = Array.from(new Set(groups.map(g => `${g.cluster_name}|${g.cluster_code}`)));
+    return uniqueClusters.map(key => {
+      const [name, code] = key.split('|');
+      return { value: key, label: `${name || 'No Name'} (${code || 'No Code'})` };
+    });
   }, [groups]);
+
+  const groupOptions = useMemo(() => {
+    if (!selectedClusterKey) return [];
+    const [cName, cCode] = selectedClusterKey.split('|');
+    return groups
+      .filter(g => g.cluster_name === cName && g.cluster_code === cCode)
+      .map((g) => ({
+        value: g._id,
+        label: `${g.group_name} (${g.group_code})`,
+      }));
+  }, [groups, selectedClusterKey]);
 
   const handleChange = (e) => {
     const { name, value, type, checked, files } = e.target;
@@ -271,6 +284,11 @@ export default function MemberRegistration() {
     } else {
       setForm({ ...form, [name]: value });
     }
+  };
+
+  const handleClusterChange = (e) => {
+    setSelectedClusterKey(e.target.value);
+    setForm(prev => ({ ...prev, group_id: "", Group_Name: "" }));
   };
 
   const handleGroupChange = (e) => {
@@ -511,14 +529,25 @@ export default function MemberRegistration() {
               )}
             </div>
           ) : (
-            <Select
-              label={groupsLoading ? "Loading Groups..." : "Select Group"}
-              name="group_id"
-              value={form.group_id}
-              options={groupOptions}
-              handleChange={handleGroupChange}
-              required
-            />
+            <>
+              <Select
+                label="Select Cluster"
+                name="cluster_selection"
+                value={selectedClusterKey}
+                options={clusterOptions}
+                handleChange={handleClusterChange}
+                required
+              />
+              <Select
+                label={groupsLoading ? "Loading Groups..." : "Select Group"}
+                name="group_id"
+                value={form.group_id}
+                options={groupOptions}
+                handleChange={handleGroupChange}
+                required
+                disabled={!selectedClusterKey}
+              />
+            </>
           )}
         </FormSection>
 

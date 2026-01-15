@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Receipt, Plus, Search, Building2, Edit, Trash2, X, DollarSign, Wallet, CreditCard } from "lucide-react";
+import { Receipt, Plus, Search, Building2, Edit, Trash2, X, DollarSign, Wallet, CreditCard, LayoutGrid } from "lucide-react";
 import { getGroups, getGroupBanks } from "../../services/groupService";
 import { getExpenses, createExpense, updateExpense, deleteExpense } from "../../services/expenseService";
 import { getCashAmount } from "../../services/cashAmount";
@@ -7,6 +7,7 @@ import { getCashAmount } from "../../services/cashAmount";
 export default function ExpenseManagement() {
     const [groups, setGroups] = useState([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
+    const [selectedCluster, setSelectedCluster] = useState(null);
     const [selectedGroup, setSelectedGroup] = useState(null);
     const [expenses, setExpenses] = useState([]);
     const [expensesLoading, setExpensesLoading] = useState(false);
@@ -37,6 +38,8 @@ export default function ExpenseManagement() {
                         name: g.group_name,
                         code: g.group_code,
                         village: g.village,
+                        cluster_name: g.cluster_name,
+                        cluster_code: g.cluster_code,
                     }))
                 );
             })
@@ -94,6 +97,8 @@ export default function ExpenseManagement() {
     const handleOpenModal = (expense = null) => {
         if (expense) {
             setEditingExpense(expense);
+            // Find the group from our groups list to get cluster info
+            const expenseGroup = groups.find(g => g.id === (expense.groupId?._id || expense.groupId));
             setForm({
                 groupId: expense.groupId?._id || expense.groupId || selectedGroup?.id || "",
                 expenseType: expense.expenseType || "",
@@ -103,6 +108,10 @@ export default function ExpenseManagement() {
                 bankId: expense.bankId?._id || expense.bankId || "",
                 purpose: expense.purpose || "",
             });
+            // Auto-select cluster if editing expense from a different cluster
+            if (expenseGroup && (!selectedGroup || expenseGroup.id !== selectedGroup.id)) {
+                setSelectedCluster({ name: expenseGroup.cluster_name, code: expenseGroup.cluster_code });
+            }
         } else {
             setEditingExpense(null);
             setForm({
@@ -269,39 +278,104 @@ export default function ExpenseManagement() {
                 </div>
 
                 <div className="bg-white rounded-lg shadow-md p-6">
-                    <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                        <Building2 size={24} className="text-blue-600" />
-                        Select Group
-                    </h2>
-                    {groupsLoading ? (
-                        <p className="text-gray-600">Loading groups…</p>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {groups.map((g) => (
-                                <div
-                                    key={g.id}
-                                    onClick={() => setSelectedGroup(g)}
-                                    className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
-                                >
-                                    <div className="flex items-center gap-3 mb-3">
-                                        <Building2 className="text-blue-600" size={32} />
-                                        <div>
-                                            <p className="font-semibold text-gray-800 text-lg">{g.name}</p>
-                                            <p className="text-sm text-gray-600">Code: {g.code}</p>
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                            <Building2 size={24} className="text-blue-600" />
+                            {selectedCluster ? `Groups in ${selectedCluster.name}` : "Select Cluster"}
+                        </h2>
+                        {selectedCluster && (
+                            <button
+                                onClick={() => setSelectedCluster(null)}
+                                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                                ← Back to Clusters
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {groupsLoading ? (
+                            <div className="col-span-full text-center py-8 text-gray-500">
+                                <p>Loading...</p>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Show Clusters */}
+                                {!selectedCluster && (() => {
+                                    const clusterKeys = Array.from(new Set(groups.map(g => `${g.cluster_name || ""}|${g.cluster_code || ""}`)));
+                                    return clusterKeys.map((clusterKey) => {
+                                        const [name, code] = clusterKey.split('|');
+                                        const clusterGroups = groups.filter(g => (g.cluster_name || "") === name && (g.cluster_code || "") === code);
+                                        if (clusterGroups.length === 0) return null; // Skip clusters with no groups
+                                        const displayName = (name || code) ? (name || "No Name") : "Unassigned";
+                                        const displayCode = code || (name ? "" : "No Code");
+                                        return (
+                                            <div
+                                                key={clusterKey}
+                                                onClick={() => setSelectedCluster({ name: name || "", code: code || "" })}
+                                                className="p-6 border-2 border-gray-200 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                                            >
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <LayoutGrid className="text-blue-600" size={32} />
+                                                    <div>
+                                                        <p className="font-semibold text-gray-800 text-lg">{displayName}</p>
+                                                        <p className="text-sm text-gray-600">Code: {displayCode}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-sm text-gray-600">
+                                                    <p>Groups: {clusterGroups.length}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    }).filter(Boolean);
+                                })()}
+
+                                {/* Show Groups in Selected Cluster */}
+                                {selectedCluster && (() => {
+                                    const clusterGroups = groups.filter(g => (g.cluster_name || "") === (selectedCluster.name || "") && (g.cluster_code || "") === (selectedCluster.code || ""));
+                                    return clusterGroups.length > 0 ? (
+                                        clusterGroups.map((g) => (
+                                            <div
+                                                key={g.id}
+                                                onClick={() => setSelectedGroup(g)}
+                                                className={`p-6 border-2 rounded-lg cursor-pointer transition-colors ${
+                                                    selectedGroup?.id === g.id
+                                                        ? "border-blue-500 bg-blue-50"
+                                                        : "border-gray-200 hover:border-blue-500 hover:bg-blue-50"
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <Building2 className="text-blue-600" size={32} />
+                                                    <div>
+                                                        <p className="font-semibold text-gray-800 text-lg">{g.name}</p>
+                                                        <p className="text-sm text-gray-600">Code: {g.code}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-sm text-gray-600">
+                                                    <p>Village: {g.village || "-"}</p>
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="col-span-full text-center py-8 text-gray-500">
+                                            <p>No groups found in this cluster.</p>
                                         </div>
+                                    );
+                                })()}
+
+                                {!selectedCluster && groups.length === 0 && !groupsLoading && (
+                                    <div className="col-span-full text-center py-8 text-gray-500">
+                                        <p>No clusters found.</p>
                                     </div>
-                                    <div className="text-sm text-gray-600">
-                                        <p>Village: {g.village || "-"}</p>
+                                )}
+                                {selectedCluster && groups.filter(g => (g.cluster_name || "") === (selectedCluster.name || "") && (g.cluster_code || "") === (selectedCluster.code || "")).length === 0 && !groupsLoading && (
+                                    <div className="col-span-full text-center py-8 text-gray-500">
+                                        <p>No groups found in this cluster.</p>
                                     </div>
-                                </div>
-                            ))}
-                            {groups.length === 0 && (
-                                <div className="col-span-full text-center py-8 text-gray-500">
-                                    <p>No groups found.</p>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                                )}
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
         );
@@ -540,13 +614,16 @@ export default function ExpenseManagement() {
                                     onChange={(e) => setForm({ ...form, groupId: e.target.value })}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                     required
+                                    disabled={!selectedCluster}
                                 >
-                                    <option value="">Select Group</option>
-                                    {groups.map((g) => (
-                                        <option key={g.id} value={g.id}>
-                                            {g.name} ({g.code})
-                                        </option>
-                                    ))}
+                                    <option value="">{selectedCluster ? "Select Group" : "Select a cluster first"}</option>
+                                    {selectedCluster && groups
+                                        .filter((g) => (g.cluster_name || "") === (selectedCluster.name || "") && (g.cluster_code || "") === (selectedCluster.code || ""))
+                                        .map((g) => (
+                                            <option key={g.id} value={g.id}>
+                                                {g.name} ({g.code})
+                                            </option>
+                                        ))}
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-4">

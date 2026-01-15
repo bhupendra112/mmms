@@ -12,7 +12,8 @@ export const registerGroup = async (req, res) => {
             group_name,
             group_code,
             village,
-            cluster_name
+            cluster_name,
+            cluster_code
         } = req.body;
 
         // Get admin's place from token
@@ -23,10 +24,12 @@ export const registerGroup = async (req, res) => {
         }
         
         // Check if group exists with same code in same village/cluster
-        // Uniqueness is based on group_code + village (or cluster_name if village is not provided)
+        // Uniqueness is based on group_code + village (or cluster_name/cluster_code if village is not provided)
         const query = { group_code };
         if (village) {
             query.village = village;
+        } else if (cluster_code) {
+            query.cluster_code = cluster_code;
         } else if (cluster_name) {
             query.cluster_name = cluster_name;
         }
@@ -158,6 +161,43 @@ export const listBanksByGroup = async (req, res) => {
         }
 
         return apiResponse.success(res, "Banks fetched successfully", banks);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// GET: LIST ALL UNIQUE CLUSTERS (name and code)
+// ------------------------------------------------------------------
+export const listClusters = async (req, res) => {
+    try {
+        const adminPlace = req.user?.place || req.admin?.place;
+        const query = {};
+        if (adminPlace) {
+            query.place = adminPlace;
+        }
+
+        const clusters = await GroupMaster.aggregate([
+            { $match: query },
+            {
+                $group: {
+                    _id: {
+                        name: "$cluster_name",
+                        code: "$cluster_code"
+                    }
+                }
+            },
+            {
+                $project: {
+                    _id: 0,
+                    cluster_name: "$_id.name",
+                    cluster_code: "$_id.code"
+                }
+            },
+            { $sort: { cluster_name: 1 } }
+        ]);
+
+        return apiResponse.success(res, "Clusters fetched successfully", clusters);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }
@@ -449,6 +489,7 @@ export const updateGroup = async (req, res) => {
         if (req.body.group_code && req.body.group_code !== group.group_code) {
             const village = req.body.village !== undefined ? req.body.village : group.village;
             const cluster_name = req.body.cluster_name !== undefined ? req.body.cluster_name : group.cluster_name;
+            const cluster_code = req.body.cluster_code !== undefined ? req.body.cluster_code : group.cluster_code;
 
             const query = {
                 group_code: req.body.group_code,
@@ -457,6 +498,8 @@ export const updateGroup = async (req, res) => {
 
             if (village) {
                 query.village = village;
+            } else if (cluster_code) {
+                query.cluster_code = cluster_code;
             } else if (cluster_name) {
                 query.cluster_name = cluster_name;
             }

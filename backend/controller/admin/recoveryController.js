@@ -612,13 +612,15 @@ export const updateMemberRecovery = async (req, res) => {
 
         if (recoverySession) {
             // Calculate demand details for this member
+            // Exclude current recovery session from cumulative calculations
             const demandDetails = await calculateDemandDetails(
                 groupDoc._id,
                 memberRecovery.memberId,
                 memberRecovery,
                 parsedDate,
                 groupDoc,
-                recoverySession.meetingSequence || meetingSequence
+                recoverySession.meetingSequence || meetingSequence,
+                recoverySession._id
             );
 
             // Update existing session - find and update member recovery
@@ -1236,22 +1238,116 @@ export const getRecoveryByDate = async (req, res) => {
     }
 };
 
-// Helper function to normalize date for calculations
-const getAdjustedDateForCalculation = (recoveryDate, meetingSequence = 1) => {
-    if (!recoveryDate) {
+// Helper function to normalize date for calculations and anchor to scheduled meeting days
+const getAdjustedDateForCalculation = (
+    recoveryDate,
+    groupDoc = null,
+    meetingSequence = 1
+) => {
+    try {
+        console.log("-------------------------------------------------");
+        console.log("[ADJUST_DATE_START]");
+        console.log("Input recoveryDate:", recoveryDate);
+        console.log("Meeting Sequence:", meetingSequence);
+
+        if (!recoveryDate) {
+            console.log("[ADJUST_DATE_EXIT] No recoveryDate provided");
+            return recoveryDate;
+        }
+
+        const d = new Date(recoveryDate);
+        d.setHours(0, 0, 0, 0);
+
+        console.log("[NORMALIZED_INPUT_DATE]", d);
+
+        if (!groupDoc) {
+            console.log("[NO_GROUP_DOC] Returning normalized date");
+            return d;
+        }
+
+        const day = d.getDate();
+        const day1 = groupDoc.meeting_date_1_day;
+        const day2 = groupDoc.meeting_date_2_day;
+
+        console.log("[MEETING_DAYS]", {
+            actualDay: day,
+            meetingDay1: day1,
+            meetingDay2: day2,
+        });
+
+        if (!day1 && !day2) {
+            console.log("[NO_MEETING_DAYS_DEFINED] Returning original date");
+            return d;
+        }
+
+        let targetDay = day1;
+
+        if (day1 && day2) {
+            // If meetingSequence is provided, use it to determine which meeting day
+            if (meetingSequence === 1) {
+                targetDay = day1;
+                console.log("[BOTH_MEETINGS_PRESENT_SEQ_1]", {
+                    meetingSequence,
+                    chosenTargetDay: targetDay,
+                });
+            } else if (meetingSequence === 2) {
+                targetDay = day2;
+                console.log("[BOTH_MEETINGS_PRESENT_SEQ_2]", {
+                    meetingSequence,
+                    chosenTargetDay: targetDay,
+                });
+            } else {
+                // Fallback to closest day logic if sequence is not 1 or 2
+                const diff1 = Math.abs(day - day1);
+                const diff2 = Math.abs(day - day2);
+                targetDay = diff1 <= diff2 ? day1 : day2;
+                console.log("[BOTH_MEETINGS_PRESENT_FALLBACK]", {
+                    diffToDay1: diff1,
+                    diffToDay2: diff2,
+                    chosenTargetDay: targetDay,
+                    meetingSequence,
+                });
+            }
+        } else if (day2) {
+            targetDay = day2;
+            console.log("[ONLY_MEETING_DAY_2_PRESENT]", targetDay);
+        } else {
+            console.log("[ONLY_MEETING_DAY_1_PRESENT]", targetDay);
+        }
+
+        const adjustedDate = new Date(d);
+        adjustedDate.setDate(targetDay);
+        adjustedDate.setHours(0, 0, 0, 0);
+
+        console.log("[ADJUSTED_DATE_RESULT]", adjustedDate);
+        console.log("[ADJUST_DATE_END]");
+        console.log("-------------------------------------------------");
+
+        return adjustedDate;
+    } catch (error) {
+        console.error("[ADJUST_DATE_ERROR]", error);
         return recoveryDate;
     }
-    // No adjustment needed - return date as is
-    return recoveryDate;
 };
 
-// Helper function to get previous recovery data for a member (checks same month first, then previous month)
-const getPreviousRecoveryForMember = async (groupId, memberId, currentDate, currentMeetingSequence = 1) => {
+
+const getPreviousRecoveryForMember = async (
+    groupId,
+    memberId,
+    currentDate,
+    currentMeetingSequence = 1
+) => {
     try {
-        // Parse current date
-        let parsedDate = currentDate instanceof Date ? currentDate : new Date(currentDate);
-        if (typeof currentDate === 'string' && currentDate.includes('/')) {
-            const parts = currentDate.split('/');
+        console.log("=================================================");
+        console.log("[PREVIOUS_RECOVERY_START]");
+        console.log({ groupId, memberId, currentDate, currentMeetingSequence });
+
+        // ------------------ PARSE CURRENT DATE ------------------
+        let parsedDate =
+            currentDate instanceof Date ? currentDate : new Date(currentDate);
+
+        if (typeof currentDate === "string" && currentDate.includes("/")) {
+            const parts = currentDate.split("/");
             if (parts.length === 3) {
                 const day = parseInt(parts[0], 10);
                 const month = parseInt(parts[1], 10) - 1;
@@ -1260,63 +1356,227 @@ const getPreviousRecoveryForMember = async (groupId, memberId, currentDate, curr
             }
         }
 
-        // Normalize current date for comparison
-        const adjustedCurrentDate = getAdjustedDateForCalculation(parsedDate, currentMeetingSequence);
+        parsedDate.setHours(0, 0, 0, 0);
+        console.log("[PARSED_CURRENT_DATE]", parsedDate);
 
-        // Get all recoveries for this group, sorted by date and sequence
+        // ------------------ GROUP ------------------
+        const groupDoc = await GroupMaster.findById(groupId).lean();
+        console.log("[GROUP_DOC_MEETING_DAYS]", {
+            meeting_date_1_day: groupDoc?.meeting_date_1_day,
+            meeting_date_2_day: groupDoc?.meeting_date_2_day,
+        });
+
+        // ------------------ ADJUST CURRENT DATE ------------------
+        const adjustedCurrentDate = getAdjustedDateForCalculation(
+            parsedDate,
+            groupDoc,
+            currentMeetingSequence
+        );
+
+        console.log("[ADJUSTED_CURRENT_DATE]", adjustedCurrentDate);
+
+        // ------------------ FETCH ALL RECOVERIES ------------------
         const allRecoveries = await RecoveryMaster.find({ groupId })
             .sort({ date: 1, meetingSequence: 1 })
             .lean();
 
-        // Find the most recent recovery before current date
+        console.log("[TOTAL_RECOVERIES_FOUND]", allRecoveries.length);
+
+        // ------------------ FIND MOST RECENT RECOVERY ------------------
+        // Normalize memberId to string for comparison
+        const memberIdStr = memberId?.toString() || String(memberId);
         let mostRecentRecovery = null;
+        let mostRecentDate = null;
+
+        console.log("[SEARCHING_PREVIOUS_RECOVERY]", {
+            memberId: memberIdStr,
+            adjustedCurrentDate,
+            currentMeetingSequence
+        });
+
         for (const recovery of allRecoveries) {
             const recoveryAdjustedDate = getAdjustedDateForCalculation(
                 recovery.date,
+                groupDoc,
                 recovery.meetingSequence || 1
             );
 
-            if (recoveryAdjustedDate < adjustedCurrentDate) {
-                // Check if this recovery has data for this member
-                const memberRecovery = recovery.recoveries?.find(
-                    r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-                );
+            // Compare both date and meetingSequence (same logic as getCumulativePayments)
+            // First compare original dates, then adjusted dates, then sequences
+            const recoveryOriginalDate = new Date(recovery.date);
+            recoveryOriginalDate.setHours(0, 0, 0, 0);
+            const currentOriginalDate = new Date(parsedDate);
+            currentOriginalDate.setHours(0, 0, 0, 0);
 
-                if (memberRecovery) {
-                    mostRecentRecovery = { recovery, memberRecovery };
+            const recoveryDateMs = recoveryAdjustedDate.getTime();
+            const currentDateMs = adjustedCurrentDate.getTime();
+            const recoverySeq = recovery.meetingSequence || 1;
+            const recoveryOriginalMs = recoveryOriginalDate.getTime();
+            const currentOriginalMs = currentOriginalDate.getTime();
+
+            // Compare: original date first, then adjusted date, then sequence
+            const isBeforeCurrent = recoveryOriginalMs < currentOriginalMs ||
+                (recoveryOriginalMs === currentOriginalMs && recoveryDateMs < currentDateMs) ||
+                (recoveryOriginalMs === currentOriginalMs && recoveryDateMs === currentDateMs && recoverySeq < currentMeetingSequence);
+
+            console.log("[CHECKING_RECOVERY_FOR_PREVIOUS]", {
+                recoveryId: recovery._id,
+                recoveryDate: recovery.date,
+                meetingSequence: recovery.meetingSequence,
+                recoverySeq,
+                currentMeetingSequence,
+                adjustedRecoveryDate: recoveryAdjustedDate,
+                adjustedCurrentDate,
+                recoveryDateMs,
+                currentDateMs,
+                isBeforeCurrent,
+                memberCount: recovery.recoveries?.length || 0
+            });
+
+            // Only check recoveries before current date/sequence
+            if (!isBeforeCurrent) {
+                console.log("[SKIP_RECOVERY_NOT_BEFORE_CURRENT]", {
+                    recoveryId: recovery._id,
+                    recoveryDate: recovery.date,
+                    recoveryAdjustedDate,
+                    adjustedCurrentDate,
+                    recoverySeq,
+                    currentMeetingSequence
+                });
+                continue;
+            }
+
+            const memberRecovery = recovery.recoveries?.find(r => {
+                const rMemberIdStr = String(r.memberId || '');
+                const matches = rMemberIdStr === memberIdStr;
+                if (matches) {
+                    console.log("[MEMBER_FOUND_IN_RECOVERY]", {
+                        recoveryId: recovery._id,
+                        searchedMemberId: memberIdStr,
+                        foundMemberId: rMemberIdStr,
+                        memberCode: r.memberCode,
+                        amounts: r.amounts
+                    });
                 }
+                return matches;
+            });
+
+            if (!memberRecovery) {
+                console.log("[MEMBER_NOT_IN_RECOVERY]", {
+                    recoveryId: recovery._id,
+                    recoveryDate: recovery.date,
+                    searchedMemberId: memberIdStr,
+                    availableMembers: recovery.recoveries?.map(r => ({
+                        memberId: String(r.memberId),
+                        memberCode: r.memberCode
+                    })) || []
+                });
+                continue;
+            }
+
+            // Only consider valid recoveries (present or absent with recoveryByOther)
+            const isValidRecovery = memberRecovery.attendance === 'present' ||
+                (memberRecovery.attendance === 'absent' && memberRecovery.recoveryByOther === true);
+
+            if (!isValidRecovery) {
+                console.log("[PREVIOUS_RECOVERY_SKIPPED_INVALID_ATTENDANCE]", {
+                    recoveryId: recovery._id,
+                    recoveryDate: recovery.date,
+                    memberId: memberIdStr,
+                    attendance: memberRecovery.attendance,
+                    recoveryByOther: memberRecovery.recoveryByOther
+                });
+                continue;
+            }
+
+            // Keep track of the most recent valid recovery
+            // Compare by date first, then by meetingSequence if dates are equal
+            const recoverySeqForCompare = recovery.meetingSequence || 1;
+            const isMoreRecent = !mostRecentDate ||
+                recoveryAdjustedDate > mostRecentDate ||
+                (recoveryAdjustedDate.getTime() === mostRecentDate.getTime() &&
+                    recoverySeqForCompare > (mostRecentRecovery?.recovery?.meetingSequence || 1));
+
+            if (isMoreRecent) {
+                mostRecentRecovery = { recovery, memberRecovery };
+                mostRecentDate = recoveryAdjustedDate;
+
+                console.log("[PREVIOUS_RECOVERY_MATCH_FOUND]", {
+                    recoveryId: recovery._id,
+                    recoveryDate: recovery.date,
+                    recoveryAdjustedDate,
+                    recoverySeq: recoverySeqForCompare,
+                    currentMeetingSequence,
+                    memberId: memberIdStr,
+                    memberCode: memberRecovery.memberCode,
+                    attendance: memberRecovery.attendance,
+                    recoveryByOther: memberRecovery.recoveryByOther,
+                    amounts: memberRecovery.amounts,
+                    demandDetails: memberRecovery.demandDetails
+                });
             }
         }
 
+        // ------------------ PREVIOUS RECOVERY FOUND ------------------
         if (mostRecentRecovery) {
             const { memberRecovery } = mostRecentRecovery;
             const demandDetails = memberRecovery.demandDetails || {};
 
-            return {
+            console.log("[PREVIOUS_MEMBER_RECOVERY]", {
+                amounts: memberRecovery.amounts,
+                demandDetails,
+            });
+
+            const result = {
                 loan: {
                     unpaidDemand: demandDetails.loan?.unpaidDemand || 0,
-                    actualPaid: demandDetails.loan?.actualPaid || memberRecovery.amounts?.loan || 0,
+                    actualPaid:
+                        demandDetails.loan?.actualPaid ||
+                        memberRecovery.amounts?.loan ||
+                        0,
                 },
                 interest: {
                     unpaidDemand: demandDetails.interest?.unpaidDemand || 0,
-                    actualPaid: demandDetails.interest?.actualPaid || memberRecovery.amounts?.interest || 0,
+                    actualPaid:
+                        demandDetails.interest?.actualPaid ||
+                        memberRecovery.amounts?.interest ||
+                        0,
                 },
                 saving: {
                     unpaidDemand: demandDetails.saving?.unpaidDemand || 0,
-                    actualPaid: demandDetails.saving?.actualPaid || memberRecovery.amounts?.saving || 0,
+                    actualPaid:
+                        demandDetails.saving?.actualPaid ||
+                        memberRecovery.amounts?.saving ||
+                        0,
                     totalDemand: demandDetails.saving?.totalDemand || 0,
                 },
             };
+
+            console.log("[PREVIOUS_RECOVERY_RESULT]");
+            console.log(JSON.stringify(result, null, 2));
+            console.log("[PREVIOUS_RECOVERY_END]");
+            console.log("=================================================");
+
+            return result;
         }
 
-        // No previous recovery found
-        return {
+        // ------------------ NO PREVIOUS RECOVERY ------------------
+        console.log("[NO_PREVIOUS_RECOVERY_FOUND]");
+
+        const emptyResult = {
             loan: { unpaidDemand: 0, actualPaid: 0 },
             interest: { unpaidDemand: 0, actualPaid: 0 },
             saving: { unpaidDemand: 0, actualPaid: 0, totalDemand: 0 },
         };
+
+        console.log(JSON.stringify(emptyResult, null, 2));
+        console.log("[PREVIOUS_RECOVERY_END]");
+        console.log("=================================================");
+
+        return emptyResult;
     } catch (error) {
-        console.error("Error getting previous recovery:", error);
+        console.error("[PREVIOUS_RECOVERY_ERROR]", error);
+
         return {
             loan: { unpaidDemand: 0, actualPaid: 0 },
             interest: { unpaidDemand: 0, actualPaid: 0 },
@@ -1326,7 +1586,7 @@ const getPreviousRecoveryForMember = async (groupId, memberId, currentDate, curr
 };
 
 // Helper function to calculate cumulative loan/interest payments
-const getCumulativePayments = async (groupId, memberId, currentDate, type = 'loan', currentMeetingSequence = 1) => {
+const getCumulativePayments = async (groupId, memberId, currentDate, type = 'loan', currentMeetingSequence = 1, excludeRecoveryId = null) => {
     try {
         let parsedDate = currentDate instanceof Date ? currentDate : new Date(currentDate);
         if (typeof currentDate === 'string' && currentDate.includes('/')) {
@@ -1342,35 +1602,157 @@ const getCumulativePayments = async (groupId, memberId, currentDate, type = 'loa
         parsedDate.setHours(0, 0, 0, 0);
 
         // Normalize current date for comparison
-        const adjustedCurrentDate = getAdjustedDateForCalculation(parsedDate, currentMeetingSequence);
+        const groupDoc = await GroupMaster.findById(groupId).lean();
+        const adjustedCurrentDate = getAdjustedDateForCalculation(parsedDate, groupDoc, currentMeetingSequence);
+
+        // Normalize memberId to string for comparison (RecoveryMaster stores memberId as String)
+        const memberIdStr = memberId?.toString() || String(memberId);
 
         // Get all recovery sessions for this group
         const allRecoveries = await RecoveryMaster.find({ groupId })
             .sort({ date: 1, meetingSequence: 1 })
             .lean();
 
+        console.log(`[CUMULATIVE_${type.toUpperCase()}_START]`, {
+            groupId,
+            memberId: memberIdStr,
+            currentDate: adjustedCurrentDate,
+            currentMeetingSequence,
+            totalRecoveries: allRecoveries.length,
+            excludeRecoveryId: excludeRecoveryId?.toString()
+        });
+
         let cumulative = 0;
+        let recoveryCount = 0;
+        let skippedCount = 0;
+        let memberNotFoundCount = 0;
+
         for (const recovery of allRecoveries) {
             const recoveryAdjustedDate = getAdjustedDateForCalculation(
                 recovery.date,
+                groupDoc,
                 recovery.meetingSequence || 1
             );
 
-            // Only count recoveries before current adjusted date
-            if (recoveryAdjustedDate < adjustedCurrentDate) {
-                const memberRecovery = recovery.recoveries?.find(
-                    r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-                );
-
-                if (memberRecovery) {
-                    if (type === 'loan') {
-                        cumulative += memberRecovery.amounts?.loan || 0;
-                    } else if (type === 'interest') {
-                        cumulative += memberRecovery.amounts?.interest || 0;
-                    }
-                }
+            // Exclude the current recovery session if specified
+            if (excludeRecoveryId && recovery._id && recovery._id.toString() === excludeRecoveryId.toString()) {
+                console.log(`[CUMULATIVE_${type.toUpperCase()}_SKIP_EXCLUDED]`, {
+                    recoveryId: recovery._id,
+                    date: recovery.date
+                });
+                skippedCount++;
+                continue;
             }
+
+            // Only count recoveries before current adjusted date
+            // For same-day recoveries, exclude if meetingSequence is same or higher
+            // Compare original dates first, then adjusted dates, then sequences
+            const recoveryOriginalDate = new Date(recovery.date);
+            recoveryOriginalDate.setHours(0, 0, 0, 0);
+            const currentOriginalDate = new Date(parsedDate);
+            currentOriginalDate.setHours(0, 0, 0, 0);
+
+            const recoveryDateMs = recoveryAdjustedDate.getTime();
+            const currentDateMs = adjustedCurrentDate.getTime();
+            const recoverySeq = recovery.meetingSequence || 1;
+            const recoveryOriginalMs = recoveryOriginalDate.getTime();
+            const currentOriginalMs = currentOriginalDate.getTime();
+
+            // Compare: original date first, then adjusted date, then sequence
+            const isBeforeCurrent = recoveryOriginalMs < currentOriginalMs ||
+                (recoveryOriginalMs === currentOriginalMs && recoveryDateMs < currentDateMs) ||
+                (recoveryOriginalMs === currentOriginalMs && recoveryDateMs === currentDateMs && recoverySeq < currentMeetingSequence);
+
+            if (!isBeforeCurrent) {
+                skippedCount++;
+                continue;
+            }
+
+            // Find member recovery - memberId is stored as String in RecoveryMaster
+            const memberRecovery = recovery.recoveries?.find(r => {
+                const rMemberIdStr = String(r.memberId || '');
+                const matches = rMemberIdStr === memberIdStr;
+                if (matches) {
+                    console.log(`[CUMULATIVE_${type.toUpperCase()}_MEMBER_FOUND]`, {
+                        recoveryId: recovery._id,
+                        member: r.memberName,
+                        recoveryDate: recovery.date,
+                        searchedMemberId: memberIdStr,
+                        foundMemberId: rMemberIdStr,
+                        memberCode: r.memberCode,
+                        amounts: r.amounts
+                    });
+                }
+                return matches;
+            });
+
+            if (!memberRecovery) {
+                memberNotFoundCount++;
+                if (recovery.recoveries && recovery.recoveries.length > 0) {
+                    console.log(`[CUMULATIVE_${type.toUpperCase()}_MEMBER_NOT_FOUND]`, {
+                        recoveryId: recovery._id,
+                        recoveryDate: recovery.date,
+                        searchedMemberId: memberIdStr,
+                        availableMembers: recovery.recoveries.map(r => ({
+                            memberId: String(r.memberId),
+                            memberCode: r.memberCode,
+                            amounts: r.amounts
+                        }))
+                    });
+                }
+                continue;
+            }
+
+            // Check attendance - only count present or absent with recoveryByOther
+            const isValidRecovery = memberRecovery.attendance === 'present' ||
+                (memberRecovery.attendance === 'absent' && memberRecovery.recoveryByOther === true);
+
+            if (!isValidRecovery) {
+                console.log(`[CUMULATIVE_${type.toUpperCase()}_SKIP_ATTENDANCE]`, {
+                    recoveryDate: recovery.date,
+                    memberId: memberRecovery.memberId,
+                    attendance: memberRecovery.attendance,
+                    recoveryByOther: memberRecovery.recoveryByOther
+                });
+                skippedCount++;
+                continue;
+            }
+
+            // Get the amount based on type
+            const amount = type === 'loan' ? (memberRecovery.amounts?.loan || 0) :
+                type === 'interest' ? (memberRecovery.amounts?.interest || 0) :
+                    type === 'saving' ? (memberRecovery.amounts?.saving || 0) :
+                        type === 'fd' ? (memberRecovery.amounts?.fd || 0) : 0;
+
+            cumulative += amount;
+            recoveryCount++;
+
+            console.log(`[CUMULATIVE_${type.toUpperCase()}_ADD]`, {
+                recoveryId: recovery._id,
+                recoveryDate: recovery.date,
+                meetingSequence: recovery.meetingSequence,
+                adjustedDate: recoveryAdjustedDate,
+                memberId: memberRecovery.memberId,
+                memberCode: memberRecovery.memberCode,
+                amount,
+                cumulative,
+                attendance: memberRecovery.attendance,
+                recoveryByOther: memberRecovery.recoveryByOther,
+                amounts: memberRecovery.amounts
+            });
         }
+
+        console.log(`[CUMULATIVE_${type.toUpperCase()}_RESULT]`, {
+            groupId,
+            memberId: memberIdStr,
+            currentDate: adjustedCurrentDate,
+            currentMeetingSequence,
+            totalRecoveriesChecked: allRecoveries.length,
+            validRecoveriesCount: recoveryCount,
+            skippedCount,
+            memberNotFoundCount,
+            cumulative
+        });
 
         return cumulative;
     } catch (error) {
@@ -1380,585 +1762,281 @@ const getCumulativePayments = async (groupId, memberId, currentDate, type = 'loa
 };
 
 // Helper function to calculate demand details for a member
-const calculateDemandDetails = async (groupId, memberId, memberRecovery, currentDate, groupDoc, meetingSequence = 1) => {
+// Helper function to calculate demand details for a member
+const calculateDemandDetails = async (
+    groupId,
+    memberId,
+    memberRecovery,
+    currentDate,
+    groupDoc,
+    meetingSequence = 1,
+    excludeRecoveryId = null
+) => {
     try {
-        // Get previous recovery data
-        const previousData = await getPreviousRecoveryForMember(groupId, memberId, currentDate, meetingSequence);
+        console.log("=================================================");
+        console.log("[DEMAND_CALCULATION_START]");
+        console.log({ groupId, memberId, currentDate, meetingSequence });
 
-        // Get member data
-        const member = await Member.findById(memberId);
-        if (!member) {
-            throw new Error("Member not found");
-        }
-
-        // Get active loan for member
-        const activeLoan = await LoanMaster.findOne({
+        // ------------------ PREVIOUS RECOVERY ------------------
+        const previousData = await getPreviousRecoveryForMember(
             groupId,
-            memberId: memberId.toString(),
-            transactionType: "Loan",
-            status: "approved"
-        })
-            .sort({ date: -1 })
-            .lean();
+            memberId,
+            currentDate,
+            meetingSequence
+        );
+        console.log("[PREVIOUS_DATA]", previousData);
 
-        // Parse currentDate FIRST before using it anywhere
-        let parsedCurrentDate = currentDate instanceof Date ? new Date(currentDate) : new Date(currentDate);
-        if (typeof currentDate === 'string' && currentDate.includes('/')) {
-            const parts = currentDate.split('/');
-            if (parts.length === 3) {
-                const day = parseInt(parts[0], 10);
-                const month = parseInt(parts[1], 10) - 1;
-                const year = parseInt(parts[2], 10);
-                parsedCurrentDate = new Date(year, month, day);
-            }
+        // ------------------ MEMBER ------------------
+        const member = await Member.findById(memberId);
+        if (!member) throw new Error("Member not found");
+
+        console.log("[MEMBER]", {
+            id: member._id,
+            isExistingMember: member.isExistingMember,
+            loanPaidBeforeReg: member?.loanDetails?.loanPaid,
+            overdueInterest: member?.loanDetails?.overdueInterest,
+        });
+
+        // ------------------ DATE NORMALIZATION ------------------
+        let parsedCurrentDate = new Date(currentDate);
+        if (typeof currentDate === "string" && currentDate.includes("/")) {
+            const [d, m, y] = currentDate.split("/");
+            parsedCurrentDate = new Date(+y, +m - 1, +d);
         }
-        // Normalize to start of day
         parsedCurrentDate.setHours(0, 0, 0, 0);
 
-        // Normalize current date for calculations
-        const adjustedCurrentDate = getAdjustedDateForCalculation(parsedCurrentDate, meetingSequence);
+        const adjustedCurrentDate = getAdjustedDateForCalculation(
+            parsedCurrentDate,
+            groupDoc,
+            meetingSequence
+        );
+        adjustedCurrentDate.setHours(0, 0, 0, 0);
 
-        // Define dateStart for use throughout the function (use adjusted date for comparisons)
-        const dateStart = new Date(adjustedCurrentDate);
-        dateStart.setHours(0, 0, 0, 0);
+        console.log("[DATE]", {
+            parsedCurrentDate,
+            adjustedCurrentDate,
+        });
 
+        // ------------------ AMOUNTS ------------------
         const amounts = memberRecovery.amounts || {};
         const actualLoan = amounts.loan || 0;
         const actualInterest = amounts.interest || 0;
         const actualSaving = amounts.saving || 0;
         const actualFd = amounts.fd || 0;
+        const actualYogdan = amounts.yogdan || 0;
 
-        // Calculate loan demand details
-        // For existing members registered after this fix:
-        // 1. Loans are stored in LoanMaster (created during registration)
-        // 2. member.loanDetails.amount should match LoanMaster amount (for backward compatibility)
-        // 3. member.loanDetails.loanPaid = amount paid BEFORE registration
-        // 4. Total loan = sum of all active loans in LoanMaster
-        // 5. Total loan paid = member.loanPaid (pre-registration) + cumulative recovery payments (post-registration)
+        console.log("[ACTUAL_PAID]", {
+            actualLoan,
+            actualInterest,
+            actualSaving,
+            actualFd,
+            actualYogdan,
+        });
 
-        // Get all active loans for the member (including those created during registration)
+        // ------------------ LOANS ------------------
         const allActiveLoans = await LoanMaster.find({
             groupId,
             memberId: memberId.toString(),
             transactionType: "Loan",
-            status: "approved"
-        })
-            .sort({ date: 1 }) // Sort by date to get oldest first
-            .lean();
-
-        // Calculate total loan amount
-        // Priority: Use LoanMaster entries (new system) if available, otherwise fallback to member.loanDetails (old system)
-        // Note: For existing members registered after the fix, LoanMaster.amount stores principal (remaining amount)
-        // For existing members: Total loan = principal (LoanMaster.amount) + pre-registration payments (member.loanPaid)
-        // For new loans: LoanMaster.amount = full loan amount
-        let totalLoanAmount = 0;
-        const memberLoanPaid = member?.loanDetails?.loanPaid || 0;
-        const isExistingMember = member?.isExistingMember || false;
-
-        if (allActiveLoans && allActiveLoans.length > 0) {
-            // Sum all active loans from LoanMaster
-            const principalAmount = allActiveLoans.reduce((sum, loan) => sum + (loan.amount || 0), 0);
-
-            // Check if this is an existing member loan (created during registration with principal amount)
-            // If member has pre-registration payments (loanPaid > 0) and isExistingMember, then LoanMaster.amount is principal
-            // Otherwise, LoanMaster.amount is the full loan amount
-            if (isExistingMember && memberLoanPaid > 0) {
-                // Existing member: LoanMaster.amount is principal, add pre-registration payments
-                totalLoanAmount = principalAmount + memberLoanPaid;
-            } else {
-                // New loan or existing member without pre-registration payments: LoanMaster.amount is full amount
-                totalLoanAmount = principalAmount;
-            }
-        } else if (member?.loanDetails?.amount > 0) {
-            // Fallback to member.loanDetails for backward compatibility (existing members registered before this fix)
-            totalLoanAmount = member.loanDetails.amount || 0;
-        }
-
-        // Get the most recent active loan for installment calculation
-        const mostRecentLoan = (allActiveLoans && allActiveLoans.length > 0)
-            ? allActiveLoans[allActiveLoans.length - 1]
-            : (activeLoan || null);
-
-        // Get cumulative loan payments from recoveries (post-registration payments)
-        const loanPaidFromRecoveries = await getCumulativePayments(groupId, memberId, currentDate, 'loan', meetingSequence);
-
-        // For existing members registered after this fix:
-        // - member.loanDetails.loanPaid = payments made BEFORE registration (pre-registration payments)
-        // - LoanMaster.amount = principal (remaining amount) = total loan - pre-registration payments
-        // - Total loan = principal + pre-registration payments = LoanMaster.amount + member.loanPaid
-        // - Total paid = pre-registration payments + post-registration payments = memberLoanPaid + loanPaidFromRecoveries
-        // - Remaining loan = total loan - total paid = (principal + memberLoanPaid) - (memberLoanPaid + recovery payments) = principal - recovery payments
-
-        // Total loan paid = pre-registration payments (memberLoanPaid) + post-registration payments (loanPaidFromRecoveries)
-        const totalLoanPaid = memberLoanPaid + loanPaidFromRecoveries;
-
-        // Use totalLoanAmount for calculations
-        // For existing members: totalLoanAmount = principal + memberLoanPaid (already calculated above)
-        // For new loans: totalLoanAmount = LoanMaster.amount (full loan amount)
-        const loanAmount = totalLoanAmount;
-
-        // Only show loan demand if loan is not fully paid
-        let loanCurrDemand = 0;
-        let loanPrevDemand = 0;
-        let loanTotalDemand = 0;
-        let loanUnpaidDemand = 0;
-
-        if (loanAmount > 0 && totalLoanPaid < loanAmount) {
-            // Get monthly installment amount
-            // When member has multiple loans, sum installments from ALL active loans
-            let monthlyInstallment = 0;
-
-            if (allActiveLoans && allActiveLoans.length > 0) {
-                // Calculate total monthly installment from all active loans
-                for (const loan of allActiveLoans) {
-                    let loanInstallment = 0;
-
-                    // First try to get installment_amount directly
-                    if (loan.installment_amount && loan.installment_amount > 0) {
-                        loanInstallment = parseFloat(loan.installment_amount) || 0;
-                    } else if (loan.time_period && loan.time_period > 0) {
-                        // Calculate from loan amount and time_period: monthly installment = loan_amount / time_period
-                        loanInstallment = (parseFloat(loan.amount) || 0) / loan.time_period;
-                    }
-
-                    monthlyInstallment += loanInstallment;
-                }
-            } else if (member?.loanDetails?.amount > 0) {
-                // Fallback to member's loanDetails for backward compatibility (no LoanMaster entries)
-                const memberInstallment = member?.loanDetails?.installment_amount;
-                if (memberInstallment && memberInstallment > 0) {
-                    monthlyInstallment = parseFloat(memberInstallment) || 0;
-                } else if (member?.loanDetails?.time_period && member.loanDetails.time_period > 0) {
-                    // Calculate from amount and time_period: monthly installment = loan_amount / time_period
-                    monthlyInstallment = (member.loanDetails.amount || 0) / member.loanDetails.time_period;
-                }
-            }
-
-            // Check if group has 2 meetings per month
-            const meetingDay1 = groupDoc?.meeting_date_1_day;
-            const meetingDay2 = groupDoc?.meeting_date_2_day;
-            const hasTwoMeetings = meetingDay1 && meetingDay2;
-
-            // If 2 meetings per month, divide monthly installment by 2 for each meeting
-            loanCurrDemand = hasTwoMeetings ? (monthlyInstallment / 2) : monthlyInstallment;
-
-            loanPrevDemand = previousData.loan.unpaidDemand || 0;
-            loanTotalDemand = loanPrevDemand + loanCurrDemand;
-
-            // Calculate remaining loan amount
-            const remainingLoan = loanAmount - totalLoanPaid;
-            // Loan unpaid demand should not exceed remaining loan amount
-            loanUnpaidDemand = Math.min(Math.max(0, loanTotalDemand - actualLoan), remainingLoan);
-        }
-
-        // Opening balance = total loan paid (including pre-registration payments from member.loanPaid)
-        const loanOpeningBalance = totalLoanPaid;
-        // Closing balance = opening balance + actual payment in this recovery
-        const loanClosingBalance = loanOpeningBalance + actualLoan;
-
-        // Calculate interest demand details
-        // Logic:
-        // 1. For existing members: Show overdueInterest (from member model) first until paid
-        // 2. After overdueInterest is paid (or if no overdueInterest), calculate new interest from loan date
-        // 3. For new loans: Calculate interest from loan date to FIRST meeting date only
-
-        let interestCurrDemand = 0;
-        const interestPrevDemand = previousData.interest.unpaidDemand || 0;
-
-        // Get loan details (loanAmount already defined above in loan demand calculation)
-        // Use the oldest loan date for interest calculation (or most recent loan if no older date)
-        const loanDateRaw = (allActiveLoans && allActiveLoans.length > 0 && allActiveLoans[0].date)
-            || mostRecentLoan?.date
-            || member?.loanDetails?.loanDate;
-        const loanDate = loanDateRaw ? new Date(loanDateRaw) : null;
-
-        // Get loan rate from most recent loan or group or member
-        const loanRate = mostRecentLoan?.loan_rate_snapshot
-            || activeLoan?.loan_rate_snapshot
-            || groupDoc?.loan_rate
-            || 0;
-
-        const overdueInterest = member?.loanDetails?.overdueInterest || 0;
-        // Note: isExistingMember is already declared earlier in the function (line 1434), so we can use it directly here
-
-        // Get all recoveries to check interest payments
-        const allRecoveries = await RecoveryMaster.find({ groupId })
-            .sort({ date: 1, meetingSequence: 1 })
-            .lean();
-
-        // Calculate total interest paid from previous recoveries
-        let totalInterestPaid = 0;
-        for (const recovery of allRecoveries) {
-            const recoveryAdjustedDate = getAdjustedDateForCalculation(
-                recovery.date,
-                recovery.meetingSequence || 1
-            );
-
-            // Only count recoveries before current adjusted date
-            if (recoveryAdjustedDate < adjustedCurrentDate) {
-                const memRec = recovery.recoveries?.find(
-                    r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-                );
-                if (memRec) {
-                    totalInterestPaid += memRec.amounts?.interest || 0;
-                }
-            }
-        }
-
-        // Check if overdueInterest has been paid
-        const overdueInterestPaid = overdueInterest > 0 && totalInterestPaid >= overdueInterest;
-        const remainingOverdueInterest = overdueInterest > 0 ? Math.max(0, overdueInterest - totalInterestPaid) : 0;
-
-        // Calculate new interest (always calculate, but only show if overdueInterest is paid or doesn't exist)
-        // New interest is calculated from loan date to current meeting (period-based for existing loans, first meeting only for new loans)
-        let newInterestDemand = 0;
-
-        // Calculate new interest if loan exists (loanAmount > 0, loanDate, loanRate > 0)
-        // We calculate it regardless of overdueInterest status, but only show it after overdueInterest is paid
-        if (loanAmount > 0 && loanDate && loanRate > 0) {
-            // Determine if this is an existing loan from registration or a new loan
-            const hasLoanFromRegistration = isExistingMember && (allActiveLoans && allActiveLoans.length > 0);
-            const isNewLoan = !isExistingMember && activeLoan;
-
-            if (hasLoanFromRegistration || isNewLoan) {
-                const loanDateStart = new Date(loanDate);
-                loanDateStart.setHours(0, 0, 0, 0);
-
-                // Find the most recent recovery before current date
-                // For new loans, this will be the loan date if no recovery exists
-                let lastRecoveryDate = loanDateStart;
-                for (const recovery of allRecoveries) {
-                    const recoveryAdjustedDate = getAdjustedDateForCalculation(
-                        recovery.date,
-                        recovery.meetingSequence || 1
-                    );
-
-                    if (recoveryAdjustedDate < adjustedCurrentDate) {
-                        const memRec = recovery.recoveries?.find(
-                            r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-                        );
-                        if (memRec) {
-                            // Update last recovery date to this recovery's adjusted date
-                            lastRecoveryDate = new Date(recoveryAdjustedDate);
-                            lastRecoveryDate.setHours(0, 0, 0, 0);
-                        }
-                    }
-                }
-
-                // For new loans: Only calculate interest if this is the first meeting (no recovery sessions between loan and now)
-                if (isNewLoan) {
-                    // Check for any recovery sessions between loan date and current date (exclusive)
-                    let recoveryAfterLoan = null;
-                    for (const recovery of allRecoveries) {
-                        const recoveryAdjustedDate = getAdjustedDateForCalculation(
-                            recovery.date,
-                            recovery.meetingSequence || 1
-                        );
-
-                        if (recoveryAdjustedDate > loanDateStart && recoveryAdjustedDate < adjustedCurrentDate) {
-                            const memRec = recovery.recoveries?.find(
-                                r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-                            );
-                            if (memRec) {
-                                recoveryAfterLoan = recovery;
-                                break;
-                            }
-                        }
-                    }
-
-                    // Only calculate interest if this is the first meeting (no recovery sessions between loan and now)
-                    if (!recoveryAfterLoan) {
-                        // Calculate days from loan date to first meeting date
-                        const meetingDateStart = new Date(adjustedCurrentDate);
-                        meetingDateStart.setHours(0, 0, 0, 0);
-
-                        const timeDiff = meetingDateStart.getTime() - loanDateStart.getTime();
-                        const daysDiff = Math.max(0, Math.floor(timeDiff / (1000 * 60 * 60 * 24)));
-
-                        if (daysDiff > 0) {
-                            const isLeapYear = (year) => {
-                                return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-                            };
-                            const daysInYear = isLeapYear(adjustedCurrentDate.getFullYear()) ? 366 : 365;
-
-                            // Daily interest calculation: (loanAmount * annualRate / 100 / daysInYear) * numberOfDays
-                            const interestBeforeRound = (loanAmount * loanRate / 100 / daysInYear) * daysDiff;
-                            newInterestDemand = Math.round(interestBeforeRound * 100) / 100;
-                        }
-                    }
-                    // If there was a recovery after loan, don't show interest (already calculated in first meeting)
-                } else {
-                    // For existing loans from registration: Calculate interest from last recovery to current meeting
-                    // This calculates period-based interest (from last recovery date to current meeting date)
-                    const meetingDateStart = new Date(adjustedCurrentDate);
-                    meetingDateStart.setHours(0, 0, 0, 0);
-
-                    const timeDiff = meetingDateStart.getTime() - lastRecoveryDate.getTime();
-                    const daysDiff = Math.max(0, Math.floor(timeDiff / (1000 * 60 * 60 * 24)));
-
-                    if (daysDiff > 0) {
-                        const isLeapYear = (year) => {
-                            return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-                        };
-                        const daysInYear = isLeapYear(adjustedCurrentDate.getFullYear()) ? 366 : 365;
-
-                        // Daily interest calculation: (loanAmount * annualRate / 100 / daysInYear) * numberOfDays
-                        // Use outstanding loan amount (loanAmount - totalLoanPaid) for interest calculation
-                        const outstandingLoanAmount = Math.max(0, loanAmount - totalLoanPaid);
-                        const interestBeforeRound = (outstandingLoanAmount * loanRate / 100 / daysInYear) * daysDiff;
-                        newInterestDemand = Math.round(interestBeforeRound * 100) / 100;
-                    }
-                }
-            }
-        }
-
-        // Current interest demand = overdueInterest (if not paid) OR new interest (if overdueInterest is paid or doesn't exist)
-        // Priority: Show overdueInterest first until fully paid, then show new interest
-        if (remainingOverdueInterest > 0) {
-            // Show overdueInterest first until it's fully paid
-            interestCurrDemand = remainingOverdueInterest;
-        } else {
-            // After overdueInterest is paid (or if no overdueInterest), show new interest
-            interestCurrDemand = newInterestDemand;
-        }
-
-        const interestTotalDemand = interestPrevDemand + interestCurrDemand;
-        const interestUnpaidDemand = Math.max(0, interestTotalDemand - actualInterest);
-        const interestOpeningBalance = await getCumulativePayments(groupId, memberId, currentDate, 'interest', meetingSequence);
-        const interestClosingBalance = interestOpeningBalance + actualInterest;
-
-        // Calculate saving demand details
-        // For existing members, use snapshot saving_per_member if available
-        let savingPerMember = groupDoc?.saving_per_member || 0;
-        if (member.isExistingMember && member.saving_per_member_snapshot) {
-            savingPerMember = member.saving_per_member_snapshot;
-        }
-        const savingPrevData = previousData.saving;
-
-        // If previous month paid more than demand, previous demand = 0
-        // Else previous demand = previous unpaid
-        let savingPrevDemand = 0;
-        if (savingPrevData.actualPaid > savingPrevData.totalDemand) {
-            savingPrevDemand = 0;
-        } else {
-            savingPrevDemand = savingPrevData.unpaidDemand || 0;
-        }
-
-        const savingCurrDemand = savingPerMember;
-        const savingTotalDemand = savingPrevDemand + savingCurrDemand;
-        const savingUnpaidDemand = Math.max(0, savingTotalDemand - actualSaving);
-
-        // Opening balance = openingSaving + all previous saving recoveries
-        const openingSaving = member?.openingSaving || 0;
-
-        // Get all recoveries and filter using adjusted dates
-        const allRecoveriesForSaving = await RecoveryMaster.find({ groupId })
-            .sort({ date: 1, meetingSequence: 1 })
-            .lean();
-
-        let cumulativeSaving = openingSaving;
-        for (const recovery of allRecoveriesForSaving) {
-            const recoveryAdjustedDate = getAdjustedDateForCalculation(
-                recovery.date,
-                recovery.meetingSequence || 1
-            );
-
-            // Only count recoveries before current adjusted date
-            if (recoveryAdjustedDate < adjustedCurrentDate) {
-                const memRec = recovery.recoveries?.find(
-                    r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-                );
-                if (memRec) {
-                    cumulativeSaving += memRec.amounts?.saving || 0;
-                }
-            }
-        }
-
-        const savingOpeningBalance = cumulativeSaving;
-        const savingClosingBalance = savingOpeningBalance + actualSaving;
-
-        // Calculate Yogdan demand - now managed only in LoanMaster
-        // Get all approved loans for this member and calculate unpaid yogdan
-        const memberLoans = await LoanMaster.find({
-            groupId,
-            memberId: memberId.toString(),
-            transactionType: "Loan",
-            status: "approved"
+            status: "approved",
         })
             .sort({ date: 1 })
             .lean();
 
-        // Calculate total unpaid yogdan from loans where yogdan hasn't been collected
-        let unpaidYogdanTotal = 0;
-        for (const loan of memberLoans) {
-            const loanDate = new Date(loan.date);
-            loanDate.setHours(0, 0, 0, 0);
+        console.log("[ACTIVE_LOANS]", allActiveLoans);
 
-            // Only include loans that are before or on current meeting date
-            if (loanDate <= adjustedCurrentDate) {
-                // If yogdan hasn't been collected for this loan, add it to unpaid total
-                if (!loan.yogdanCollected) {
-                    const loanAmount = loan.amount || 0;
-                    const yogdanAmount = loan.yogdanAmount || (loanAmount * 0.01);
-                    unpaidYogdanTotal += yogdanAmount;
-                }
-            }
-        }
+        const memberLoanPaid = member?.loanDetails?.loanPaid || 0;
+        const isExistingMember = member?.isExistingMember || false;
 
-        // Get previous Yogdan payments from recoveries for opening balance calculation (using adjusted dates)
-        const allRecoveriesForYogdanBalance = await RecoveryMaster.find({ groupId })
-            .sort({ date: 1, meetingSequence: 1 })
-            .lean();
-
-        const previousYogdanRecoveries = [];
-        for (const recovery of allRecoveriesForYogdanBalance) {
-            const recoveryAdjustedDate = getAdjustedDateForCalculation(
-                recovery.date,
-                recovery.meetingSequence || 1
+        let totalLoanAmount = 0;
+        if (allActiveLoans.length > 0) {
+            const principal = allActiveLoans.reduce(
+                (s, l) => s + (l.amount || 0),
+                0
             );
-
-            if (recoveryAdjustedDate < adjustedCurrentDate) {
-                previousYogdanRecoveries.push(recovery);
-            }
+            totalLoanAmount =
+                isExistingMember && memberLoanPaid > 0
+                    ? principal + memberLoanPaid
+                    : principal;
+        } else {
+            totalLoanAmount = member?.loanDetails?.amount || 0;
         }
 
-        // Calculate cumulative yogdan paid from recoveries (for opening balance display)
-        let cumulativeYogdanPaid = 0;
-        for (const recovery of previousYogdanRecoveries) {
-            const memRec = recovery.recoveries?.find(
-                r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-            );
-            if (memRec) {
-                cumulativeYogdanPaid += memRec.amounts?.yogdan || 0;
-            }
-        }
+        const loanPaidFromRecoveries = await getCumulativePayments(
+            groupId,
+            memberId,
+            currentDate,
+            "loan",
+            meetingSequence,
+            excludeRecoveryId
+        );
 
-        const actualYogdan = amounts.yogdan || 0;
-        // Opening balance is cumulative payments from recoveries
-        const yogdanOpeningBalance = cumulativeYogdanPaid;
+        const totalLoanPaid = memberLoanPaid + loanPaidFromRecoveries;
+        const remainingLoan = Math.max(0, totalLoanAmount - totalLoanPaid);
 
-        // Include opening yogdan in total demand if it hasn't been paid yet
-        const openingYogdan = member?.openingYogdan || 0;
-        const openingYogdanPaid = member?.openingYogdanPaid || false;
-        const openingYogdanDemand = (!openingYogdanPaid && openingYogdan > 0) ? openingYogdan : 0;
-
-        // Total yogdan demand = unpaid yogdan from loans (from LoanMaster) + opening yogdan (if not paid)
-        const yogdanTotalDemand = unpaidYogdanTotal + openingYogdanDemand;
-
-        // Get unpaid revenue demands for membership fees
-        // Convert memberId and groupId to ObjectId strings for query
-        const memberObjectId = typeof memberId === 'string' ? memberId : memberId.toString();
-        const groupObjectId = typeof groupId === 'string' ? groupId : groupId.toString();
-
-        const unpaidRevenueDemands = await MemberRevenueDemand.find({
-            $or: [
-                { memberId: memberObjectId, groupId: groupObjectId, isPaid: false },
-                { memberId: member._id, groupId: groupDoc._id, isPaid: false }
-            ]
-        }).lean();
-
-        // Calculate total unpaid membership fees SHG from revenue demands
-        let unpaidMemFeesSHGFromRevenue = 0;
-        let unpaidMemFeesGroupFromRevenue = 0;
-
-        unpaidRevenueDemands.forEach(demand => {
-            if (demand.revenueType === "membership_fees_shg") {
-                unpaidMemFeesSHGFromRevenue += demand.amount || 0;
-            } else if (demand.revenueType === "membership_fees_group") {
-                unpaidMemFeesGroupFromRevenue += demand.amount || 0;
-            }
+        console.log("[LOAN_SUMMARY]", {
+            totalLoanAmount,
+            memberLoanPaid,
+            loanPaidFromRecoveries,
+            totalLoanPaid,
+            remainingLoan,
         });
 
-        // Calculate membership fees due
-        const membershipDue = await calculateMembershipDue(member, groupDoc, currentDate, groupId);
-        const actualMemFeesSHG = amounts.memFeesSHG || 0;
-        const actualMemFeesGroup = amounts.memFeesGroup || 0;
+        // ------------------ LOAN DEMAND ------------------
+        let loanCurrDemand = 0;
+        let loanPrevDemand = previousData.loan.unpaidDemand || 0;
 
-        // Priority: Use unpaid revenue demands from MemberRevenueDemand if available
-        // This ensures we show unpaid demands even if calculateMembershipDue doesn't return them
-        // Only override if there are unpaid revenue demands
-        let finalMembershipFeesDue = membershipDue.membershipFeesDue;
-        let finalMembershipGroupDue = membershipDue.membershipGroupDue;
-
-        if (unpaidMemFeesSHGFromRevenue > 0) {
-            finalMembershipFeesDue = unpaidMemFeesSHGFromRevenue;
-        }
-
-        if (unpaidMemFeesGroupFromRevenue > 0) {
-            finalMembershipGroupDue = unpaidMemFeesGroupFromRevenue;
-        }
-
-        // Unpaid yogdan = total demand - (cumulative paid + actual paid in this recovery)
-        const yogdanUnpaidDemand = Math.max(0, yogdanTotalDemand - cumulativeYogdanPaid - actualYogdan);
-        const yogdanClosingBalance = yogdanOpeningBalance + actualYogdan;
-
-        // Calculate charges due
-        const chargesDue = await calculateChargesDue(member, groupDoc, currentDate, groupId);
-        const actualCharges = amounts.charges || {};
-        const totalChargesDue = Object.values(chargesDue).reduce((sum, amount) => sum + amount, 0);
-        const totalChargesPaid = Object.values(actualCharges).reduce((sum, amount) => sum + amount, 0);
-
-        // Calculate FD details
-        // FD doesn't have a recurring demand like saving/loan, but we show current FD balance
-        // and allow adding new FD during recovery
-        // For existing members: FDs are stored in FDMaster (created during registration)
-        // For backward compatibility: also check member.fdDetails
-
-        const memberFDs = await FDMaster.find({
-            groupId,
-            memberId: memberId.toString(),
-            status: "active"
-        })
-            .sort({ date: 1 }) // Sort by date to get oldest first
-            .lean();
-
-        // Get total FD amount from active FDs in FDMaster
-        const totalFDAmountFromFDMaster = memberFDs.reduce((sum, fd) => sum + (fd.amount || 0), 0);
-
-        // Get FD amount from member.fdDetails (for backward compatibility - existing members before this fix)
-        const memberFDAmount = member?.fdDetails?.amount || 0;
-
-        // Total FD amount = FDMaster total OR member.fdDetails (whichever is available)
-        // If FDMaster has entries, use that (new system). Otherwise, use member.fdDetails (old system)
-        const totalFDAmount = totalFDAmountFromFDMaster > 0 ? totalFDAmountFromFDMaster : memberFDAmount;
-
-        // Get previous FD payments from recoveries (new FD deposits made during recoveries)
-        // Get previous FD payments from recoveries (new FD deposits made during recoveries)
-        const allRecoveriesForFD = await RecoveryMaster.find({ groupId })
-            .sort({ date: 1, meetingSequence: 1 })
-            .lean();
-
-        let cumulativeFdPaid = 0; // FD deposits made during recoveries (additional to opening FD)
-        for (const recovery of allRecoveriesForFD) {
-            const recoveryAdjustedDate = getAdjustedDateForCalculation(
-                recovery.date,
-                recovery.meetingSequence || 1
-            );
-
-            // Only count recoveries before current adjusted date
-            if (recoveryAdjustedDate < adjustedCurrentDate) {
-                const memRec = recovery.recoveries?.find(
-                    r => r.memberId === memberId || r.memberId?.toString() === memberId?.toString()
-                );
-                if (memRec) {
-                    cumulativeFdPaid += memRec.amounts?.fd || 0;
+        if (remainingLoan > 0) {
+            let monthlyInstallment = 0;
+            for (const loan of allActiveLoans) {
+                if (loan.installment_amount) {
+                    monthlyInstallment += loan.installment_amount;
+                } else if (loan.time_period) {
+                    monthlyInstallment += loan.amount / loan.time_period;
                 }
             }
+
+            const hasTwoMeetings =
+                groupDoc?.meeting_date_1_day &&
+                groupDoc?.meeting_date_2_day;
+
+            loanCurrDemand = hasTwoMeetings
+                ? monthlyInstallment / 2
+                : monthlyInstallment;
         }
 
-        // FD opening balance = opening FD (from FDMaster or member.fdDetails) + FD deposits from previous recoveries
-        // For existing members: opening FD is the FD created during registration (stored in FDMaster)
-        // Additional FD deposits from recoveries are added to this
-        const fdOpeningBalance = totalFDAmount + cumulativeFdPaid;
+        const loanTotalDemand = loanPrevDemand + loanCurrDemand;
+        const loanUnpaidDemand = Math.min(
+            remainingLoan,
+            Math.max(0, loanTotalDemand - actualLoan)
+        );
 
-        // FD doesn't have demand, but we show it for reference
-        // currDemand can be set to 0 or can show any pending FD commitment if needed
-        const fdPrevDemand = 0;
-        const fdCurrDemand = 0; // FD is optional, no recurring demand
-        const fdTotalDemand = 0; // No demand for FD
-        const fdUnpaidDemand = 0; // No unpaid demand
-        const fdClosingBalance = fdOpeningBalance + actualFd;
+        console.log("[LOAN_DEMAND]", {
+            loanPrevDemand,
+            loanCurrDemand,
+            loanTotalDemand,
+            loanUnpaidDemand,
+        });
 
+        // ------------------ INTEREST ------------------
+        const loanRate =
+            allActiveLoans.at(-1)?.loan_rate_snapshot ||
+            groupDoc?.loan_rate ||
+            0;
+
+        const overdueInterest = member?.loanDetails?.overdueInterest || 0;
+
+        const interestPaid = await getCumulativePayments(
+            groupId,
+            memberId,
+            currentDate,
+            "interest",
+            meetingSequence,
+            excludeRecoveryId
+        );
+
+        const remainingOverdueInterest = Math.max(
+            0,
+            overdueInterest - interestPaid
+        );
+
+        let newInterestDemand = 0;
+        if (remainingLoan > 0 && loanRate > 0) {
+            const days = Math.max(
+                0,
+                Math.floor(
+                    (adjustedCurrentDate -
+                        new Date(allActiveLoans[0]?.date)) /
+                    (1000 * 60 * 60 * 24)
+                )
+            );
+
+            const daysInYear =
+                adjustedCurrentDate.getFullYear() % 4 === 0 ? 366 : 365;
+
+            newInterestDemand =
+                (remainingLoan * loanRate * days) / (100 * daysInYear);
+        }
+
+        const interestCurrDemand =
+            remainingOverdueInterest > 0
+                ? remainingOverdueInterest
+                : newInterestDemand;
+
+        const interestPrevDemand =
+            previousData.interest.unpaidDemand || 0;
+
+        const interestTotalDemand =
+            interestPrevDemand + interestCurrDemand;
+
+        const interestUnpaidDemand = Math.max(
+            0,
+            interestTotalDemand - actualInterest
+        );
+
+        console.log("[INTEREST]", {
+            overdueInterest,
+            interestPaid,
+            remainingOverdueInterest,
+            newInterestDemand,
+            interestCurrDemand,
+            interestUnpaidDemand,
+        });
+
+        // ------------------ SAVING ------------------
+        const savingPerMember =
+            member.isExistingMember && member.saving_per_member_snapshot
+                ? member.saving_per_member_snapshot
+                : groupDoc?.saving_per_member || 0;
+
+        const openingSaving = member?.openingSaving || 0;
+        const savingPaidFromRecoveries = await getCumulativePayments(
+            groupId,
+            memberId,
+            currentDate,
+            "saving",
+            meetingSequence,
+            excludeRecoveryId
+        );
+        const totalSavingPaid = openingSaving + savingPaidFromRecoveries;
+
+        const savingPrevDemand = previousData.saving.unpaidDemand || 0;
+        const savingCurrDemand = savingPerMember;
+        const savingTotalDemand = savingPrevDemand + savingCurrDemand;
+        const savingUnpaidDemand = Math.max(
+            0,
+            savingTotalDemand - actualSaving
+        );
+
+        console.log("[SAVING]", {
+            openingSaving,
+            savingPaidFromRecoveries,
+            totalSavingPaid,
+            savingPrevDemand,
+            savingCurrDemand,
+            savingUnpaidDemand,
+        });
+
+        // ------------------ FD ------------------
+        const openingFd = member?.fdDetails?.amount || 0;
+        const fdPaidFromRecoveries = await getCumulativePayments(
+            groupId,
+            memberId,
+            currentDate,
+            "fd",
+            meetingSequence,
+            excludeRecoveryId
+        );
+        const totalFdPaid = openingFd + fdPaidFromRecoveries;
+
+        console.log("[FD]", {
+            openingFd,
+            fdPaidFromRecoveries,
+            totalFdPaid,
+            actualFd,
+        });
+
+        // ------------------ FINAL RESULT ------------------
         const demandResult = {
             loan: {
                 prevDemand: loanPrevDemand,
@@ -1966,8 +2044,8 @@ const calculateDemandDetails = async (groupId, memberId, memberRecovery, current
                 totalDemand: loanTotalDemand,
                 actualPaid: actualLoan,
                 unpaidDemand: loanUnpaidDemand,
-                openingBalance: loanOpeningBalance,
-                closingBalance: loanClosingBalance,
+                openingBalance: totalLoanPaid,
+                closingBalance: totalLoanPaid + actualLoan,
             },
             interest: {
                 prevDemand: interestPrevDemand,
@@ -1975,8 +2053,8 @@ const calculateDemandDetails = async (groupId, memberId, memberRecovery, current
                 totalDemand: interestTotalDemand,
                 actualPaid: actualInterest,
                 unpaidDemand: interestUnpaidDemand,
-                openingBalance: interestOpeningBalance,
-                closingBalance: interestClosingBalance,
+                openingBalance: interestPaid,
+                closingBalance: interestPaid + actualInterest,
             },
             saving: {
                 prevDemand: savingPrevDemand,
@@ -1984,58 +2062,25 @@ const calculateDemandDetails = async (groupId, memberId, memberRecovery, current
                 totalDemand: savingTotalDemand,
                 actualPaid: actualSaving,
                 unpaidDemand: savingUnpaidDemand,
-                openingBalance: savingOpeningBalance,
-                closingBalance: savingClosingBalance,
+                openingBalance: totalSavingPaid,
+                closingBalance: totalSavingPaid + actualSaving,
             },
             fd: {
-                prevDemand: fdPrevDemand,
-                currDemand: fdCurrDemand,
-                totalDemand: fdTotalDemand,
                 actualPaid: actualFd,
-                unpaidDemand: fdUnpaidDemand,
-                openingBalance: fdOpeningBalance,
-                closingBalance: fdClosingBalance,
-            },
-            yogdan: {
-                prevDemand: 0,
-                currDemand: yogdanTotalDemand, // Total unpaid yogdan from LoanMaster
-                totalDemand: yogdanTotalDemand,
-                actualPaid: actualYogdan,
-                unpaidDemand: yogdanUnpaidDemand,
-                openingBalance: yogdanOpeningBalance, // Cumulative payments from recoveries
-                closingBalance: yogdanClosingBalance,
-            },
-            membership: {
-                membershipFeesDue: finalMembershipFeesDue,
-                membershipGroupDue: finalMembershipGroupDue,
-                actualMemFeesSHG: actualMemFeesSHG,
-                actualMemFeesGroup: actualMemFeesGroup,
-                // Include revenue demand details for summary display
-                unpaidRevenueDemands: {
-                    memFeesSHG: unpaidMemFeesSHGFromRevenue,
-                    memFeesGroup: unpaidMemFeesGroupFromRevenue,
-                    // Note: yogdan is no longer tracked in MemberRevenueDemand, only in LoanMaster
-                },
-            },
-            charges: {
-                chargesDue: chargesDue,
-                totalChargesDue: totalChargesDue,
-                actualCharges: actualCharges,
-                totalChargesPaid: totalChargesPaid,
+                openingBalance: totalFdPaid,
+                closingBalance: totalFdPaid + actualFd,
             },
         };
 
+        console.log("[FINAL_DEMAND_RESULT]");
+        console.log(JSON.stringify(demandResult, null, 2));
+        console.log("[DEMAND_CALCULATION_END]");
+        console.log("=================================================");
+
         return demandResult;
     } catch (error) {
-        console.error("[DEMAND_CALCULATION] Error calculating demand details:", error);
-        // Return default structure on error
-        return {
-            loan: { prevDemand: 0, currDemand: 0, totalDemand: 0, actualPaid: 0, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
-            interest: { prevDemand: 0, currDemand: 0, totalDemand: 0, actualPaid: 0, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
-            saving: { prevDemand: 0, currDemand: 0, totalDemand: 0, actualPaid: 0, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
-            fd: { prevDemand: 0, currDemand: 0, totalDemand: 0, actualPaid: 0, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
-            yogdan: { prevDemand: 0, currDemand: 0, totalDemand: 0, actualPaid: 0, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
-        };
+        console.error("[DEMAND_CALCULATION_ERROR]", error);
+        throw error;
     }
 };
 

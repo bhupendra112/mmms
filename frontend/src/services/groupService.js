@@ -30,6 +30,18 @@ export const createGroup = async (data) => {
 };
 
 // -------------------------------------------------------------
+// LIST ALL CLUSTERS
+// -------------------------------------------------------------
+export const getClusters = async () => {
+    try {
+        const res = await httpGroup.get("/list-clusters");
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+// -------------------------------------------------------------
 // LIST GROUPS
 // -------------------------------------------------------------
 export const getGroups = async () => {

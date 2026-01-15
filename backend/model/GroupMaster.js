@@ -5,6 +5,7 @@ const GroupMasterSchema = new mongoose.Schema({
     group_code: { type: String, required: true }, // Not unique - same code can exist in different villages/clusters
 
     cluster_name: { type: String },
+    cluster_code: { type: String },
     village: { type: String },
     place: { type: String }, // Location/place associated with admin
 
