@@ -1,5 +1,34 @@
 import { GroupMaster } from "../model/index.js";
+import { Admin } from "../model/index.js";
 
+
+/**
+ * Gets admin place from token or database
+ * @param {Object} req - Express request object
+ * @returns {Promise<string|null>} - Admin place or null if not found
+ */
+export const getAdminPlace = async (req) => {
+    // First try to get from token
+    let adminPlace = req.user?.place || req.admin?.place;
+
+    // If not in token, fetch from database using admin ID
+    if (!adminPlace && (req.user?.id || req.admin?.id)) {
+        try {
+            const adminId = req.user?.id || req.admin?.id;
+            const admin = await Admin.findById(adminId).select('place').lean();
+            if (admin && admin.place) {
+                adminPlace = admin.place;
+                // Update req.user and req.admin for subsequent use
+                if (req.user) req.user.place = adminPlace;
+                if (req.admin) req.admin.place = adminPlace;
+            }
+        } catch (error) {
+            console.error("[getAdminPlace] Error fetching admin place:", error);
+        }
+    }
+
+    return adminPlace;
+};
 /**
  * Verifies that a group exists and belongs to the admin's assigned place
  * @param {string|ObjectId} groupId - The group ID to verify
