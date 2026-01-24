@@ -26,19 +26,21 @@ export default function BalanceSheet({ data, asOnDate, groupName }) {
     const liabilities = data.liabilities || {};
     const assets = data.assets || {};
 
-    // Prepare liability items
-    const liabilityItems = [
-        { label: "P&L A/c (Surplus)", amount: liabilities.surplus || 0 },
-        { label: "Saving", amount: liabilities.saving || 0 },
-        { label: "FD", amount: liabilities.fd || 0 },
-    ];
+    // Prepare liability items - dynamically from data (backward compatible)
+    // New format: liabilities is an object with head names as keys (excluding 'total')
+    // Old format: liabilities has fixed keys like surplus, saving, fd
+    const liabilityItems = Object.entries(liabilities)
+        .filter(([key, amount]) => key !== 'total' && (amount || 0) > 0) // Exclude 'total' and show only non-zero
+        .map(([label, amount]) => ({ label, amount }))
+        .sort((a, b) => b.amount - a.amount); // Sort by amount descending
 
-    // Prepare asset items
-    const assetItems = [
-        { label: "Loan", amount: assets.loan || 0 },
-        { label: "Cash", amount: assets.cash || 0 },
-        { label: "Bank", amount: assets.bank || 0 },
-    ];
+    // Prepare asset items - dynamically from data (backward compatible)
+    // New format: assets is an object with head names as keys (excluding 'total')
+    // Old format: assets has fixed keys like loan, cash, bank
+    const assetItems = Object.entries(assets)
+        .filter(([key, amount]) => key !== 'total' && (amount || 0) > 0) // Exclude 'total' and show only non-zero
+        .map(([label, amount]) => ({ label, amount }))
+        .sort((a, b) => b.amount - a.amount); // Sort by amount descending
 
     // Find max length to align rows
     const maxItems = Math.max(liabilityItems.length, assetItems.length);
@@ -86,8 +88,8 @@ export default function BalanceSheet({ data, asOnDate, groupName }) {
                                         </>
                                     ) : (
                                         <>
-                            <td className="border border-gray-300 p-3"></td>
-                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
                                         </>
                                     )}
                                     {hasAsset ? (
@@ -97,11 +99,11 @@ export default function BalanceSheet({ data, asOnDate, groupName }) {
                                         </>
                                     ) : (
                                         <>
-                            <td className="border border-gray-300 p-3"></td>
-                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
                                         </>
                                     )}
-                        </tr>
+                                </tr>
                             );
                         })}
 

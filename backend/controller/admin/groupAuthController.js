@@ -8,33 +8,24 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "30d";
 
 export const loginGroup = async (req, res) => {
     try {
-        const { groupName, groupId, groupCode } = req.body;
+        const { groupCode, place } = req.body;
 
-        if (!groupName) {
-            return apiResponse.error(res, "Group name is required", 400);
+        if (!groupCode) {
+            return apiResponse.error(res, "Group code is required", 400);
         }
 
-        if (!groupId && !groupCode) {
-            return apiResponse.error(res, "Group ID or Group Code is required", 400);
+        if (!place) {
+            return apiResponse.error(res, "Place name is required", 400);
         }
 
-        // Find group by name and ID/code
-        // Note: If multiple groups exist with same group_code, findOne returns the first match
-        // Group name verification below ensures correct group is selected
-        let groupDoc = null;
-        if (groupId) {
-            groupDoc = await GroupMaster.findById(groupId);
-        } else if (groupCode) {
-            groupDoc = await GroupMaster.findOne({ group_code: groupCode });
-        }
+        // Find group by code and place
+        const groupDoc = await GroupMaster.findOne({ 
+            group_code: groupCode,
+            place: place 
+        });
 
         if (!groupDoc) {
-            return apiResponse.error(res, "Group not found", 404);
-        }
-
-        // Verify group name matches
-        if (groupDoc.group_name !== groupName) {
-            return apiResponse.error(res, "Invalid group name or ID", 401);
+            return apiResponse.error(res, "Group not found or invalid place", 404);
         }
 
         // Check if login is enabled
@@ -66,6 +57,7 @@ export const loginGroup = async (req, res) => {
             village: groupDoc.village,
             cluster_name: groupDoc.cluster_name,
             no_members: groupDoc.no_members,
+            place: groupDoc.place,
             lastLoginAt: groupDoc.lastLoginAt,
         };
 

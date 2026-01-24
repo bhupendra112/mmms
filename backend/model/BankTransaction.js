@@ -29,6 +29,7 @@ const BankTransactionSchema = new mongoose.Schema({
             "expense",         // Expense payment
             "payment",         // Payment (FD maturity, saving withdrawal)
             "cash_to_bank",    // Cash to bank conversion
+            "bank_to_bank",   // Bank to bank transfer
             "other"            // Other bank transactions
         ],
         required: true,
@@ -70,6 +71,11 @@ const BankTransactionSchema = new mongoose.Schema({
     cashToBankId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "CashToBankConversion",
+    },
+    // For bank_to_bank transactions: indicates if this is a debit (source bank) or credit (destination bank)
+    isDebit: {
+        type: Boolean,
+        default: false,
     },
 
     // Member details (if applicable)

@@ -6,16 +6,34 @@ import BankMaster from "../../model/BankMaster.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
 
-// Create conversion request - converts ALL cash payments from ALL recovery sessions for a group
+// Create conversion request - supports cash_to_bank and bank_to_bank conversions
 export const createConversion = async (req, res) => {
     try {
-        const { groupId, bankId, onlineRef, isAdmin, amount } = req.body;
+        const { groupId, bankId, fromBankId, onlineRef, isAdmin, amount, conversionType = "cash_to_bank" } = req.body;
         // Payment image path - multer saves to uploads/members
         const paymentImage = req.file ? `/uploads/members/${req.file.filename}` : null;
 
+        // Validate conversion type
+        if (!["cash_to_bank", "bank_to_bank"].includes(conversionType)) {
+            return apiResponse.error(res, "Invalid conversion type. Must be 'cash_to_bank' or 'bank_to_bank'", 400);
+        }
+
         // Validate required fields
-        if (!groupId || !bankId) {
-            return apiResponse.error(res, "groupId and bankId are required", 400);
+        if (!groupId) {
+            return apiResponse.error(res, "groupId is required", 400);
+        }
+
+        if (conversionType === "cash_to_bank" && !bankId) {
+            return apiResponse.error(res, "bankId (destination bank) is required for cash_to_bank conversion", 400);
+        }
+
+        if (conversionType === "bank_to_bank") {
+            if (!fromBankId || !bankId) {
+                return apiResponse.error(res, "fromBankId (source bank) and bankId (destination bank) are required for bank_to_bank conversion", 400);
+            }
+            if (fromBankId === bankId) {
+                return apiResponse.error(res, "Source bank and destination bank cannot be the same", 400);
+            }
         }
 
         // Validate amount
@@ -35,18 +53,42 @@ export const createConversion = async (req, res) => {
             return apiResponse.error(res, "Group not found", 404);
         }
 
-        // Verify bank exists and belongs to group
-        const bank = await BankMaster.findById(bankId);
-        if (!bank) {
-            return apiResponse.error(res, "Bank account not found", 404);
+        // Verify destination bank exists and belongs to group
+        const toBank = await BankMaster.findById(bankId);
+        if (!toBank) {
+            return apiResponse.error(res, "Destination bank account not found", 404);
         }
 
-        // Check if bank belongs to group (either through group_id or bankmasters array)
-        const bankBelongsToGroup = bank.group_id?.toString() === groupId ||
+        // Check if destination bank belongs to group
+        const toBankBelongsToGroup = toBank.group_id?.toString() === groupId ||
             (group.bankmasters && group.bankmasters.some(b => b.toString() === bankId));
 
-        if (!bankBelongsToGroup) {
-            return apiResponse.error(res, "Bank account does not belong to this group", 400);
+        if (!toBankBelongsToGroup) {
+            return apiResponse.error(res, "Destination bank account does not belong to this group", 400);
+        }
+
+        let fromBank = null;
+        if (conversionType === "bank_to_bank") {
+            // Verify source bank exists and belongs to group
+            fromBank = await BankMaster.findById(fromBankId);
+            if (!fromBank) {
+                return apiResponse.error(res, "Source bank account not found", 404);
+            }
+
+            // Check if source bank belongs to group
+            const fromBankBelongsToGroup = fromBank.group_id?.toString() === groupId ||
+                (group.bankmasters && group.bankmasters.some(b => b.toString() === fromBankId));
+
+            if (!fromBankBelongsToGroup) {
+                return apiResponse.error(res, "Source bank account does not belong to this group", 400);
+            }
+
+            // Validate source bank balance
+            await fromBank.recalculateBalance();
+            const sourceBankBalance = fromBank.current_balance || 0;
+            if (sourceBankBalance < conversionAmount) {
+                return apiResponse.error(res, `Insufficient source bank balance. Available: ₹${sourceBankBalance.toFixed(2)}, Required: ₹${conversionAmount.toFixed(2)}`, 400);
+            }
         }
 
         // Check if there's already a pending or approved conversion for this group
@@ -59,11 +101,13 @@ export const createConversion = async (req, res) => {
             return apiResponse.error(res, "A conversion request already exists for this group. Please process or reject the existing request first.", 400);
         }
 
-        // Validate cash balance
-        await group.recalculateCashBalance();
-        const cashBalance = group.current_cash_balance || 0;
-        if (cashBalance < conversionAmount) {
-            return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${conversionAmount.toFixed(2)}`, 400);
+        // Validate cash balance for cash_to_bank
+        if (conversionType === "cash_to_bank") {
+            await group.recalculateCashBalance();
+            const cashBalance = group.current_cash_balance || 0;
+            if (cashBalance < conversionAmount) {
+                return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${conversionAmount.toFixed(2)}`, 400);
+            }
         }
 
         // Always set to pending - admin approvals go through approval management
@@ -71,23 +115,33 @@ export const createConversion = async (req, res) => {
         const requestedBy = isAdmin === true ? (req.user?.id || "admin") : "group";
 
         // Create conversion record
-        const conversion = await CashToBankConversion.create({
+        const conversionData = {
             groupId: group._id,
             groupName: group.group_name,
             groupCode: group.group_code,
+            conversionType,
             recoveryIds: [], // Empty - not tied to specific recoveries
             recoveryId: null, // Not tied to specific recovery
             recoveryDate: new Date(), // Use current date
             totalCashAmount: conversionAmount,
-            bankId: bank._id,
-            bankName: bank.bank_name,
-            accountNumber: bank.account_no,
+            bankId: toBank._id,
+            bankName: toBank.bank_name,
+            accountNumber: toBank.account_no,
             paymentImage,
             onlineRef: onlineRef || null,
             status,
             requestedBy,
             conversionDetails: [], // Empty - not tracking specific member conversions
-        });
+        };
+
+        // Add source bank details for bank_to_bank
+        if (conversionType === "bank_to_bank" && fromBank) {
+            conversionData.fromBankId = fromBank._id;
+            conversionData.fromBankName = fromBank.bank_name;
+            conversionData.fromAccountNumber = fromBank.account_no;
+        }
+
+        const conversion = await CashToBankConversion.create(conversionData);
 
         // No auto-processing - all conversions go through approval workflow
         return apiResponse.success(res, "Conversion request created successfully. Pending admin approval.", conversion);
@@ -117,6 +171,7 @@ export const listConversions = async (req, res) => {
             .populate("recoveryId", "date memberCount")
             .populate("recoveryIds", "date memberCount")
             .populate("bankId", "bank_name account_no branch_name ifsc")
+            .populate("fromBankId", "bank_name account_no branch_name ifsc")
             .sort({ createdAt: -1 });
 
         return apiResponse.success(res, "Conversions retrieved successfully", conversions);
@@ -134,6 +189,7 @@ export const getPendingConversions = async (req, res) => {
             .populate("recoveryId", "date memberCount")
             .populate("recoveryIds", "date memberCount")
             .populate("bankId", "bank_name account_no branch_name ifsc")
+            .populate("fromBankId", "bank_name account_no branch_name ifsc")
             .populate("groupId", "group_name group_code")
             .sort({ createdAt: -1 });
 
@@ -225,33 +281,72 @@ const processConversionInternal = async (conversionId, processedBy) => {
         throw new Error("Invalid conversion amount");
     }
 
-    // Create bank transaction for cash to bank conversion
-    if (transactionAmount > 0 && conversion.bankId) {
-        await createBankTransactionRecord({
-            bankId: conversion.bankId,
-            groupId: conversion.groupId,
-            transactionType: "cash_to_bank",
-            amount: transactionAmount,
-            date: conversion.createdAt || new Date(),
-            onlineRef: conversion.onlineRef || null,
-            receipt: conversion.paymentImage || null,
-            description: `Cash to Bank Conversion - Amount: ₹${transactionAmount}`,
-            cashToBankId: conversion._id,
-            createdBy: processedBy || "admin",
-            status: "verified", // Set to verified since conversion is already approved
-        });
+    const conversionType = conversion.conversionType || "cash_to_bank";
 
-        // Create cash transaction to debit cash (cash going out)
-        // Note: We'll use "other" type for cash_to_bank as it's a debit
-        await createCashTransactionRecord({
-            groupId: conversion.groupId,
-            transactionType: "other", // Debit transaction (cash going out)
-            amount: transactionAmount,
-            date: conversion.createdAt || new Date(),
-            description: `Cash to Bank Conversion - Amount: ₹${transactionAmount}`,
-            cashToBankId: conversion._id,
-            createdBy: processedBy || "admin",
-        });
+    if (conversionType === "cash_to_bank") {
+        // Cash to Bank: Debit cash, Credit destination bank
+        if (transactionAmount > 0 && conversion.bankId) {
+            // Create bank transaction (credit - money coming into bank)
+            await createBankTransactionRecord({
+                bankId: conversion.bankId,
+                groupId: conversion.groupId,
+                transactionType: "cash_to_bank",
+                amount: transactionAmount,
+                date: conversion.createdAt || new Date(),
+                onlineRef: conversion.onlineRef || null,
+                receipt: conversion.paymentImage || null,
+                description: `Cash to Bank Conversion - Amount: ₹${transactionAmount}`,
+                cashToBankId: conversion._id,
+                createdBy: processedBy || "admin",
+                status: "verified", // Set to verified since conversion is already approved
+            });
+
+            // Create cash transaction to debit cash (cash going out)
+            await createCashTransactionRecord({
+                groupId: conversion.groupId,
+                transactionType: "other", // Debit transaction (cash going out)
+                amount: transactionAmount,
+                date: conversion.createdAt || new Date(),
+                description: `Cash to Bank Conversion - Amount: ₹${transactionAmount}`,
+                cashToBankId: conversion._id,
+                createdBy: processedBy || "admin",
+            });
+        }
+    } else if (conversionType === "bank_to_bank") {
+        // Bank to Bank: Debit source bank, Credit destination bank
+        if (transactionAmount > 0 && conversion.fromBankId && conversion.bankId) {
+            // Create debit transaction on source bank (money going out)
+            await createBankTransactionRecord({
+                bankId: conversion.fromBankId,
+                groupId: conversion.groupId,
+                transactionType: "bank_to_bank",
+                amount: transactionAmount,
+                date: conversion.createdAt || new Date(),
+                onlineRef: conversion.onlineRef || null,
+                receipt: conversion.paymentImage || null,
+                description: `Bank to Bank Transfer - From ${conversion.fromBankName} to ${conversion.bankName} - Amount: ₹${transactionAmount}`,
+                cashToBankId: conversion._id,
+                createdBy: processedBy || "admin",
+                status: "verified",
+                isDebit: true, // This is a debit transaction (money going out)
+            });
+
+            // Create credit transaction on destination bank (money coming in)
+            await createBankTransactionRecord({
+                bankId: conversion.bankId,
+                groupId: conversion.groupId,
+                transactionType: "bank_to_bank",
+                amount: transactionAmount,
+                date: conversion.createdAt || new Date(),
+                onlineRef: conversion.onlineRef || null,
+                receipt: conversion.paymentImage || null,
+                description: `Bank to Bank Transfer - From ${conversion.fromBankName} to ${conversion.bankName} - Amount: ₹${transactionAmount}`,
+                cashToBankId: conversion._id,
+                createdBy: processedBy || "admin",
+                status: "verified",
+                isDebit: false, // This is a credit transaction (money coming in)
+            });
+        }
     }
 
     // Update conversion status
@@ -286,6 +381,7 @@ export const getConversionDetail = async (req, res) => {
             .populate("recoveryId")
             .populate("recoveryIds")
             .populate("bankId")
+            .populate("fromBankId")
             .populate("groupId", "group_name group_code");
 
         if (!conversion) {

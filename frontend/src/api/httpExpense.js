@@ -26,7 +26,7 @@ httpExpense.interceptors.request.use(
 // Response interceptor
 httpExpense.interceptors.response.use(
     (res) => res,
-    createErrorInterceptor(true) // true = isAdmin
+    createErrorInterceptor(true) // Will auto-detect group vs admin based on route and token
 );
 
 export default httpExpense;

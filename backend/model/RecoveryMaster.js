@@ -11,7 +11,7 @@ const RecoveryMasterSchema = new mongoose.Schema({
 
     // Recovery session details
     date: { type: Date, required: true },
-    meetingSequence: { type: Number, default: 1 }, // For testing: sequence number for same-day meetings (1, 2, 3...)
+    meetingSequence: { type: Number, default: 1 },
     memberCount: { type: Number, default: 0 },
     groupPhoto: { type: String }, // base64 or URL
 

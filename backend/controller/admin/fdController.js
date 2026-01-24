@@ -5,6 +5,8 @@ import Member from "../../model/Member.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
 import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
+import { postTransaction } from "../../service/ledgerPostingService.js";
+import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 
 // Create new FD
 export const createFD = async (req, res) => {
@@ -30,7 +32,7 @@ export const createFD = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         // Verify group exists and belongs to admin's place
         const accessCheck = await verifyGroupAccess(groupId, adminPlace);
         if (!accessCheck.valid) {
@@ -63,7 +65,7 @@ export const createFD = async (req, res) => {
             return apiResponse.error(res, "Time period must be greater than 0 years", 400);
         }
         const timePeriodMonths = Math.round(timePeriodYears * 12); // Convert years to months
-        
+
         const maturityDate = new Date(fdDate);
         maturityDate.setMonth(maturityDate.getMonth() + timePeriodMonths);
 
@@ -122,11 +124,11 @@ export const createFD = async (req, res) => {
                 amount: principal,
                 transactionType: "fd"
             });
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:116', message: 'Creating bank transaction for FD (should be CREDIT)', data: { bankId: payload.bankId, groupId: group._id.toString(), amount: principal, transactionType: 'fd', paymentMode: 'online' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
             // #endregion
-            
+
             const bankTxResult = await createBankTransactionRecord({
                 bankId: payload.bankId,
                 groupId: group._id,
@@ -143,7 +145,7 @@ export const createFD = async (req, res) => {
                 memberName: member.Member_Nm,
                 createdBy: req.user?.id || "admin",
             });
-            
+
             console.log("[FD_CONTROLLER] Bank transaction result:", bankTxResult ? "SUCCESS" : "FAILED");
             if (bankTxResult) {
                 console.log("[FD_CONTROLLER] Bank transaction details:", {
@@ -153,7 +155,7 @@ export const createFD = async (req, res) => {
                     amount: bankTxResult.amount
                 });
             }
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:140', message: 'Bank transaction created for FD', data: { success: !!bankTxResult, bankTransactionId: bankTxResult?._id?.toString(), status: bankTxResult?.status, transactionType: bankTxResult?.transactionType }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
             // #endregion
@@ -167,11 +169,11 @@ export const createFD = async (req, res) => {
                 amount: principal,
                 transactionType: "fd"
             });
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:137', message: 'Creating cash transaction for FD (should be CREDIT)', data: { groupId: group._id.toString(), amount: principal, transactionType: 'fd', paymentMode: 'cash' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
             // #endregion
-            
+
             const cashTxResult = await createCashTransactionRecord({
                 groupId: group._id,
                 transactionType: "fd",
@@ -186,13 +188,34 @@ export const createFD = async (req, res) => {
                 memberName: member.Member_Nm,
                 createdBy: req.user?.id || "admin",
             });
-            
+
             console.log("[FD_CONTROLLER] Cash transaction result:", cashTxResult ? "SUCCESS" : "FAILED");
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:156', message: 'Cash transaction created for FD', data: { success: !!cashTxResult, cashTransactionId: cashTxResult?._id?.toString() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
             // #endregion
         }
+
+        // Post ledger entry for FD creation
+        const headInfo = await findOrCreateHead(group._id, "FD", "assets");
+        await postTransaction({
+            sourceDoc: fd,
+            headName: "FD",
+            headType: headInfo?.headType || "groupMaster",
+            headId: headInfo?.headId,
+            section: "assets",
+            amount: principal,
+            direction: "in",
+            groupId: group._id,
+            memberId: payload.memberId,
+            date: fdDate,
+            notes: `FD creation - Amount: ₹${principal}, Period: ${timePeriodYears} years - Member: ${member.Member_Nm} (${member.Member_Id})`,
+            paymentMode: payload.paymentMode?.online ? "Bank" : "Cash",
+            bankId: payload.bankId || undefined,
+            referenceModel: "FDMaster",
+            referenceId: fd._id,
+            createdBy: req.user?.id || "admin",
+        });
 
         return apiResponse.success(res, "FD created successfully", fd);
 

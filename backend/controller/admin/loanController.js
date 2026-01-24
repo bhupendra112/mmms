@@ -5,6 +5,8 @@ import { GroupMaster, BankMaster } from "../../model/index.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
 import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
+import { postTransaction } from "../../service/ledgerPostingService.js";
+import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 
 export const registerLoan = async (req, res) => {
     try {
@@ -12,7 +14,7 @@ export const registerLoan = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         // Verify group exists and belongs to admin's place
         let groupDoc = null;
         if (payload.groupId) {
@@ -58,7 +60,7 @@ export const registerLoan = async (req, res) => {
             if (bankDoc.group_id && bankDoc.group_id.toString() !== groupDoc._id.toString()) {
                 return apiResponse.error(res, "Bank does not belong to the specified group", 400);
             }
-            
+
             // Check bank balance
             const balanceInfo = await BankMaster.calculateAvailableBalance(payload.bankId);
             const availableBalance = balanceInfo.availableBalance || 0;
@@ -86,7 +88,7 @@ export const registerLoan = async (req, res) => {
             // Check if date is in DD/MM/YYYY format
             const ddmmyyyyPattern = /^(\d{2})\/(\d{2})\/(\d{4})$/;
             const match = payload.date.match(ddmmyyyyPattern);
-            
+
             if (match) {
                 // Convert DD/MM/YYYY to Date object
                 const day = parseInt(match[1], 10);
@@ -97,7 +99,7 @@ export const registerLoan = async (req, res) => {
                 // Try to parse as ISO string or other formats
                 dateValue = new Date(payload.date);
             }
-            
+
             // Validate the date
             if (isNaN(dateValue.getTime())) {
                 return apiResponse.error(res, `Invalid date format: ${payload.date}. Expected DD/MM/YYYY or ISO format.`, 400);
@@ -184,12 +186,35 @@ export const registerLoan = async (req, res) => {
                     createdBy: req.user?.id || "admin",
                 });
             }
+
+            // Post ledger entry for loan distribution
+            if (loan.transactionType === "Loan" && loan.amount > 0) {
+                const headInfo = await findOrCreateHead(groupDoc._id, "Loan Distribute", "liability");
+                await postTransaction({
+                    sourceDoc: loan,
+                    headName: "Loan Distribute",
+                    headType: headInfo?.headType || "groupMaster",
+                    headId: headInfo?.headId,
+                    section: "liability",
+                    amount: loan.amount,
+                    direction: "out",
+                    groupId: groupDoc._id,
+                    memberId: loan.memberId || undefined,
+                    date: dateValue,
+                    notes: `Loan distribution - ${loan.purpose || ""} - Member: ${loan.memberName || loan.memberCode || ""}`,
+                    paymentMode: payload.paymentMode || "Cash",
+                    bankId: payload.bankId || undefined,
+                    referenceModel: "LoanMaster",
+                    referenceId: loan._id,
+                    createdBy: req.user?.id || "admin",
+                });
+            }
         }
 
-        const successMessage = isAdmin 
-            ? "Loan transaction registered successfully" 
+        const successMessage = isAdmin
+            ? "Loan transaction registered successfully"
             : "Loan request created successfully! Waiting for admin approval.";
-        
+
         return apiResponse.success(res, successMessage, loan);
 
     } catch (error) {
@@ -203,7 +228,7 @@ export const listLoans = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         const filter = {};
         if (groupId) {
             // Verify group access
@@ -277,13 +302,13 @@ export const approveLoan = async (req, res) => {
         // Get group document
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         // Verify loan's group belongs to admin's place
         const accessCheck = await verifyGroupAccess(loan.groupId, adminPlace);
         if (!accessCheck.valid) {
             return apiResponse.error(res, accessCheck.error || "You don't have access to this loan's group", 403);
         }
-        
+
         const group = accessCheck.group;
 
         // Validate balance before approving
@@ -343,6 +368,30 @@ export const approveLoan = async (req, res) => {
                 memberId: loan.memberId || null,
                 memberCode: loan.memberCode || null,
                 memberName: loan.memberName || null,
+                createdBy: req.user?.id || "admin",
+            });
+        }
+
+        // Post ledger entry for loan distribution (when approved)
+        if (loan.transactionType === "Loan" && loan.amount > 0) {
+            const group = await GroupMaster.findById(loan.groupId).lean();
+            const headInfo = await findOrCreateHead(loan.groupId, "Loan Distribute", "liability");
+            await postTransaction({
+                sourceDoc: loan,
+                headName: "Loan Distribute",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "liability",
+                amount: loan.amount,
+                direction: "out",
+                groupId: loan.groupId,
+                memberId: loan.memberId || undefined,
+                date: loan.date,
+                notes: `Loan distribution - ${loan.purpose || ""} - Member: ${loan.memberName || loan.memberCode || ""}`,
+                paymentMode: loan.paymentMode || "Cash",
+                bankId: loan.bankId || undefined,
+                referenceModel: "LoanMaster",
+                referenceId: loan._id,
                 createdBy: req.user?.id || "admin",
             });
         }

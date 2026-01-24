@@ -132,21 +132,21 @@ const Members = () => {
   }, [members, pendingMembers, search]);
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Member List</h1>
+    <div className="p-3 sm:p-4 md:p-6">
+      <div className="members-header flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
+        <h1 className="text-2xl sm:text-3xl font-bold">Member List</h1>
 
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
           <Link
             to="/group/member-registration"
-            className="bg-green-600 text-white px-4 py-2 rounded shadow"
+            className="bg-green-600 text-white px-4 py-2 rounded shadow text-center text-sm sm:text-base"
           >
             ➕ Add Member
           </Link>
 
           <button
             onClick={handleExport}
-            className="bg-blue-600 text-white px-4 py-2 rounded shadow"
+            className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm sm:text-base"
           >
             ⬇️ Export
           </button>
@@ -154,44 +154,44 @@ const Members = () => {
       </div>
 
       {/* Filters and Export */}
-      <div className="mb-6 space-y-4">
-        <div className="flex gap-4">
+      <div className="mb-4 sm:mb-6 space-y-4">
+        <div className="flex gap-2 sm:gap-4">
           <input
             type="text"
             placeholder="Search member code / name..."
-            className="border p-2 rounded w-64"
+            className="search-input border p-2 rounded w-full sm:w-64 text-sm sm:text-base"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
         {/* Date Range and Bulk Export */}
-        <div className="bg-gray-50 p-4 rounded-lg">
+        <div className="bg-gray-50 p-3 sm:p-4 rounded-lg">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Export Options</h3>
-          <div className="flex items-center gap-4 mb-3">
-            <div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-3">
+            <div className="w-full sm:w-auto">
               <label className="block text-sm font-semibold text-gray-700 mb-1">From Date</label>
               <input
                 type="date"
                 value={dateRange.fromDate}
                 onChange={(e) => setDateRange(prev => ({ ...prev, fromDate: e.target.value }))}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
-            <div>
+            <div className="w-full sm:w-auto">
               <label className="block text-sm font-semibold text-gray-700 mb-1">To Date</label>
               <input
                 type="date"
                 value={dateRange.toDate}
                 onChange={(e) => setDateRange(prev => ({ ...prev, toDate: e.target.value }))}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
-            <div className="flex items-end gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-end gap-2 w-full sm:w-auto">
               <button
                 onClick={() => handleBulkExport('excel')}
                 disabled={exportLoading}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50 w-full sm:w-auto"
               >
                 <Download size={16} />
                 {exportLoading ? "Exporting..." : "Export All (Excel)"}
@@ -199,7 +199,7 @@ const Members = () => {
               <button
                 onClick={() => handleBulkExport('pdf')}
                 disabled={exportLoading}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm disabled:opacity-50"
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm disabled:opacity-50 w-full sm:w-auto"
               >
                 <FileText size={16} />
                 {exportLoading ? "Exporting..." : "Export All (PDF)"}
@@ -215,77 +215,142 @@ const Members = () => {
       )}
       {loading && <p className="text-gray-600">Loading members…</p>}
 
-      {/* Table */}
-      <table className="w-full border">
-        <thead>
-          <tr className="bg-gray-100">
-            <th className="p-3 border">Member Code</th>
-            <th className="p-3 border">Member Name</th>
-            <th className="p-3 border">Village</th>
-            <th className="p-3 border">Status</th>
-            <th className="p-3 border">Actions</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {filtered.map((m) => (
-            <tr key={m._id} className="border hover:bg-gray-50">
-              <td className="p-3 border">{m.Member_Id}</td>
-              <td className="p-3 border">{m.Member_Nm}</td>
-              <td className="p-3 border">{m.Village || "-"}</td>
-              <td className="p-3 border">
+      {/* Mobile Card View */}
+      <div className="block sm:hidden space-y-4">
+        {filtered.map((m) => (
+          <div key={m._id} className="bg-white border rounded-lg p-4 shadow-sm">
+            <div className="flex justify-between items-start mb-3">
+              <div className="flex-1">
+                <h3 className="font-semibold text-gray-800">{m.Member_Nm}</h3>
+                <p className="text-sm text-gray-600">Code: {m.Member_Id}</p>
+                {m.Village && <p className="text-sm text-gray-600">Village: {m.Village}</p>}
+              </div>
+              <div>
                 {m.__pending ? (
-                  <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm">
-                    Pending Approval
+                  <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs">
+                    Pending
                   </span>
                 ) : (
-                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
                     Active
                   </span>
                 )}
-              </td>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 pt-3 border-t">
+              {m.__pending ? (
+                <span className="text-gray-500 text-sm">Waiting for approval</span>
+              ) : (
+                <>
+                  <Link
+                    to={`/group/members/${m._id}`}
+                    className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm flex-1 text-center"
+                  >
+                    View
+                  </Link>
+                  <button
+                    onClick={() => handleExportMember(m._id, 'excel')}
+                    disabled={exportLoading}
+                    className="bg-green-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 flex-1"
+                    title="Export Excel"
+                  >
+                    <Download size={14} className="inline mr-1" />
+                    Excel
+                  </button>
+                  <button
+                    onClick={() => handleExportMember(m._id, 'pdf')}
+                    disabled={exportLoading}
+                    className="bg-red-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 flex-1"
+                    title="Export PDF"
+                  >
+                    <FileText size={14} className="inline mr-1" />
+                    PDF
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+        {!loading && filtered.length === 0 && (
+          <div className="bg-white border rounded-lg p-8 text-center text-gray-600">
+            No members found.
+          </div>
+        )}
+      </div>
 
-              <td className="p-3 border text-center">
-                {m.__pending ? (
-                  <span className="text-gray-500 text-sm">Waiting</span>
-                ) : (
-                  <div className="flex items-center justify-center gap-2">
-                    <Link
-                      to={`/group/members/${m._id}`}
-                      className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
-                    >
-                      View
-                    </Link>
-                    <button
-                      onClick={() => handleExportMember(m._id, 'excel')}
-                      disabled={exportLoading}
-                      className="bg-green-600 text-white px-2 py-1 rounded text-sm disabled:opacity-50"
-                      title="Export Ledger (Excel)"
-                    >
-                      <Download size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleExportMember(m._id, 'pdf')}
-                      disabled={exportLoading}
-                      className="bg-red-600 text-white px-2 py-1 rounded text-sm disabled:opacity-50"
-                      title="Export Ledger (PDF)"
-                    >
-                      <FileText size={14} />
-                    </button>
-                  </div>
-                )}
-              </td>
+      {/* Desktop Table View */}
+      <div className="hidden sm:block overflow-x-auto members-table-container">
+        <table className="w-full border min-w-[640px]">
+          <thead>
+            <tr className="bg-gray-100">
+              <th className="p-3 border text-left text-sm sm:text-base">Member Code</th>
+              <th className="p-3 border text-left text-sm sm:text-base">Member Name</th>
+              <th className="p-3 border text-left text-sm sm:text-base">Village</th>
+              <th className="p-3 border text-left text-sm sm:text-base">Status</th>
+              <th className="p-3 border text-center text-sm sm:text-base">Actions</th>
             </tr>
-          ))}
-          {!loading && filtered.length === 0 && (
-            <tr>
-              <td className="p-4 text-center text-gray-600" colSpan={5}>
-                No members found.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+
+          <tbody>
+            {filtered.map((m) => (
+              <tr key={m._id} className="border hover:bg-gray-50">
+                <td className="p-3 border text-sm sm:text-base">{m.Member_Id}</td>
+                <td className="p-3 border text-sm sm:text-base">{m.Member_Nm}</td>
+                <td className="p-3 border text-sm sm:text-base">{m.Village || "-"}</td>
+                <td className="p-3 border">
+                  {m.__pending ? (
+                    <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs sm:text-sm">
+                      Pending Approval
+                    </span>
+                  ) : (
+                    <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs sm:text-sm">
+                      Active
+                    </span>
+                  )}
+                </td>
+
+                <td className="p-3 border text-center">
+                  {m.__pending ? (
+                    <span className="text-gray-500 text-sm">Waiting</span>
+                  ) : (
+                    <div className="flex items-center justify-center gap-1 sm:gap-2">
+                      <Link
+                        to={`/group/members/${m._id}`}
+                        className="bg-blue-600 text-white px-2 sm:px-3 py-1 rounded text-xs sm:text-sm"
+                      >
+                        View
+                      </Link>
+                      <button
+                        onClick={() => handleExportMember(m._id, 'excel')}
+                        disabled={exportLoading}
+                        className="bg-green-600 text-white px-2 py-1 rounded text-xs sm:text-sm disabled:opacity-50"
+                        title="Export Ledger (Excel)"
+                      >
+                        <Download size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleExportMember(m._id, 'pdf')}
+                        disabled={exportLoading}
+                        className="bg-red-600 text-white px-2 py-1 rounded text-xs sm:text-sm disabled:opacity-50"
+                        title="Export Ledger (PDF)"
+                      >
+                        <FileText size={14} />
+                      </button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {!loading && filtered.length === 0 && (
+              <tr>
+                <td className="p-4 text-center text-gray-600" colSpan={5}>
+                  No members found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

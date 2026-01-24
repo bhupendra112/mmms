@@ -6,6 +6,8 @@ import { GroupMaster, BankMaster } from "../../model/index.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
 import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
+import { postTransaction } from "../../service/ledgerPostingService.js";
+import { findOrCreateHead, findOrCreateExpenseHead } from "../../utility/headMappingHelper.js";
 
 export const createExpense = async (req, res) => {
     try {
@@ -13,31 +15,37 @@ export const createExpense = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         // Verify group exists and belongs to admin's place
-        let groupDoc = null;
+        let groupId = null;
         if (payload.groupId) {
             const accessCheck = await verifyGroupAccess(payload.groupId, adminPlace);
             if (!accessCheck.valid) {
                 return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
             }
-            groupDoc = accessCheck.group;
+            groupId = accessCheck.group._id;
         } else if (payload.groupCode) {
             const accessCheck = await verifyGroupAccessByCode(payload.groupCode, adminPlace);
             if (!accessCheck.valid) {
                 return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
             }
-            groupDoc = accessCheck.group;
+            groupId = accessCheck.group._id;
         } else if (payload.groupName) {
             const accessCheck = await verifyGroupAccessByName(payload.groupName, adminPlace);
             if (!accessCheck.valid) {
                 return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
             }
-            groupDoc = accessCheck.group;
+            groupId = accessCheck.group._id;
         }
 
-        if (!groupDoc) {
+        if (!groupId) {
             return apiResponse.error(res, "Valid groupId/groupCode/groupName is required", 400);
+        }
+
+        // Fetch group as Mongoose document instance (not lean) to use instance methods
+        const groupDoc = await GroupMaster.findById(groupId);
+        if (!groupDoc) {
+            return apiResponse.error(res, "Group not found", 404);
         }
 
         // Validate bankId if paymentMode is "Bank"
@@ -87,6 +95,13 @@ export const createExpense = async (req, res) => {
             return apiResponse.error(res, "Expense type is required", 400);
         }
 
+        // Validate entryType - must be in allowed enum values, default to "expense" if not provided
+        const allowedEntryTypes = ["income", "expense", "assets", "liability"];
+        const entryType = payload.entryType || "expense";
+        if (!allowedEntryTypes.includes(entryType)) {
+            return apiResponse.error(res, `entryType must be one of: ${allowedEntryTypes.join(", ")}`, 400);
+        }
+
         // Convert date string to Date object if needed
         let dateValue = payload.date;
         if (payload.date && typeof payload.date === 'string') {
@@ -118,6 +133,7 @@ export const createExpense = async (req, res) => {
             groupId: groupDoc._id,
             groupName: payload.groupName || groupDoc.group_name,
             groupCode: payload.groupCode || groupDoc.group_code,
+            entryType: entryType,
             createdBy: req.user?.id || "admin",
         });
 
@@ -130,11 +146,11 @@ export const createExpense = async (req, res) => {
                 amount: payload.amount || 0,
                 transactionType: "expense"
             });
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:109', message: 'Creating bank transaction for expense (should be DEBIT)', data: { bankId: payload.bankId, groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Bank' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
             // #endregion
-            
+
             const bankTxResult = await createBankTransactionRecord({
                 bankId: payload.bankId,
                 groupId: groupDoc._id,
@@ -145,9 +161,9 @@ export const createExpense = async (req, res) => {
                 expenseId: expense._id,
                 createdBy: req.user?.id || "admin",
             });
-            
+
             console.log("[EXPENSE_CONTROLLER] Bank transaction result:", bankTxResult ? "SUCCESS" : "FAILED");
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:125', message: 'Bank transaction created for expense', data: { success: !!bankTxResult, bankTransactionId: bankTxResult?._id?.toString(), status: bankTxResult?.status }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
             // #endregion
@@ -161,11 +177,11 @@ export const createExpense = async (req, res) => {
                 amount: payload.amount || 0,
                 transactionType: "expense"
             });
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:133', message: 'Creating cash transaction for expense (should be DEBIT)', data: { groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Cash' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
             // #endregion
-            
+
             const cashTxResult = await createCashTransactionRecord({
                 groupId: groupDoc._id,
                 transactionType: "expense",
@@ -175,13 +191,39 @@ export const createExpense = async (req, res) => {
                 expenseId: expense._id,
                 createdBy: req.user?.id || "admin",
             });
-            
+
             console.log("[EXPENSE_CONTROLLER] Cash transaction result:", cashTxResult ? "SUCCESS" : "FAILED");
-            
+
             // #region agent log
             fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:149', message: 'Cash transaction created for expense', data: { success: !!cashTxResult, cashTransactionId: cashTxResult?._id?.toString() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
             // #endregion
         }
+
+        // Post ledger entry for expense
+        // Determine direction based on entryType: income entries are "in", others are "out"
+        const direction = entryType === "income" ? "in" : "out";
+
+        // Use expenseType as headName, or find/create head
+        const headInfo = await findOrCreateExpenseHead(groupDoc._id, payload.expenseType, entryType);
+
+        await postTransaction({
+            sourceDoc: expense,
+            headName: payload.expenseType,
+            headType: headInfo?.headType || "expenseMaster",
+            headId: headInfo?.headId || expense._id, // Use expense._id as headId if not found
+            section: entryType,
+            amount: expenseAmount,
+            direction: direction,
+            groupId: groupDoc._id,
+            memberId: undefined, // Expenses are group-level, not member-specific
+            date: dateValue,
+            notes: `Expense - ${payload.expenseType}: ${payload.purpose || ""}`,
+            paymentMode: payload.paymentMode || "Cash",
+            bankId: payload.bankId || undefined,
+            referenceModel: "ExpenseMaster",
+            referenceId: expense._id,
+            createdBy: req.user?.id || "admin",
+        });
 
         return apiResponse.success(res, "Expense created successfully", expense);
 
@@ -192,11 +234,11 @@ export const createExpense = async (req, res) => {
 
 export const listExpenses = async (req, res) => {
     try {
-        const { groupId, groupCode, fromDate, toDate, expenseType } = req.query;
+        const { groupId, groupCode, fromDate, toDate, expenseType, entryType } = req.query;
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         const filter = {};
         if (groupId) {
             // Verify group access
@@ -219,6 +261,7 @@ export const listExpenses = async (req, res) => {
             filter.groupId = { $in: groupIds };
         }
         if (expenseType) filter.expenseType = expenseType;
+        if (entryType) filter.entryType = entryType;
 
         // Date range filter
         const dateFilter = {};
@@ -357,6 +400,14 @@ export const updateExpense = async (req, res) => {
         if (payload.expenseType !== undefined) {
             if (typeof payload.expenseType !== 'string' || payload.expenseType.trim() === '') {
                 return apiResponse.error(res, "Expense type must be a non-empty string", 400);
+            }
+        }
+
+        // Validate entryType if provided - must be in allowed enum values
+        if (payload.entryType !== undefined) {
+            const allowedEntryTypes = ["income", "expense", "assets", "liability"];
+            if (!allowedEntryTypes.includes(payload.entryType)) {
+                return apiResponse.error(res, `entryType must be one of: ${allowedEntryTypes.join(", ")}`, 400);
             }
         }
 

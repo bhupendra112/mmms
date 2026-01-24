@@ -33,27 +33,59 @@ export default function ReceiptPaymentAccount({ data, fromDate, toDate, groupNam
 
     const expenses = payments.expenses || {};
 
-    // Prepare receipt items - show all items even if 0 for proper alignment
+    // Prepare receipt items - show all items from API data
     const receiptItems = [
         { label: "Cash", amount: receipts.cash || 0 },
         { label: "Bank", amount: receipts.bank || 0 },
         { label: "Saving", amount: receipts.saving || 0 },
+        { label: "Loan Recovered", amount: receipts.loan || 0 },
+        { label: "Interest", amount: receipts.interest || 0 },
+        { label: "Yogdan", amount: receipts.yogdan || 0 },
+        { label: "Charges", amount: receipts.charges || 0 },
         { label: "FD", amount: receipts.fd || 0 },
         { label: "Member Fees", amount: receipts.memberFees || 0 },
+        { label: "Group Fee", amount: receipts.groupFee || 0 },
     ];
     if (receipts.bankTransactions && receipts.bankTransactions > 0) {
         receiptItems.push({ label: "Bank Transactions", amount: receipts.bankTransactions, isSpecial: true });
     }
 
-    // Prepare payment items - show all items even if 0 for proper alignment
-    const paymentItems = [
-        { label: "Stationery", amount: expenses.Stationery || 0 },
-        { label: "Travel", amount: expenses.Travel || 0 },
-        { label: "Other Expenses", amount: expenses.Other || 0 },
-        { label: "Loan", amount: payments.loan || 0, isBold: true },
-        { label: "Saving Withdrawal", amount: payments.saving || 0, isBold: true },
-        { label: "FD Maturity", amount: payments.fd || 0, isBold: true },
-    ];
+    // Prepare payment items - show expenses dynamically and other payments
+    const paymentItems = [];
+
+    // Add all expense types dynamically from the expenses object
+    Object.keys(expenses).forEach(expenseType => {
+        if (expenses[expenseType] > 0) {
+            paymentItems.push({
+                label: expenseType,
+                amount: expenses[expenseType] || 0
+            });
+        }
+    });
+
+    // Add other payment types - always show loan, saving, and FD even if 0
+    const loanAmount = payments.loan || 0;
+    const savingAmount = payments.saving || 0;
+    const fdAmount = payments.fd || 0;
+
+    paymentItems.push({
+        label: "Loan",
+        amount: loanAmount,
+        isBold: true,
+        isEmpty: loanAmount === 0
+    });
+    paymentItems.push({
+        label: "Saving Withdrawal",
+        amount: savingAmount,
+        isBold: true,
+        isEmpty: savingAmount === 0
+    });
+    paymentItems.push({
+        label: "FD Maturity",
+        amount: fdAmount,
+        isBold: true,
+        isEmpty: fdAmount === 0
+    });
 
     // Find max length to align rows
     const maxItems = Math.max(receiptItems.length, paymentItems.length);
@@ -127,7 +159,7 @@ export default function ReceiptPaymentAccount({ data, fromDate, toDate, groupNam
                         {Array.from({ length: maxItems }).map((_, index) => {
                             const receiptItem = receiptItems[index];
                             const paymentItem = paymentItems[index];
-                            
+
                             // Determine row styling based on which side has content
                             let rowClass = "";
                             if (receiptItem && receiptItem.amount > 0) {
@@ -144,46 +176,43 @@ export default function ReceiptPaymentAccount({ data, fromDate, toDate, groupNam
                                             <td className={`border border-gray-300 p-3 pl-8 text-gray-700 ${receiptItem.isSpecial ? "font-semibold" : ""}`}>
                                                 {receiptItem.label}
                                             </td>
-                                            <td className={`border border-gray-300 p-3 text-right font-medium ${
-                                                receiptItem.amount > 0 
-                                                    ? (receiptItem.isSpecial ? "text-blue-600 font-semibold" : "text-green-700")
-                                                    : "text-gray-400"
-                                            }`}>
+                                            <td className={`border border-gray-300 p-3 text-right font-medium ${receiptItem.amount > 0
+                                                ? (receiptItem.isSpecial ? "text-blue-600 font-semibold" : "text-green-700")
+                                                : "text-gray-400"
+                                                }`}>
                                                 {receiptItem.amount > 0 ? formatCurrency(receiptItem.amount) : "-"}
                                             </td>
                                         </>
                                     ) : (
                                         <>
-                            <td className="border border-gray-300 p-3"></td>
-                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
                                         </>
                                     )}
-                                    
+
                                     {/* Payment side */}
                                     {paymentItem ? (
                                         <>
-                                            <td className={`border border-gray-300 p-3 pl-8 ${
-                                                paymentItem.amount > 0
-                                                    ? (paymentItem.isBold ? "font-semibold text-gray-800" : "text-gray-700")
-                                                    : "text-gray-400"
-                                            }`}>
+                                            <td className={`border border-gray-300 p-3 pl-8 ${paymentItem.isEmpty ? "opacity-40" : ""} ${paymentItem.amount > 0
+                                                ? (paymentItem.isBold ? "font-semibold text-gray-800" : "text-gray-700")
+                                                : "text-gray-400"
+                                                }`}>
                                                 {paymentItem.label}
                                             </td>
-                                            <td className={`border border-gray-300 p-3 text-right font-medium ${
-                                                paymentItem.amount > 0
-                                                    ? (paymentItem.isBold ? "text-red-600 font-semibold" : "text-red-700")
-                                                    : "text-gray-400"
-                                            }`}>
+                                            <td className={`border border-gray-300 p-3 text-right font-medium ${paymentItem.isEmpty ? "opacity-40" : ""} ${paymentItem.amount > 0
+                                                ? (paymentItem.isBold ? "text-red-600 font-semibold" : "text-red-700")
+                                                : "text-gray-400"
+                                                }`}>
                                                 {paymentItem.amount > 0 ? formatCurrency(paymentItem.amount) : "-"}
                                             </td>
                                         </>
                                     ) : (
                                         <>
-                            <td className="border border-gray-300 p-3"></td>
-                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
+                                            <td className="border border-gray-300 p-3"></td>
                                         </>
                                     )}
-                        </tr>
+                                </tr>
                             );
                         })}
 
@@ -198,9 +227,8 @@ export default function ReceiptPaymentAccount({ data, fromDate, toDate, groupNam
                             <td className="border border-gray-300 p-3"></td>
                             <td className="border border-gray-300 p-3"></td>
                             <td className="border border-gray-300 p-3 pl-8 text-gray-700">Cash</td>
-                            <td className={`border border-gray-300 p-3 text-right font-medium ${
-                                (closingBalances.cash || 0) >= 0 ? "text-blue-700" : "text-red-700"
-                            }`}>
+                            <td className={`border border-gray-300 p-3 text-right font-medium ${(closingBalances.cash || 0) >= 0 ? "text-blue-700" : "text-red-700"
+                                }`}>
                                 {formatCurrency(closingBalances.cash || 0)}
                             </td>
                         </tr>
@@ -216,19 +244,13 @@ export default function ReceiptPaymentAccount({ data, fromDate, toDate, groupNam
                             <td className="border border-gray-300 p-4 text-lg">Total</td>
                             <td className="border border-gray-300 p-4 text-right text-xl">
                                 {formatCurrency(
-                                    (openingBalances.cash || 0) + 
-                                    (openingBalances.bank || 0) + 
-                                    (openingBalances.saving || 0) + 
-                                    (openingBalances.fd || 0) + 
                                     totalReceipts
                                 )}
                             </td>
                             <td className="border border-gray-300 p-4 text-lg">Total</td>
                             <td className="border border-gray-300 p-4 text-right text-xl">
                                 {formatCurrency(
-                                    totalPayments + 
-                                    (closingBalances.cash || 0) + 
-                                    (closingBalances.bank || 0)
+                                    totalPayments
                                 )}
                             </td>
                         </tr>

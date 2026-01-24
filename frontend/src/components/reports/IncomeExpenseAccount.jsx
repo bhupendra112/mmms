@@ -25,23 +25,27 @@ export default function IncomeExpenseAccount({ data, fromDate, toDate, groupName
 
     const expenses = data.expenses || {};
     const income = data.income || {};
-    const surplus = data.surplus || 0;
+    const surplus = data.surplus ?? data.netProfit ?? 0;
     const totalExpenses = data.totals?.expenses || 0;
     const totalIncome = data.totals?.income || 0;
 
-    // Prepare expense items - show all items even if 0 for proper alignment
-    const expenseItems = [
-        { label: "Stationery", amount: expenses.Stationery || 0 },
-        { label: "Travel", amount: expenses.Travel || 0 },
-        { label: "Other", amount: expenses.Other || 0 },
-    ];
+    // Prepare expense items - dynamically from data (backward compatible)
+    // New format: expenses is an object with head names as keys
+    // Old format: expenses has fixed keys like Stationery, Travel, Other
+    const expenseItems = Object.entries(expenses)
+        .filter(([_, amount]) => amount > 0) // Only show non-zero expenses
+        .map(([label, amount]) => ({ label, amount }))
+        .sort((a, b) => b.amount - a.amount); // Sort by amount descending
 
-    // Prepare income items - show all items even if 0 for proper alignment
-    const incomeItems = [
-        { label: "Mem. Fees", amount: income.memberFees || 0 },
-    ];
+    // Prepare income items - dynamically from data (backward compatible)
+    // New format: income is an object with head names as keys
+    // Old format: income has memberFees key
+    const incomeItems = Object.entries(income)
+        .filter(([_, amount]) => amount > 0) // Only show non-zero income
+        .map(([label, amount]) => ({ label, amount }))
+        .sort((a, b) => b.amount - a.amount); // Sort by amount descending
 
-    // Find max length to align rows (+1 for Surplus in expenses)
+    // Find max length to align rows (+1 for Surplus/Net Profit in expenses)
     const maxItems = Math.max(expenseItems.length + 1, incomeItems.length);
 
     return (
@@ -83,38 +87,35 @@ export default function IncomeExpenseAccount({ data, fromDate, toDate, groupName
                             if (index === expenseItems.length) {
                                 return (
                                     <tr key={`surplus-${index}`} className="hover:bg-gray-50">
-                                        <td className="border border-gray-300 p-3 text-gray-700">Surplus</td>
-                                        <td className={`border border-gray-300 p-3 text-right font-medium ${
-                                            surplus >= 0 ? "text-gray-700" : "text-red-700"
-                                        }`}>
+                                        <td className="border border-gray-300 p-3 text-gray-700 font-semibold">Net Profit / Surplus</td>
+                                        <td className={`border border-gray-300 p-3 text-right font-bold ${surplus >= 0 ? "text-green-700" : "text-red-700"
+                                            }`}>
                                             {formatCurrency(surplus)}
                                         </td>
                                         {incomeItems[index] ? (
                                             <>
-                                                <td className={`border border-gray-300 p-3 ${
-                                                    incomeItems[index].amount > 0 ? "text-gray-700" : "text-gray-400"
-                                                }`}>
+                                                <td className={`border border-gray-300 p-3 ${incomeItems[index].amount > 0 ? "text-gray-700" : "text-gray-400"
+                                                    }`}>
                                                     {incomeItems[index].label}
                                                 </td>
-                                                <td className={`border border-gray-300 p-3 text-right font-medium ${
-                                                    incomeItems[index].amount > 0 ? "text-green-700" : "text-gray-400"
-                                                }`}>
+                                                <td className={`border border-gray-300 p-3 text-right font-medium ${incomeItems[index].amount > 0 ? "text-green-700" : "text-gray-400"
+                                                    }`}>
                                                     {incomeItems[index].amount > 0 ? formatCurrency(incomeItems[index].amount) : "-"}
                                                 </td>
                                             </>
                                         ) : (
                                             <>
-                                <td className="border border-gray-300 p-3"></td>
-                                <td className="border border-gray-300 p-3"></td>
+                                                <td className="border border-gray-300 p-3"></td>
+                                                <td className="border border-gray-300 p-3"></td>
                                             </>
                                         )}
-                            </tr>
+                                    </tr>
                                 );
                             }
 
                             const expenseItem = expenseItems[index];
                             const incomeItem = incomeItems[index];
-                            
+
                             // Determine row styling
                             let rowClass = "";
                             if (expenseItem && expenseItem.amount > 0) {
@@ -128,14 +129,12 @@ export default function IncomeExpenseAccount({ data, fromDate, toDate, groupName
                                     {/* Expense side */}
                                     {expenseItem ? (
                                         <>
-                                            <td className={`border border-gray-300 p-3 ${
-                                                expenseItem.amount > 0 ? "text-gray-700" : "text-gray-400"
-                                            }`}>
+                                            <td className={`border border-gray-300 p-3 ${expenseItem.amount > 0 ? "text-gray-700" : "text-gray-400"
+                                                }`}>
                                                 {expenseItem.label}
                                             </td>
-                                            <td className={`border border-gray-300 p-3 text-right font-medium ${
-                                                expenseItem.amount > 0 ? "text-red-700" : "text-gray-400"
-                                            }`}>
+                                            <td className={`border border-gray-300 p-3 text-right font-medium ${expenseItem.amount > 0 ? "text-red-700" : "text-gray-400"
+                                                }`}>
                                                 {expenseItem.amount > 0 ? formatCurrency(expenseItem.amount) : "-"}
                                             </td>
                                         </>
@@ -145,18 +144,16 @@ export default function IncomeExpenseAccount({ data, fromDate, toDate, groupName
                                             <td className="border border-gray-300 p-3"></td>
                                         </>
                                     )}
-                                    
+
                                     {/* Income side */}
                                     {incomeItem ? (
                                         <>
-                                            <td className={`border border-gray-300 p-3 ${
-                                                incomeItem.amount > 0 ? "text-gray-700" : "text-gray-400"
-                                            }`}>
+                                            <td className={`border border-gray-300 p-3 ${incomeItem.amount > 0 ? "text-gray-700" : "text-gray-400"
+                                                }`}>
                                                 {incomeItem.label}
                                             </td>
-                                            <td className={`border border-gray-300 p-3 text-right font-medium ${
-                                                incomeItem.amount > 0 ? "text-green-700" : "text-gray-400"
-                                            }`}>
+                                            <td className={`border border-gray-300 p-3 text-right font-medium ${incomeItem.amount > 0 ? "text-green-700" : "text-gray-400"
+                                                }`}>
                                                 {incomeItem.amount > 0 ? formatCurrency(incomeItem.amount) : "-"}
                                             </td>
                                         </>

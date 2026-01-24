@@ -68,11 +68,17 @@ BankMasterSchema.statics.calculateCurrentBalance = async function (bankId) {
         const amount = transaction.amount || 0;
 
         // Determine if transaction is credit (money in) or debit (money out)
-        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
-        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
-        const isCredit = transaction.transactionType === "recovery" ||
-            transaction.transactionType === "fd" ||
-            transaction.transactionType === "cash_to_bank";
+        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited), bank_to_bank (destination bank - money coming in)
+        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members), bank_to_bank (source bank - money going out)
+        let isCredit;
+        if (transaction.transactionType === "bank_to_bank") {
+            // For bank_to_bank, check isDebit field to determine if it's a debit or credit
+            isCredit = !transaction.isDebit;
+        } else {
+            isCredit = transaction.transactionType === "recovery" ||
+                transaction.transactionType === "fd" ||
+                transaction.transactionType === "cash_to_bank";
+        }
 
         if (isCredit) {
             balance += amount; // Money comes in
@@ -102,11 +108,17 @@ BankMasterSchema.methods.recalculateBalance = async function () {
     for (const transaction of transactions) {
         const amount = transaction.amount || 0;
         // Determine if transaction is credit (money in) or debit (money out)
-        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
-        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
-        const isCredit = transaction.transactionType === "recovery" ||
-            transaction.transactionType === "fd" ||
-            transaction.transactionType === "cash_to_bank";
+        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited), bank_to_bank (destination bank - money coming in)
+        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members), bank_to_bank (source bank - money going out)
+        let isCredit;
+        if (transaction.transactionType === "bank_to_bank") {
+            // For bank_to_bank, check isDebit field to determine if it's a debit or credit
+            isCredit = !transaction.isDebit;
+        } else {
+            isCredit = transaction.transactionType === "recovery" ||
+                transaction.transactionType === "fd" ||
+                transaction.transactionType === "cash_to_bank";
+        }
 
         if (isCredit) {
             balance += amount;
@@ -144,11 +156,17 @@ BankMasterSchema.statics.calculateAvailableBalance = async function (bankId) {
         const amount = transaction.amount || 0;
 
         // Determine if transaction is credit (money in) or debit (money out)
-        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
-        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
-        const isCredit = transaction.transactionType === "recovery" ||
-            transaction.transactionType === "fd" ||
-            transaction.transactionType === "cash_to_bank";
+        // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited), bank_to_bank (destination bank - money coming in)
+        // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members), bank_to_bank (source bank - money going out)
+        let isCredit;
+        if (transaction.transactionType === "bank_to_bank") {
+            // For bank_to_bank, check isDebit field to determine if it's a debit or credit
+            isCredit = !transaction.isDebit;
+        } else {
+            isCredit = transaction.transactionType === "recovery" ||
+                transaction.transactionType === "fd" ||
+                transaction.transactionType === "cash_to_bank";
+        }
 
         if (isCredit) {
             pendingCredits += amount; // Money coming in

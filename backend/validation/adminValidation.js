@@ -238,7 +238,6 @@ export const updateBankValidationSchema = Joi.object({
 // GROUP LOGIN VALIDATION
 // ======================
 export const groupLoginSchema = Joi.object({
-    groupName: Joi.string().required(),
-    groupId: Joi.string().optional(),
-    groupCode: Joi.string().optional(),
-}).or("groupId", "groupCode");
+    groupCode: Joi.string().required(),
+    place: Joi.string().required(),
+});

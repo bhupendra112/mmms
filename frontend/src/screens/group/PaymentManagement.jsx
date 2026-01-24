@@ -772,56 +772,96 @@ export default function PaymentManagement() {
                     </FormSection>
 
                     {loading ? (
-                        <div className="text-center py-8">Loading payment history...</div>
+                        <div className="text-center py-6 sm:py-8 text-sm sm:text-base text-gray-600">Loading payment history...</div>
+                    ) : payments.length === 0 ? (
+                        <div className="bg-white rounded-lg shadow p-6 sm:p-8 text-center text-gray-500 text-sm sm:text-base">
+                            No payments found
+                        </div>
                     ) : (
-                        <div className="bg-white rounded-lg shadow overflow-hidden">
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bank</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                        {payments.length === 0 ? (
+                        <>
+                            {/* Mobile / Tablet: Card layout */}
+                            <div className="block md:hidden space-y-3">
+                                {payments.map((payment) => (
+                                    <div
+                                        key={payment._id}
+                                        className="bg-white rounded-lg border border-gray-200 shadow-sm p-3 sm:p-4 space-y-2"
+                                    >
+                                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs sm:text-sm">
+                                            <span className="text-gray-500">Date</span>
+                                            <span className="text-gray-900 font-medium">{formatDate(payment.paymentDate)}</span>
+                                        </div>
+                                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs sm:text-sm">
+                                            <span className="text-gray-500">Member</span>
+                                            <span className="text-gray-900 break-words text-right">
+                                                {payment.memberName} ({payment.memberCode})
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs sm:text-sm">
+                                            <span className="text-gray-500">Type</span>
+                                            <span className="text-gray-900">
+                                                {payment.paymentType === "fd_maturity" ? "FD Maturity" : "Savings Withdrawal"}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs sm:text-sm">
+                                            <span className="text-gray-500">Amount</span>
+                                            <span className="text-gray-900 font-semibold">{formatCurrency(payment.amount)}</span>
+                                        </div>
+                                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs sm:text-sm">
+                                            <span className="text-gray-500">Bank</span>
+                                            <span className="text-gray-900 break-words text-right">
+                                                {payment.bankName} ({payment.accountNo})
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-gray-100">
+                                            <span className="text-gray-500 text-xs sm:text-sm">Status</span>
+                                            {getStatusBadge(payment.status)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Desktop: Table */}
+                            <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-[680px] w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50">
                                             <tr>
-                                                <td colSpan="6" className="px-6 py-4 text-center text-gray-500">
-                                                    No payments found
-                                                </td>
+                                                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                                                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member</th>
+                                                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                                                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bank</th>
+                                                <th className="px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                                             </tr>
-                                        ) : (
-                                            payments.map((payment) => (
-                                                <tr key={payment._id}>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {payments.map((payment) => (
+                                                <tr key={payment._id} className="hover:bg-gray-50">
+                                                    <td className="px-4 lg:px-6 py-3 whitespace-nowrap text-sm text-gray-900">
                                                         {formatDate(payment.paymentDate)}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                    <td className="px-4 lg:px-6 py-3 text-sm text-gray-900">
                                                         {payment.memberName} ({payment.memberCode})
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                    <td className="px-4 lg:px-6 py-3 whitespace-nowrap text-sm text-gray-900">
                                                         {payment.paymentType === "fd_maturity" ? "FD Maturity" : "Savings Withdrawal"}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
+                                                    <td className="px-4 lg:px-6 py-3 whitespace-nowrap text-sm font-semibold text-gray-900">
                                                         {formatCurrency(payment.amount)}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                    <td className="px-4 lg:px-6 py-3 text-sm text-gray-900">
                                                         {payment.bankName} ({payment.accountNo})
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <td className="px-4 lg:px-6 py-3 whitespace-nowrap text-sm">
                                                         {getStatusBadge(payment.status)}
                                                     </td>
                                                 </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                        </div>
+                        </>
                     )}
                 </div>
             )}

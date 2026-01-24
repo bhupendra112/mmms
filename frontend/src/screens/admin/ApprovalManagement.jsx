@@ -86,11 +86,12 @@ export default function ApprovalManagement() {
                 if (cashToBankRes?.success && Array.isArray(cashToBankRes.data)) {
                     const cashToBankApprovals = cashToBankRes.data.map((conversion) => ({
                         id: conversion._id || conversion.id,
-                        type: "cash_to_bank",
+                        type: "cash_to_bank", // Keep as cash_to_bank for backward compatibility, but use conversionType from data
                         status: conversion.status || "pending",
                         groupId: conversion.groupId?._id || conversion.groupId || "",
                         groupName: conversion.groupName || conversion.groupId?.group_name || "",
                         data: conversion,
+                        conversionType: conversion.conversionType || "cash_to_bank", // Store conversion type
                         submittedAt: conversion.createdAt ? new Date(conversion.createdAt).getTime() : Date.now(),
                         approvedAt: conversion.approvedAt ? new Date(conversion.approvedAt).getTime() : null,
                         approvedBy: conversion.approvedBy || null,
@@ -177,7 +178,11 @@ export default function ApprovalManagement() {
                     if (approval.type === "cash_to_bank") {
                         const res = await approveConversion(approval.id);
                         if (res?.success) {
-                            alert("Cash to Bank conversion approved successfully!");
+                            const conversionType = approval.conversionType || approval.data?.conversionType;
+                            const message = conversionType === "bank_to_bank" 
+                                ? "Bank to Bank transfer approved successfully!" 
+                                : "Cash to Bank conversion approved successfully!";
+                            alert(message);
                         } else {
                             throw new Error(res?.message || "Failed to approve conversion");
                         }
@@ -216,7 +221,11 @@ export default function ApprovalManagement() {
                     if (approval.type === "cash_to_bank") {
                         const res = await rejectConversion(approval.id, rejectionReason);
                         if (res?.success) {
-                            alert("Cash to Bank conversion rejected successfully!");
+                            const conversionType = approval.conversionType || approval.data?.conversionType;
+                            const message = conversionType === "bank_to_bank" 
+                                ? "Bank to Bank transfer rejected successfully!" 
+                                : "Cash to Bank conversion rejected successfully!";
+                            alert(message);
                         } else {
                             throw new Error(res?.message || "Failed to reject conversion");
                         }
@@ -315,7 +324,7 @@ export default function ApprovalManagement() {
         }
     };
 
-    const getTypeLabel = (type) => {
+    const getTypeLabel = (type, approval = null) => {
         switch (type) {
             case "member":
                 return "Add Member";
@@ -324,6 +333,11 @@ export default function ApprovalManagement() {
             case "loan":
                 return "Loan Application";
             case "cash_to_bank":
+                // Check if we have conversionType in the approval data
+                const conversionType = approval?.conversionType || approval?.data?.conversionType;
+                if (conversionType === "bank_to_bank") {
+                    return "Bank to Bank Transfer";
+                }
                 return "Cash to Bank Conversion";
             default:
                 return type;
@@ -369,22 +383,22 @@ export default function ApprovalManagement() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto">
-            <div className="mb-6">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-                            <CheckCircle size={32} />
-                            Approval Management
+        <div className="max-w-7xl mx-auto p-3 sm:p-4 md:p-6">
+            <div className="mb-4 sm:mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
+                    <div className="min-w-0">
+                        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 flex items-center gap-2 sm:gap-3">
+                            <CheckCircle size={24} className="shrink-0 w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8" />
+                            <span className="truncate">Approval Management</span>
                         </h1>
-                        <p className="text-gray-600 mt-2">Review and manage approval requests from groups</p>
+                        <p className="text-gray-600 mt-1 sm:mt-2 text-sm sm:text-base">Review and manage approval requests from groups</p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 shrink-0">
                         <button
                             onClick={loadApprovals}
-                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                            className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm w-full sm:w-auto"
                         >
-                            <RefreshCw size={18} />
+                            <RefreshCw size={16} className="sm:w-[18px] sm:h-[18px]" />
                             Refresh
                         </button>
                     </div>
@@ -392,214 +406,265 @@ export default function ApprovalManagement() {
             </div>
 
             {/* Filters */}
-            <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-                <div className="flex items-center gap-4 flex-wrap">
-                    <Filter size={20} className="text-gray-600" />
-                    <span className="font-semibold text-gray-700">Filter:</span>
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-gray-700">Cluster:</span>
-                        <select
-                            value={selectedClusterKey}
-                            onChange={(e) => {
-                                setSelectedClusterKey(e.target.value);
-                                setSelectedGroupId("");
-                            }}
-                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                        >
-                            <option value="">All Clusters</option>
-                            {clusterOptions.map((c) => (
-                                <option key={c.value} value={c.value}>
-                                    {c.label}
-                                </option>
-                            ))}
-                        </select>
+            <div className="bg-white rounded-lg shadow-md p-3 sm:p-4 md:p-5 mb-4 sm:mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                    <div className="flex items-center gap-2 shrink-0">
+                        <Filter size={18} className="text-gray-600 sm:w-5 sm:h-5" />
+                        <span className="font-semibold text-gray-700 text-sm sm:text-base">Filter:</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-gray-700">Group:</span>
-                        <select
-                            value={selectedGroupId}
-                            onChange={(e) => setSelectedGroupId(e.target.value)}
-                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            disabled={!selectedClusterKey}
-                        >
-                            <option value="">All Groups</option>
-                            {groupOptions.map((g) => (
-                                <option key={g.value} value={g.value}>
-                                    {g.label}
-                                </option>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:flex md:flex-wrap md:items-center gap-2 sm:gap-3 md:gap-4 flex-1">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                            <span className="text-xs sm:text-sm font-semibold text-gray-700">Cluster:</span>
+                            <select
+                                value={selectedClusterKey}
+                                onChange={(e) => {
+                                    setSelectedClusterKey(e.target.value);
+                                    setSelectedGroupId("");
+                                }}
+                                className="w-full sm:min-w-[140px] px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            >
+                                <option value="">All Clusters</option>
+                                {clusterOptions.map((c) => (
+                                    <option key={c.value} value={c.value}>
+                                        {c.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                            <span className="text-xs sm:text-sm font-semibold text-gray-700">Group:</span>
+                            <select
+                                value={selectedGroupId}
+                                onChange={(e) => setSelectedGroupId(e.target.value)}
+                                className="w-full sm:min-w-[140px] px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                disabled={!selectedClusterKey}
+                            >
+                                <option value="">All Groups</option>
+                                {groupOptions.map((g) => (
+                                    <option key={g.value} value={g.value}>
+                                        {g.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="flex flex-wrap gap-1 sm:gap-2 col-span-1 sm:col-span-2 md:col-span-auto">
+                            {[
+                                { key: "all", label: "All", active: filter === "all", bg: "bg-blue-600" },
+                                { key: "pending", label: "Pending", active: filter === "pending", bg: "bg-yellow-600" },
+                                { key: "approved", label: "Approved", active: filter === "approved", bg: "bg-green-600" },
+                                { key: "rejected", label: "Rejected", active: filter === "rejected", bg: "bg-red-600" },
+                            ].map(({ key, label, active, bg }) => (
+                                <button
+                                    key={key}
+                                    onClick={() => setFilter(key)}
+                                    className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg font-medium text-sm transition-colors ${active
+                                        ? `${bg} text-white`
+                                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                        }`}
+                                >
+                                    {label}
+                                </button>
                             ))}
-                        </select>
+                        </div>
                     </div>
-                    <button
-                        onClick={() => setFilter("all")}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${filter === "all"
-                            ? "bg-blue-600 text-white"
-                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                            }`}
-                    >
-                        All
-                    </button>
-                    <button
-                        onClick={() => setFilter("pending")}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${filter === "pending"
-                            ? "bg-yellow-600 text-white"
-                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                            }`}
-                    >
-                        Pending
-                    </button>
-                    <button
-                        onClick={() => setFilter("approved")}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${filter === "approved"
-                            ? "bg-green-600 text-white"
-                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                            }`}
-                    >
-                        Approved
-                    </button>
-                    <button
-                        onClick={() => setFilter("rejected")}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${filter === "rejected"
-                            ? "bg-red-600 text-white"
-                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                            }`}
-                    >
-                        Rejected
-                    </button>
                 </div>
             </div>
 
             {/* Approvals List */}
             <div className="bg-white rounded-lg shadow-md overflow-hidden">
                 {loading ? (
-                    <div className="p-8 text-center">
-                        <p className="text-gray-600">Loading approvals...</p>
+                    <div className="p-6 sm:p-8 text-center">
+                        <p className="text-gray-600 text-sm sm:text-base">Loading approvals...</p>
+                    </div>
+                ) : approvals.length === 0 ? (
+                    <div className="p-6 sm:p-8 md:p-10 text-center text-gray-500">
+                        <div className="flex flex-col items-center gap-2">
+                            <p className="text-base sm:text-lg font-medium">No approvals found</p>
+                            <p className="text-xs sm:text-sm text-gray-400">
+                                {filter === "pending"
+                                    ? "There are no pending approval requests at this time."
+                                    : filter === "approved"
+                                        ? "No approved requests found."
+                                        : filter === "rejected"
+                                            ? "No rejected requests found."
+                                            : "No approvals found in the system."}
+                            </p>
+                        </div>
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full border-collapse">
-                            <thead>
-                                <tr className="bg-gray-100">
-                                    <th className="border p-3 text-left font-semibold text-gray-700">Type</th>
-                                    <th className="border p-3 text-left font-semibold text-gray-700">Group</th>
-                                    <th className="border p-3 text-left font-semibold text-gray-700">Submitted</th>
-                                    <th className="border p-3 text-center font-semibold text-gray-700">Status</th>
-                                    <th className="border p-3 text-left font-semibold text-gray-700">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {approvals.length > 0 ? (
-                                    approvals.map((approval) => (
+                    <>
+                        {/* Mobile / Tablet: Card layout */}
+                        <div className="block md:hidden divide-y divide-gray-200">
+                            {approvals.map((approval) => (
+                                <div
+                                    key={approval.id}
+                                    className="p-3 sm:p-4 hover:bg-gray-50 transition-colors"
+                                >
+                                    <div className="flex items-start justify-between gap-2 mb-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            {getTypeIcon(approval.type)}
+                                            <span className="font-medium text-gray-800 text-sm sm:text-base truncate">
+                                                {getTypeLabel(approval.type, approval)}
+                                            </span>
+                                        </div>
+                                        {getStatusBadge(approval.status)}
+                                    </div>
+                                    {approval.type === "recovery" && approval.data?.totals && (
+                                        <p className="text-xs text-gray-500 mb-1">Total: {formatAmount(approval.data.totals.totalAmount)}</p>
+                                    )}
+                                    {approval.type === "loan" && approval.data?.amount && (
+                                        <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.amount)}</p>
+                                    )}
+                                    {approval.type === "cash_to_bank" && approval.data?.totalCashAmount && (
+                                        <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.totalCashAmount)}</p>
+                                    )}
+                                    <p className="text-xs sm:text-sm text-gray-600 mb-1">
+                                        <span className="font-medium text-gray-700">Group:</span> {approval.groupName || "Group"}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mb-3">{formatDate(approval.submittedAt)}</p>
+                                    <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                                        <button
+                                            onClick={() => setSelectedApproval(approval)}
+                                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                            title="View Details"
+                                        >
+                                            <Eye size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                        </button>
+                                        {approval.status === "pending" && (
+                                            <>
+                                                <button
+                                                    onClick={() => handleApprove(approval)}
+                                                    className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                    title="Approve"
+                                                >
+                                                    <CheckCircle size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                                </button>
+                                                <button
+                                                    onClick={() => setSelectedApproval(approval)}
+                                                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                    title="Reject"
+                                                >
+                                                    <XCircle size={16} className="sm:w-[18px] sm:h-[18px]" />
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Desktop: Table */}
+                        <div className="hidden md:block overflow-x-auto">
+                            <table className="min-w-[640px] w-full border-collapse">
+                                <thead>
+                                    <tr className="bg-gray-100">
+                                        <th className="border border-gray-200 p-2 lg:p-3 text-left text-xs lg:text-sm font-semibold text-gray-700">Type</th>
+                                        <th className="border border-gray-200 p-2 lg:p-3 text-left text-xs lg:text-sm font-semibold text-gray-700">Group</th>
+                                        <th className="border border-gray-200 p-2 lg:p-3 text-left text-xs lg:text-sm font-semibold text-gray-700">Submitted</th>
+                                        <th className="border border-gray-200 p-2 lg:p-3 text-center text-xs lg:text-sm font-semibold text-gray-700">Status</th>
+                                        <th className="border border-gray-200 p-2 lg:p-3 text-left text-xs lg:text-sm font-semibold text-gray-700">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {approvals.map((approval) => (
                                         <tr key={approval.id} className="hover:bg-gray-50">
-                                            <td className="border p-3">
+                                            <td className="border border-gray-200 p-2 lg:p-3">
                                                 <div className="flex items-center gap-2">
                                                     {getTypeIcon(approval.type)}
-                                                    <span className="font-medium text-gray-800">
-                                                        {getTypeLabel(approval.type)}
+                                                    <span className="font-medium text-gray-800 text-sm">
+                                                        {getTypeLabel(approval.type, approval)}
                                                     </span>
                                                 </div>
-                                                {/* Show summary for recovery */}
                                                 {approval.type === "recovery" && approval.data?.totals && (
-                                                    <p className="text-xs text-gray-500 mt-1">
-                                                        Total: {formatAmount(approval.data.totals.totalAmount)}
-                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-1">Total: {formatAmount(approval.data.totals.totalAmount)}</p>
                                                 )}
-                                                {/* Show summary for loan */}
                                                 {approval.type === "loan" && approval.data?.amount && (
-                                                    <p className="text-xs text-gray-500 mt-1">
-                                                        Amount: {formatAmount(approval.data.amount)}
-                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-1">Amount: {formatAmount(approval.data.amount)}</p>
                                                 )}
-                                                {/* Show summary for cash_to_bank */}
                                                 {approval.type === "cash_to_bank" && approval.data?.totalCashAmount && (
-                                                    <p className="text-xs text-gray-500 mt-1">
-                                                        Amount: {formatAmount(approval.data.totalCashAmount)}
-                                                    </p>
+                                                    <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                                                        <p>Amount: {formatAmount(approval.data.totalCashAmount)}</p>
+                                                        {approval.data?.conversionType === "bank_to_bank" ? (
+                                                            <>
+                                                                {approval.data?.fromBankName && (
+                                                                    <p>From: {approval.data.fromBankName} - {approval.data.fromAccountNumber}</p>
+                                                                )}
+                                                                {approval.data?.bankName && (
+                                                                    <p>To: {approval.data.bankName} - {approval.data.accountNumber}</p>
+                                                                )}
+                                                            </>
+                                                        ) : (
+                                                            approval.data?.bankName && (
+                                                                <p>Bank: {approval.data.bankName} - {approval.data.accountNumber}</p>
+                                                            )
+                                                        )}
+                                                    </div>
                                                 )}
                                             </td>
-                                            <td className="border p-3">
-                                                <div>
-                                                    <p className="font-medium text-gray-800">{approval.groupName || "Group"}</p>
-                                                    <p className="text-sm text-gray-600">ID: {approval.groupId}</p>
-                                                </div>
+                                            <td className="border border-gray-200 p-2 lg:p-3">
+                                                <p className="font-medium text-gray-800 text-sm">{approval.groupName || "Group"}</p>
+                                                <p className="text-xs text-gray-600">ID: {approval.groupId}</p>
                                             </td>
-                                            <td className="border p-3 text-gray-600">{formatDate(approval.submittedAt)}</td>
-                                            <td className="border p-3 text-center">{getStatusBadge(approval.status)}</td>
-                                            <td className="border p-3">
-                                                <div className="flex items-center gap-2">
+                                            <td className="border border-gray-200 p-2 lg:p-3 text-gray-600 text-sm whitespace-nowrap">{formatDate(approval.submittedAt)}</td>
+                                            <td className="border border-gray-200 p-2 lg:p-3 text-center">{getStatusBadge(approval.status)}</td>
+                                            <td className="border border-gray-200 p-2 lg:p-3">
+                                                <div className="flex items-center gap-1 lg:gap-2">
                                                     <button
                                                         onClick={() => setSelectedApproval(approval)}
-                                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                        className="p-1.5 lg:p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                                                         title="View Details"
                                                     >
-                                                        <Eye size={18} />
+                                                        <Eye size={16} className="lg:w-[18px] lg:h-[18px]" />
                                                     </button>
                                                     {approval.status === "pending" && (
                                                         <>
                                                             <button
                                                                 onClick={() => handleApprove(approval)}
-                                                                className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                                className="p-1.5 lg:p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                                                                 title="Approve"
                                                             >
-                                                                <CheckCircle size={18} />
+                                                                <CheckCircle size={16} className="lg:w-[18px] lg:h-[18px]" />
                                                             </button>
                                                             <button
                                                                 onClick={() => setSelectedApproval(approval)}
-                                                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                                className="p-1.5 lg:p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                                 title="Reject"
                                                             >
-                                                                <XCircle size={18} />
+                                                                <XCircle size={16} className="lg:w-[18px] lg:h-[18px]" />
                                                             </button>
                                                         </>
                                                     )}
                                                 </div>
                                             </td>
                                         </tr>
-                                    ))
-                                ) : (
-                                    <tr>
-                                        <td colSpan={5} className="border p-8 text-center text-gray-500">
-                                            <div className="flex flex-col items-center gap-2">
-                                                <p className="text-lg font-medium">No approvals found</p>
-                                                <p className="text-sm text-gray-400">
-                                                    {filter === "pending"
-                                                        ? "There are no pending approval requests at this time."
-                                                        : filter === "approved"
-                                                            ? "No approved requests found."
-                                                            : filter === "rejected"
-                                                                ? "No rejected requests found."
-                                                                : "No approvals found in the system."}
-                                                </p>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
                 )}
             </div>
 
             {/* Approval Detail Modal */}
             {selectedApproval && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-                        <div className="p-6 border-b">
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-2xl font-bold text-gray-800">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-3 sm:p-4 overflow-y-auto">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto my-4 sm:my-0">
+                        <div className="p-4 sm:p-5 md:p-6 border-b sticky top-0 bg-white z-10">
+                            <div className="flex items-start sm:items-center justify-between gap-3">
+                                <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-gray-800 min-w-0 flex-1 truncate">
                                     Approval Details - {selectedApproval.type.toUpperCase()}
                                     {isEditing && (
-                                        <span className="ml-3 text-sm font-normal text-orange-600">(Editing)</span>
+                                        <span className="ml-2 sm:ml-3 text-xs sm:text-sm font-normal text-orange-600">(Editing)</span>
                                     )}
                                 </h2>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                                     {selectedApproval.status === "pending" && !isEditing && (
                                         <button
                                             onClick={handleEdit}
                                             className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                                             title="Edit"
                                         >
-                                            <Edit size={20} />
+                                            <Edit size={18} className="sm:w-5 sm:h-5" />
                                         </button>
                                     )}
                                     <button
@@ -609,68 +674,68 @@ export default function ApprovalManagement() {
                                             setIsEditing(false);
                                             setEditedData(null);
                                         }}
-                                        className="text-gray-500 hover:text-gray-700"
+                                        className="text-gray-500 hover:text-gray-700 p-1.5 sm:p-2"
                                     >
-                                        <X size={24} />
+                                        <X size={20} className="sm:w-6 sm:h-6" />
                                     </button>
                                 </div>
                             </div>
                         </div>
-                        <div className="p-6">
-                            <div className="space-y-4 mb-6">
+                        <div className="p-4 sm:p-5 md:p-6">
+                            <div className="space-y-3 sm:space-y-4 mb-4 sm:mb-6">
                                 <div>
-                                    <p className="text-sm font-semibold text-gray-600">Group</p>
-                                    <p className="text-gray-800">{selectedApproval.groupName} ({selectedApproval.groupId})</p>
+                                    <p className="text-xs sm:text-sm font-semibold text-gray-600">Group</p>
+                                    <p className="text-sm sm:text-base text-gray-800 break-words">{selectedApproval.groupName} ({selectedApproval.groupId})</p>
                                 </div>
                                 <div>
-                                    <p className="text-sm font-semibold text-gray-600">Status</p>
+                                    <p className="text-xs sm:text-sm font-semibold text-gray-600">Status</p>
                                     <div className="mt-1">{getStatusBadge(selectedApproval.status)}</div>
                                 </div>
                                 <div>
-                                    <p className="text-sm font-semibold text-gray-600">Submitted At</p>
-                                    <p className="text-gray-800">{formatDate(selectedApproval.submittedAt)}</p>
+                                    <p className="text-xs sm:text-sm font-semibold text-gray-600">Submitted At</p>
+                                    <p className="text-sm sm:text-base text-gray-800">{formatDate(selectedApproval.submittedAt)}</p>
                                 </div>
                                 {selectedApproval.approvedAt && (
                                     <div>
-                                        <p className="text-sm font-semibold text-gray-600">
+                                        <p className="text-xs sm:text-sm font-semibold text-gray-600">
                                             {selectedApproval.status === "approved" ? "Approved" : "Rejected"} At
                                         </p>
-                                        <p className="text-gray-800">{formatDate(selectedApproval.approvedAt)}</p>
+                                        <p className="text-sm sm:text-base text-gray-800">{formatDate(selectedApproval.approvedAt)}</p>
                                     </div>
                                 )}
                                 {selectedApproval.rejectionReason && (
                                     <div>
-                                        <p className="text-sm font-semibold text-gray-600">Rejection Reason</p>
-                                        <p className="text-gray-800">{selectedApproval.rejectionReason}</p>
+                                        <p className="text-xs sm:text-sm font-semibold text-gray-600">Rejection Reason</p>
+                                        <p className="text-sm sm:text-base text-gray-800 break-words">{selectedApproval.rejectionReason}</p>
                                     </div>
                                 )}
                             </div>
 
                             {/* Approval Dashboard based on type */}
                             <div className="border-t pt-4">
-                                <div className="flex items-center justify-between mb-4">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                                     <p className="text-sm font-semibold text-gray-600">Approval Details</p>
                                     {selectedApproval.status === "pending" && !isEditing && (
                                         <button
                                             onClick={handleEdit}
-                                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm"
+                                            className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm w-full sm:w-auto"
                                         >
                                             <Edit size={16} />
                                             Edit
                                         </button>
                                     )}
                                     {isEditing && (
-                                        <div className="flex gap-2">
+                                        <div className="flex flex-col-reverse sm:flex-row gap-2 w-full sm:w-auto">
                                             <button
                                                 onClick={handleCancelEdit}
-                                                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium text-sm"
+                                                className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium text-sm w-full sm:w-auto"
                                             >
                                                 <X size={16} />
                                                 Cancel
                                             </button>
                                             <button
                                                 onClick={handleSaveEdit}
-                                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm"
+                                                className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm w-full sm:w-auto"
                                             >
                                                 <Save size={16} />
                                                 Save Changes
@@ -686,9 +751,9 @@ export default function ApprovalManagement() {
                                             const data = isEditing ? editedData : selectedApproval.data;
                                             return (
                                                 <>
-                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                                        <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
-                                                            <p className="text-sm text-gray-600">Total Cash</p>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+                                                        <div className="p-3 sm:p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Total Cash</p>
                                                             {isEditing ? (
                                                                 <input
                                                                     type="number"
@@ -697,20 +762,17 @@ export default function ApprovalManagement() {
                                                                         const newData = JSON.parse(JSON.stringify(data));
                                                                         if (!newData.totals) newData.totals = {};
                                                                         newData.totals.totalCash = parseFloat(e.target.value) || 0;
-                                                                        // Recalculate totalAmount
                                                                         newData.totals.totalAmount = (newData.totals.totalCash || 0) + (newData.totals.totalOnline || 0);
                                                                         setEditedData(newData);
                                                                     }}
-                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-2xl font-bold"
+                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-lg sm:text-2xl font-bold"
                                                                 />
                                                             ) : (
-                                                                <p className="text-2xl font-bold text-gray-800">
-                                                                    {formatAmount(data.totals?.totalCash)}
-                                                                </p>
+                                                                <p className="text-xl sm:text-2xl font-bold text-gray-800">{formatAmount(data.totals?.totalCash)}</p>
                                                             )}
                                                         </div>
-                                                        <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
-                                                            <p className="text-sm text-gray-600">Total Online</p>
+                                                        <div className="p-3 sm:p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Total Online</p>
                                                             {isEditing ? (
                                                                 <input
                                                                     type="number"
@@ -719,27 +781,24 @@ export default function ApprovalManagement() {
                                                                         const newData = JSON.parse(JSON.stringify(data));
                                                                         if (!newData.totals) newData.totals = {};
                                                                         newData.totals.totalOnline = parseFloat(e.target.value) || 0;
-                                                                        // Recalculate totalAmount
                                                                         newData.totals.totalAmount = (newData.totals.totalCash || 0) + (newData.totals.totalOnline || 0);
                                                                         setEditedData(newData);
                                                                     }}
-                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-2xl font-bold"
+                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-lg sm:text-2xl font-bold"
                                                                 />
                                                             ) : (
-                                                                <p className="text-2xl font-bold text-gray-800">
-                                                                    {formatAmount(data.totals?.totalOnline)}
-                                                                </p>
+                                                                <p className="text-xl sm:text-2xl font-bold text-gray-800">{formatAmount(data.totals?.totalOnline)}</p>
                                                             )}
                                                         </div>
-                                                        <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
-                                                            <p className="text-sm text-gray-600">Grand Total</p>
-                                                            <p className="text-2xl font-bold text-gray-800">
+                                                        <div className="p-3 sm:p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500 sm:col-span-2 md:col-span-1">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Grand Total</p>
+                                                            <p className="text-xl sm:text-2xl font-bold text-gray-800">
                                                                 {formatAmount(data.totals?.totalAmount || ((data.totals?.totalCash || 0) + (data.totals?.totalOnline || 0)))}
                                                             </p>
                                                         </div>
                                                     </div>
-                                                    <div className="p-4 bg-gray-50 rounded-lg">
-                                                        <p className="text-sm font-semibold text-gray-700 mb-2">Meeting Information</p>
+                                                    <div className="p-3 sm:p-4 bg-gray-50 rounded-lg">
+                                                        <p className="text-xs sm:text-sm font-semibold text-gray-700 mb-2">Meeting Information</p>
                                                         {isEditing ? (
                                                             <div className="space-y-2">
                                                                 <input
@@ -777,42 +836,38 @@ export default function ApprovalManagement() {
                                             const data = isEditing ? editedData : selectedApproval.data;
                                             return (
                                                 <>
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                        <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
-                                                            <p className="text-sm text-gray-600">Loan Amount</p>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                                                        <div className="p-3 sm:p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Loan Amount</p>
                                                             {isEditing ? (
                                                                 <input
                                                                     type="number"
                                                                     value={data.amount || 0}
                                                                     onChange={(e) => updateEditedField("amount", parseFloat(e.target.value) || 0)}
-                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-2xl font-bold"
+                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-lg sm:text-2xl font-bold"
                                                                 />
                                                             ) : (
-                                                                <p className="text-2xl font-bold text-gray-800">
-                                                                    {formatAmount(data.amount)}
-                                                                </p>
+                                                                <p className="text-xl sm:text-2xl font-bold text-gray-800">{formatAmount(data.amount)}</p>
                                                             )}
                                                         </div>
-                                                        <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
-                                                            <p className="text-sm text-gray-600">Has Assets</p>
+                                                        <div className="p-3 sm:p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Has Assets</p>
                                                             {isEditing ? (
                                                                 <select
                                                                     value={data.hasAssets ? "yes" : "no"}
                                                                     onChange={(e) => updateEditedField("hasAssets", e.target.value === "yes")}
-                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-2xl font-bold"
+                                                                    className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg text-lg sm:text-2xl font-bold"
                                                                 >
                                                                     <option value="yes">Yes</option>
                                                                     <option value="no">No</option>
                                                                 </select>
                                                             ) : (
-                                                                <p className="text-2xl font-bold text-gray-800">
-                                                                    {data.hasAssets ? "Yes" : "No"}
-                                                                </p>
+                                                                <p className="text-xl sm:text-2xl font-bold text-gray-800">{data.hasAssets ? "Yes" : "No"}</p>
                                                             )}
                                                         </div>
                                                     </div>
-                                                    <div className="p-4 bg-gray-50 rounded-lg space-y-2">
-                                                        <p className="text-sm font-semibold text-gray-700">Loan Details</p>
+                                                    <div className="p-3 sm:p-4 bg-gray-50 rounded-lg space-y-2">
+                                                        <p className="text-xs sm:text-sm font-semibold text-gray-700">Loan Details</p>
                                                         {isEditing ? (
                                                             <div className="space-y-3">
                                                                 <input
@@ -892,12 +947,12 @@ export default function ApprovalManagement() {
                                         {(() => {
                                             const data = isEditing ? editedData : selectedApproval.data;
                                             return data.bachanPathraPhoto && (
-                                                <div className="p-4 bg-gray-50 rounded-lg">
-                                                    <p className="text-sm font-semibold text-gray-700 mb-2">Bachan Pathra Photo</p>
+                                                <div className="p-3 sm:p-4 bg-gray-50 rounded-lg">
+                                                    <p className="text-xs sm:text-sm font-semibold text-gray-700 mb-2">Bachan Pathra Photo</p>
                                                     <img
                                                         src={data.bachanPathraPhoto}
                                                         alt="Bachan Pathra"
-                                                        className="max-w-full h-auto rounded-lg border-2 border-gray-300"
+                                                        className="max-w-full h-auto rounded-lg border-2 border-gray-300 w-full"
                                                     />
                                                 </div>
                                             );
@@ -911,8 +966,8 @@ export default function ApprovalManagement() {
                                         {(() => {
                                             const data = isEditing ? editedData : selectedApproval.data;
                                             return (
-                                                <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
-                                                    <p className="text-sm font-semibold text-gray-700 mb-2">Member Information</p>
+                                                <div className="p-3 sm:p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                    <p className="text-xs sm:text-sm font-semibold text-gray-700 mb-2">Member Information</p>
                                                     {isEditing ? (
                                                         <div className="space-y-3">
                                                             <input
@@ -1006,27 +1061,34 @@ export default function ApprovalManagement() {
                                     <div className="space-y-4">
                                         {(() => {
                                             const data = selectedApproval.data;
+                                            const conversionType = data.conversionType || "cash_to_bank";
                                             return (
                                                 <>
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                        <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
-                                                            <p className="text-sm text-gray-600">Total Cash Amount</p>
-                                                            <p className="text-2xl font-bold text-gray-800">
-                                                                {formatAmount(data.totalCashAmount)}
-                                                            </p>
+                                                    <div className={`grid gap-3 sm:gap-4 ${conversionType === "bank_to_bank" ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`}>
+                                                        <div className="p-3 sm:p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Amount</p>
+                                                            <p className="text-xl sm:text-2xl font-bold text-gray-800">{formatAmount(data.totalCashAmount)}</p>
                                                         </div>
-                                                        <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
-                                                            <p className="text-sm text-gray-600">Bank Account</p>
-                                                            <p className="text-lg font-bold text-gray-800">
-                                                                {data.bankName || "N/A"}
+                                                        {conversionType === "bank_to_bank" && (
+                                                            <div className="p-3 sm:p-4 bg-red-50 rounded-lg border-l-4 border-red-500">
+                                                                <p className="text-xs sm:text-sm text-gray-600">From Bank Account</p>
+                                                                <p className="text-base sm:text-lg font-bold text-gray-800">{data.fromBankName || "N/A"}</p>
+                                                                <p className="text-xs sm:text-sm text-gray-600 mt-1">{data.fromAccountNumber || "N/A"}</p>
+                                                            </div>
+                                                        )}
+                                                        <div className="p-3 sm:p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">
+                                                                {conversionType === "bank_to_bank" ? "To Bank Account" : "Bank Account"}
                                                             </p>
-                                                            <p className="text-sm text-gray-600 mt-1">
-                                                                {data.accountNumber || "N/A"}
-                                                            </p>
+                                                            <p className="text-base sm:text-lg font-bold text-gray-800">{data.bankName || "N/A"}</p>
+                                                            <p className="text-xs sm:text-sm text-gray-600 mt-1">{data.accountNumber || "N/A"}</p>
                                                         </div>
                                                     </div>
-                                                    <div className="p-4 bg-gray-50 rounded-lg space-y-2">
-                                                        <p className="text-sm font-semibold text-gray-700">Conversion Details</p>
+                                                    <div className="p-3 sm:p-4 bg-gray-50 rounded-lg space-y-2">
+                                                        <p className="text-xs sm:text-sm font-semibold text-gray-700">Conversion Details</p>
+                                                        <p className="text-gray-600">
+                                                            <span className="font-medium">Type:</span> {conversionType === "bank_to_bank" ? "Bank to Bank Transfer" : "Cash to Bank Conversion"}
+                                                        </p>
                                                         <p className="text-gray-600">
                                                             <span className="font-medium">Group:</span> {data.groupName} ({data.groupCode || "N/A"})
                                                         </p>
@@ -1054,12 +1116,12 @@ export default function ApprovalManagement() {
                                                         )}
                                                     </div>
                                                     {data.paymentImage && (
-                                                        <div className="p-4 bg-gray-50 rounded-lg">
-                                                            <p className="text-sm font-semibold text-gray-700 mb-2">Payment Receipt</p>
+                                                        <div className="p-3 sm:p-4 bg-gray-50 rounded-lg">
+                                                            <p className="text-xs sm:text-sm font-semibold text-gray-700 mb-2">Payment Receipt</p>
                                                             <img
                                                                 src={data.paymentImage.startsWith('http') ? data.paymentImage : `${import.meta.env.VITE_BASE_URL?.replace('/api', '') || 'http://localhost:8080'}${data.paymentImage}`}
                                                                 alt="Payment Receipt"
-                                                                className="max-w-full h-auto rounded-lg border-2 border-gray-300"
+                                                                className="max-w-full h-auto rounded-lg border-2 border-gray-300 w-full"
                                                             />
                                                         </div>
                                                     )}
@@ -1072,8 +1134,8 @@ export default function ApprovalManagement() {
                                 {/* Fallback for other types */}
                                 {!["recovery", "loan", "member", "cash_to_bank"].includes(selectedApproval.type) && (
                                     <div className="border-t pt-4">
-                                        <p className="text-sm font-semibold text-gray-600 mb-2">Request Data</p>
-                                        <pre className="bg-gray-50 p-4 rounded-lg overflow-x-auto text-sm">
+                                        <p className="text-xs sm:text-sm font-semibold text-gray-600 mb-2">Request Data</p>
+                                        <pre className="bg-gray-50 p-3 sm:p-4 rounded-lg overflow-x-auto text-xs sm:text-sm max-w-full">
                                             {JSON.stringify(selectedApproval.data, null, 2)}
                                         </pre>
                                     </div>
@@ -1089,12 +1151,12 @@ export default function ApprovalManagement() {
                                         <textarea
                                             value={rejectionReason}
                                             onChange={(e) => setRejectionReason(e.target.value)}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm min-h-[80px]"
                                             rows={3}
                                             placeholder="Enter reason for rejection..."
                                         />
                                     </div>
-                                    <div className="flex justify-end gap-4">
+                                    <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-4">
                                         <button
                                             onClick={() => {
                                                 setSelectedApproval(null);
@@ -1102,19 +1164,19 @@ export default function ApprovalManagement() {
                                                 setIsEditing(false);
                                                 setEditedData(null);
                                             }}
-                                            className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+                                            className="w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium text-sm"
                                         >
                                             Cancel
                                         </button>
                                         <button
                                             onClick={() => handleReject(selectedApproval)}
-                                            className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+                                            className="w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm"
                                         >
                                             Reject
                                         </button>
                                         <button
                                             onClick={() => handleApprove(selectedApproval)}
-                                            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+                                            className="w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm"
                                         >
                                             Approve
                                         </button>

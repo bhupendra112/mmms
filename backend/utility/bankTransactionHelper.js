@@ -6,7 +6,7 @@ import BankMaster from "../model/BankMaster.js";
  * @param {Object} options - Transaction details
  * @param {String} options.bankId - Bank ID
  * @param {String} options.groupId - Group ID
- * @param {String} options.transactionType - Type: 'fd', 'recovery', 'loan', 'expense', 'payment', 'cash_to_bank', 'other'
+ * @param {String} options.transactionType - Type: 'fd', 'recovery', 'loan', 'expense', 'payment', 'cash_to_bank', 'bank_to_bank', 'other'
  * @param {Number} options.amount - Transaction amount
  * @param {Date} options.date - Transaction date
  * @param {String} options.onlineRef - Online payment reference (optional)
@@ -25,6 +25,7 @@ import BankMaster from "../model/BankMaster.js";
  * @param {String} options.memberCode - Member code (optional)
  * @param {String} options.memberName - Member name (optional)
  * @param {String} options.status - Override default status (optional, "pending" or "verified")
+ * @param {Boolean} options.isDebit - For bank_to_bank transactions: true for debit (source bank), false for credit (destination bank) (optional)
  * @returns {Promise<Object>} Created bank transaction record
  */
 export const createBankTransactionRecord = async (options) => {
@@ -51,6 +52,7 @@ export const createBankTransactionRecord = async (options) => {
             memberCode,
             memberName,
             status: overrideStatus,
+            isDebit,
         } = options;
 
         // Validate required fields
@@ -79,6 +81,7 @@ export const createBankTransactionRecord = async (options) => {
         // Expense and loan transactions are also verified immediately (group pays money out)
         // Payment transactions are verified immediately when created by admin (group pays money to members)
         // Cash to bank conversions are verified when approved (admin has verified the conversion)
+        // Bank to bank conversions are verified when approved (admin has verified the conversion)
         // Other transactions may need verification
         // Use overrideStatus if provided, otherwise use default logic
         const defaultStatus = overrideStatus || (
@@ -87,7 +90,8 @@ export const createBankTransactionRecord = async (options) => {
              transactionType === "expense" || 
              transactionType === "loan" ||
              transactionType === "payment" ||
-             transactionType === "cash_to_bank") ? "verified" : "pending"
+             transactionType === "cash_to_bank" ||
+             transactionType === "bank_to_bank") ? "verified" : "pending"
         );
 
         // Create bank transaction record
@@ -117,6 +121,7 @@ export const createBankTransactionRecord = async (options) => {
             memberName: memberName || null,
             status: defaultStatus,
             createdBy: createdBy || "admin",
+            isDebit: isDebit !== undefined ? isDebit : false, // Default to false (credit) if not specified
             // Auto-verify FD and recovery transactions
             verifiedBy: defaultStatus === "verified" ? (createdBy || "admin") : null,
             verifiedAt: defaultStatus === "verified" ? new Date() : null,
@@ -126,9 +131,15 @@ export const createBankTransactionRecord = async (options) => {
         // FD, recovery, expense, and loan are verified immediately, so balance updates right away
         if (bankTransaction.status === "verified") {
             // Determine if transaction is credit (money in) or debit (money out)
-            // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited)
-            // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members)
-            const isCredit = transactionType === "recovery" || transactionType === "fd" || transactionType === "cash_to_bank";
+            // Credits: recovery (money collected from members), fd (FD created - member gives money to group), cash_to_bank (cash deposited), bank_to_bank (destination bank - money transferred in)
+            // Debits: loan (money given to members), expense (expense paid), payment (FD maturity/saving withdrawal - group gives money to members), bank_to_bank (source bank - money transferred out)
+            // For bank_to_bank, use the isDebit field to determine if it's a credit or debit
+            let isCredit;
+            if (transactionType === "bank_to_bank") {
+                isCredit = !bankTransaction.isDebit; // If isDebit is true, it's a debit (not credit)
+            } else {
+                isCredit = transactionType === "recovery" || transactionType === "fd" || transactionType === "cash_to_bank";
+            }
             console.log("[BANK_TRANSACTION] Updating bank balance for verified transaction:", {
                 transactionType,
                 amount: parseFloat(amount),

@@ -25,7 +25,7 @@ httpMember.interceptors.request.use(
 
 httpMember.interceptors.response.use(
   (res) => res,
-  createErrorInterceptor(true) // true = isAdmin
+  createErrorInterceptor(true) // Will auto-detect group vs admin based on route and token
 );
 
 export default httpMember;

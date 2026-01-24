@@ -36,7 +36,11 @@ export const registerMember = async (data) => {
 
 export const getMembersByGroup = async (groupId) => {
   const res = await httpMember.get(`/by-group/${groupId}`);
-  console.log("getMemberDetail res ", res.data)
+  return res.data;
+};
+
+export const getAutoMemberCode = async (groupId) => {
+  const res = await httpMember.get("/auto-member-code", { params: { group_id: groupId } });
   return res.data;
 };
 

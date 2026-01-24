@@ -28,6 +28,25 @@ const ExpenseMasterSchema = new mongoose.Schema({
     },
     purpose: { type: String }, // Description/remarks
 
+    // Entry type classification
+    entryType: {
+        type: String,
+        enum: ["income", "expense", "assets", "liability"],
+        default: "expense",
+        required: true,
+    },
+    // Head name for mapping and backward compatibility
+    headName: {
+        type: String,
+        required: false, // Optional - normalized name for ledger mapping
+    },
+    // Reference to head master (self-reference for expense head master)
+    headId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "ExpenseMaster",
+        required: false, // Optional - for linking to expense head master
+    },
+
     // Created by
     createdBy: { type: String }, // Admin user ID or "admin"
 
@@ -39,6 +58,7 @@ const ExpenseMasterSchema = new mongoose.Schema({
 ExpenseMasterSchema.index({ groupId: 1, date: 1 });
 ExpenseMasterSchema.index({ expenseType: 1 });
 ExpenseMasterSchema.index({ date: 1 });
+ExpenseMasterSchema.index({ entryType: 1 });
 
 export default mongoose.model("ExpenseMaster", ExpenseMasterSchema);
 

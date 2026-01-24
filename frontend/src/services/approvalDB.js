@@ -1,5 +1,6 @@
 import { createRxDatabase } from "rxdb";
 import { getRxStorageDexie } from "rxdb/plugins/storage-dexie";
+import Dexie from "dexie"; // Use the same Dexie instance
 
 let approvalDB = null;
 

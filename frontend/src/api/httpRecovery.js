@@ -27,7 +27,7 @@ httpRecovery.interceptors.request.use(
 // Response interceptor
 httpRecovery.interceptors.response.use(
     (res) => res,
-    createErrorInterceptor(true) // true = isAdmin
+    createErrorInterceptor(true) // Will auto-detect group vs admin based on route and token
 );
 
 export default httpRecovery;

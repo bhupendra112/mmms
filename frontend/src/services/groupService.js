@@ -158,6 +158,7 @@ export const addGroupCharge = async (groupId, chargeData) => {
     try {
         const payload = sanitizePayload(chargeData);
         const res = await httpGroup.post(`/${groupId}/charges`, payload);
+        console.log(res)
         return res.data;
     } catch (err) {
         throw err.response ? err.response.data : err;

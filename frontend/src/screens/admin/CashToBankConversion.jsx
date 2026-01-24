@@ -48,9 +48,11 @@ export default function CashToBankConversion() {
     const [activeTab, setActiveTab] = useState("create"); // "create" or "approve"
 
     // Form state
+    const [conversionType, setConversionType] = useState("cash_to_bank"); // "cash_to_bank" or "bank_to_bank"
     const [formData, setFormData] = useState({
         amount: "",
-        bankId: "",
+        bankId: "", // Destination bank (toBankId)
+        fromBankId: "", // Source bank (for bank_to_bank only)
         onlineRef: "",
         paymentImage: null,
     });
@@ -221,9 +223,25 @@ export default function CashToBankConversion() {
     // Handle form submit
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!selectedGroup || !formData.bankId) {
-            alert("Please select a group and bank account");
+        if (!selectedGroup) {
+            alert("Please select a group");
             return;
+        }
+
+        if (conversionType === "cash_to_bank" && !formData.bankId) {
+            alert("Please select a destination bank account");
+            return;
+        }
+
+        if (conversionType === "bank_to_bank") {
+            if (!formData.fromBankId || !formData.bankId) {
+                alert("Please select both source and destination bank accounts");
+                return;
+            }
+            if (formData.fromBankId === formData.bankId) {
+                alert("Source bank and destination bank cannot be the same");
+                return;
+            }
         }
 
         // Validate amount
@@ -233,46 +251,72 @@ export default function CashToBankConversion() {
             return;
         }
 
-        // Validate cash balance
-        if (groupCashBalance < conversionAmount) {
-            alert(`Insufficient cash balance. Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${conversionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
-            return;
-        }
-
         // Validate payment image
         if (!formData.paymentImage) {
             alert("Please upload a screenshot/payment image");
             return;
         }
 
-        // Validate bank balance
-        const selectedBank = groupBanks.find(b => (b._id || b.id) === formData.bankId);
-        if (selectedBank) {
-            const availableBalance = selectedBank.available_balance !== undefined
-                ? selectedBank.available_balance
-                : (selectedBank.current_balance !== undefined
-                    ? selectedBank.current_balance
-                    : (selectedBank.opening_balance || 0));
+        // Validate balances based on conversion type
+        if (conversionType === "cash_to_bank") {
+            // Validate cash balance
+            if (groupCashBalance < conversionAmount) {
+                alert(`Insufficient cash balance. Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${conversionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                return;
+            }
 
-            // For cash to bank conversion, we're adding money to bank, so we don't need to check if bank has enough
-            // But we can show a warning if bank balance is negative or very low
-            if (availableBalance < 0) {
-                if (!window.confirm(`Warning: Selected bank has negative balance (₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}). Do you want to continue?`)) {
+            // Validate bank balance (warning only)
+            const selectedBank = groupBanks.find(b => (b._id || b.id) === formData.bankId);
+            if (selectedBank) {
+                const availableBalance = selectedBank.available_balance !== undefined
+                    ? selectedBank.available_balance
+                    : (selectedBank.current_balance !== undefined
+                        ? selectedBank.current_balance
+                        : (selectedBank.opening_balance || 0));
+
+                if (availableBalance < 0) {
+                    if (!window.confirm(`Warning: Selected bank has negative balance (₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}). Do you want to continue?`)) {
+                        return;
+                    }
+                }
+            }
+
+            if (!window.confirm(`Are you sure you want to convert ₹${conversionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} from cash to bank?`)) {
+                return;
+            }
+        } else if (conversionType === "bank_to_bank") {
+            // Validate source bank balance
+            const selectedFromBank = groupBanks.find(b => (b._id || b.id) === formData.fromBankId);
+            if (selectedFromBank) {
+                const availableBalance = selectedFromBank.available_balance !== undefined
+                    ? selectedFromBank.available_balance
+                    : (selectedFromBank.current_balance !== undefined
+                        ? selectedFromBank.current_balance
+                        : (selectedFromBank.opening_balance || 0));
+
+                if (availableBalance < conversionAmount) {
+                    alert(`Insufficient source bank balance. Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Required: ₹${conversionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
                     return;
                 }
             }
-        }
 
-        if (!window.confirm(`Are you sure you want to convert ₹${conversionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} from cash to bank payment?`)) {
-            return;
+            const fromBankName = selectedFromBank?.bank_name || "Source Bank";
+            const toBank = groupBanks.find(b => (b._id || b.id) === formData.bankId);
+            const toBankName = toBank?.bank_name || "Destination Bank";
+
+            if (!window.confirm(`Are you sure you want to transfer ₹${conversionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} from ${fromBankName} to ${toBankName}?`)) {
+                return;
+            }
         }
 
         setLoading(true);
         try {
             const conversionData = {
                 groupId: selectedGroup._id,
+                conversionType,
                 amount: conversionAmount,
-                bankId: formData.bankId,
+                bankId: formData.bankId, // Destination bank
+                fromBankId: conversionType === "bank_to_bank" ? formData.fromBankId : undefined,
                 onlineRef: formData.onlineRef || null,
                 paymentImage: formData.paymentImage,
                 isAdmin: isAdminMode,
@@ -282,7 +326,7 @@ export default function CashToBankConversion() {
             if (res.success) {
                 alert("Conversion request created successfully!");
                 // Reset form
-                setFormData({ amount: "", bankId: "", onlineRef: "", paymentImage: null });
+                setFormData({ amount: "", bankId: "", fromBankId: "", onlineRef: "", paymentImage: null });
                 // Reload conversions and recoveries
                 getConversions(selectedGroup._id)
                     .then((response) => {
@@ -290,14 +334,16 @@ export default function CashToBankConversion() {
                         setConversions(list);
                     });
                 // Reload cash balance
-                getCashAmount(selectedGroup._id)
-                    .then((res) => {
-                        const balance = res?.data?.groupCashBalance || res?.data?.cashAmount || 0;
-                        setGroupCashBalance(balance);
-                    })
-                    .catch((err) => {
-                        console.error("Failed to load cash balance:", err);
-                    });
+                if (conversionType === "cash_to_bank") {
+                    getCashAmount(selectedGroup._id)
+                        .then((res) => {
+                            const balance = res?.data?.groupCashBalance || res?.data?.cashAmount || 0;
+                            setGroupCashBalance(balance);
+                        })
+                        .catch((err) => {
+                            console.error("Failed to load cash balance:", err);
+                        });
+                }
             } else {
                 alert(res.message || "Failed to create conversion request");
             }
@@ -403,9 +449,9 @@ export default function CashToBankConversion() {
             <div className="mb-6">
                 <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
                     <Banknote size={32} />
-                    Cash to Bank Conversion
+                    Conversion
                 </h1>
-                <p className="text-gray-600 mt-2">Convert cash recovery payments to bank payments</p>
+                <p className="text-gray-600 mt-2">Convert cash to bank or transfer between bank accounts</p>
             </div>
 
             {/* Tabs */}
@@ -453,7 +499,6 @@ export default function CashToBankConversion() {
                                         onClick={() => {
                                             setSelectedCluster(null);
                                             setSelectedGroup(null);
-                                            setSelectedRecovery(null);
                                         }}
                                         className="text-sm text-blue-600 hover:text-blue-800 font-medium"
                                     >
@@ -489,10 +534,7 @@ export default function CashToBankConversion() {
                                     filteredGroups.map((g) => (
                                         <div
                                             key={g._id || g.id}
-                                            onClick={() => {
-                                                setSelectedGroup(g);
-                                                setSelectedRecovery(null);
-                                            }}
+                                            onClick={() => setSelectedGroup(g)}
                                             className={`p-6 border-2 rounded-lg cursor-pointer transition-colors ${
                                                 selectedGroup?._id === g._id || selectedGroup?.id === g.id
                                                     ? "border-blue-500 bg-blue-50"
@@ -530,20 +572,68 @@ export default function CashToBankConversion() {
                                 <Wallet size={18} className="text-blue-600" />
                                 Available Balances
                             </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {/* Cash Balance */}
-                                <div className="bg-white rounded-lg p-3 border border-gray-200">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <Wallet size={16} className="text-green-600" />
-                                            <span className="text-sm font-medium text-gray-700">Cash Balance</span>
+                            <div className={`grid gap-4 ${conversionType === "bank_to_bank" ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-2"}`}>
+                                {/* Cash Balance - Only show for cash_to_bank */}
+                                {conversionType === "cash_to_bank" && (
+                                    <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Wallet size={16} className="text-green-600" />
+                                                <span className="text-sm font-medium text-gray-700">Cash Balance</span>
+                                            </div>
+                                            <span className="text-lg font-bold text-green-600">
+                                                ₹{groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
                                         </div>
-                                        <span className="text-lg font-bold text-green-600">
-                                            ₹{groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                        </span>
                                     </div>
-                                </div>
-                                {/* Bank Balance */}
+                                )}
+                                
+                                {/* Source Bank Balance - Only show for bank_to_bank */}
+                                {conversionType === "bank_to_bank" && formData.fromBankId ? (() => {
+                                    const selectedFromBank = groupBanks.find(b => (b._id || b.id) === formData.fromBankId);
+                                    if (!selectedFromBank) return null;
+                                    const availableBalance = selectedFromBank.available_balance !== undefined
+                                        ? selectedFromBank.available_balance
+                                        : (selectedFromBank.current_balance !== undefined
+                                            ? selectedFromBank.current_balance
+                                            : (selectedFromBank.opening_balance || 0));
+                                    return (
+                                        <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <CreditCard size={16} className="text-red-600" />
+                                                    <span className="text-sm font-medium text-gray-700">From Bank Balance</span>
+                                                </div>
+                                                <span className={`text-lg font-bold ${availableBalance >= parseFloat(formData.amount || 0) ? 'text-red-600' : 'text-red-400'}`}>
+                                                    ₹{availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                {selectedFromBank.bank_name} - {selectedFromBank.account_no}
+                                            </p>
+                                            {formData.amount && parseFloat(formData.amount) > 0 && (
+                                                <p className={`text-xs mt-1 ${availableBalance >= parseFloat(formData.amount) ? 'text-green-600' : 'text-red-600'}`}>
+                                                    {availableBalance >= parseFloat(formData.amount) 
+                                                        ? `✓ Sufficient (Will deduct ₹${parseFloat(formData.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                                                        : `✗ Insufficient (Need ₹${parseFloat(formData.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                                                    }
+                                                </p>
+                                            )}
+                                        </div>
+                                    );
+                                })() : conversionType === "bank_to_bank" ? (
+                                    <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <CreditCard size={16} className="text-red-600" />
+                                                <span className="text-sm font-medium text-gray-700">From Bank Balance</span>
+                                            </div>
+                                            <span className="text-xs text-gray-500">Select source bank</span>
+                                        </div>
+                                    </div>
+                                ) : null}
+                                
+                                {/* Destination Bank Balance */}
                                 {formData.bankId ? (() => {
                                     const selectedBank = groupBanks.find(b => (b._id || b.id) === formData.bankId);
                                     if (!selectedBank) return null;
@@ -557,7 +647,9 @@ export default function CashToBankConversion() {
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-2">
                                                     <CreditCard size={16} className="text-blue-600" />
-                                                    <span className="text-sm font-medium text-gray-700">Bank Balance</span>
+                                                    <span className="text-sm font-medium text-gray-700">
+                                                        {conversionType === "bank_to_bank" ? "To Bank Balance" : "Bank Balance"}
+                                                    </span>
                                                 </div>
                                                 <span className="text-lg font-bold text-blue-600">
                                                     ₹{availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -573,17 +665,19 @@ export default function CashToBankConversion() {
                                             )}
                                         </div>
                                     );
-                                })() : groupBanks.length > 0 ? (
+                                })() : (
                                     <div className="bg-white rounded-lg p-3 border border-gray-200">
                                         <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-2">
                                                 <CreditCard size={16} className="text-blue-600" />
-                                                <span className="text-sm font-medium text-gray-700">Bank Balance</span>
+                                                <span className="text-sm font-medium text-gray-700">
+                                                    {conversionType === "bank_to_bank" ? "To Bank Balance" : "Bank Balance"}
+                                                </span>
                                             </div>
-                                            <span className="text-xs text-gray-500">Select a bank</span>
+                                            <span className="text-xs text-gray-500">Select {conversionType === "bank_to_bank" ? "destination" : "a"} bank</span>
                                         </div>
                                     </div>
-                                ) : null}
+                                )}
                             </div>
                         </div>
                     )}
@@ -595,7 +689,44 @@ export default function CashToBankConversion() {
                         );
                         return (
                             <div className="bg-white rounded-lg shadow-md p-6">
-                                <h2 className="text-xl font-semibold text-gray-800 mb-4">Convert Cash to Bank</h2>
+                                <h2 className="text-xl font-semibold text-gray-800 mb-4">Create Conversion</h2>
+                                
+                                {/* Conversion Type Selector */}
+                                <div className="mb-6">
+                                    <label className="block text-sm font-semibold text-gray-700 mb-3">
+                                        Conversion Type *
+                                    </label>
+                                    <div className="flex gap-4">
+                                        <label className="flex items-center cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="conversionType"
+                                                value="cash_to_bank"
+                                                checked={conversionType === "cash_to_bank"}
+                                                onChange={(e) => {
+                                                    setConversionType(e.target.value);
+                                                    setFormData({ ...formData, fromBankId: "" }); // Clear fromBankId when switching
+                                                }}
+                                                className="mr-2"
+                                            />
+                                            <span className="text-gray-700">Cash to Bank</span>
+                                        </label>
+                                        <label className="flex items-center cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="conversionType"
+                                                value="bank_to_bank"
+                                                checked={conversionType === "bank_to_bank"}
+                                                onChange={(e) => {
+                                                    setConversionType(e.target.value);
+                                                    setFormData({ ...formData, bankId: "" }); // Clear bankId when switching to allow reselection
+                                                }}
+                                                className="mr-2"
+                                            />
+                                            <span className="text-gray-700">Bank to Bank</span>
+                                        </label>
+                                    </div>
+                                </div>
                                 {existingConversion ? (
                                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                                         <p className="text-yellow-800 font-semibold mb-2">
@@ -624,33 +755,87 @@ export default function CashToBankConversion() {
                                             step="0.01"
                                         />
                                         {formData.amount && parseFloat(formData.amount) > 0 && (
-                                            <div className={`text-sm ${groupCashBalance >= parseFloat(formData.amount) ? 'text-green-600' : 'text-red-600'}`}>
-                                                {groupCashBalance >= parseFloat(formData.amount)
-                                                    ? `✓ Sufficient balance (Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
-                                                    : `✗ Insufficient balance (Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
-                                                }
+                                            <div className={`text-sm ${
+                                                conversionType === "cash_to_bank" 
+                                                    ? (groupCashBalance >= parseFloat(formData.amount) ? 'text-green-600' : 'text-red-600')
+                                                    : (formData.fromBankId ? (() => {
+                                                        const selectedFromBank = groupBanks.find(b => (b._id || b.id) === formData.fromBankId);
+                                                        if (!selectedFromBank) return 'text-gray-600';
+                                                        const availableBalance = selectedFromBank.available_balance !== undefined
+                                                            ? selectedFromBank.available_balance
+                                                            : (selectedFromBank.current_balance !== undefined
+                                                                ? selectedFromBank.current_balance
+                                                                : (selectedFromBank.opening_balance || 0));
+                                                        return availableBalance >= parseFloat(formData.amount) ? 'text-green-600' : 'text-red-600';
+                                                    })() : 'text-gray-600')
+                                            }`}>
+                                                {conversionType === "cash_to_bank" ? (
+                                                    groupCashBalance >= parseFloat(formData.amount)
+                                                        ? `✓ Sufficient balance (Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                                                        : `✗ Insufficient balance (Available: ₹${groupCashBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                                                ) : formData.fromBankId ? (() => {
+                                                    const selectedFromBank = groupBanks.find(b => (b._id || b.id) === formData.fromBankId);
+                                                    if (!selectedFromBank) return "Please select source bank";
+                                                    const availableBalance = selectedFromBank.available_balance !== undefined
+                                                        ? selectedFromBank.available_balance
+                                                        : (selectedFromBank.current_balance !== undefined
+                                                            ? selectedFromBank.current_balance
+                                                            : (selectedFromBank.opening_balance || 0));
+                                                    return availableBalance >= parseFloat(formData.amount)
+                                                        ? `✓ Sufficient source bank balance (Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                                                        : `✗ Insufficient source bank balance (Available: ₹${availableBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
+                                                })() : "Please select source bank"}
                                             </div>
                                         )}
 
+                                        {/* Source Bank - Only for bank_to_bank */}
+                                        {conversionType === "bank_to_bank" && (
+                                            <Select
+                                                label="From Bank Account (Source) *"
+                                                value={formData.fromBankId}
+                                                handleChange={(e) => setFormData({ ...formData, fromBankId: e.target.value })}
+                                                options={[
+                                                    { value: "", label: "Select source bank account" },
+                                                    ...groupBanks
+                                                        .filter(bank => (bank._id || bank.id) !== formData.bankId) // Exclude destination bank
+                                                        .map((bank) => {
+                                                            const balance = bank.available_balance !== undefined
+                                                                ? bank.available_balance
+                                                                : (bank.current_balance !== undefined
+                                                                    ? bank.current_balance
+                                                                    : (bank.opening_balance || 0));
+                                                            const balanceFormatted = `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                                            return {
+                                                                value: bank._id,
+                                                                label: `${bank.bank_name} - ${bank.account_no} [Available: ${balanceFormatted}]`,
+                                                            };
+                                                        }),
+                                                ]}
+                                                required
+                                            />
+                                        )}
+
                                         <Select
-                                            label="Select Bank Account *"
+                                            label={conversionType === "bank_to_bank" ? "To Bank Account (Destination) *" : "Select Bank Account *"}
                                             value={formData.bankId}
                                             handleChange={(e) => setFormData({ ...formData, bankId: e.target.value })}
                                             options={[
-                                                { value: "", label: "Select a bank account" },
-                                                ...groupBanks.map((bank) => {
-                                                    // Use available_balance if available, else fallback to current_balance or opening_balance
-                                                    const balance = bank.available_balance !== undefined
-                                                        ? bank.available_balance
-                                                        : (bank.current_balance !== undefined
-                                                            ? bank.current_balance
-                                                            : (bank.opening_balance || 0));
-                                                    const balanceFormatted = `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                                                    return {
-                                                        value: bank._id,
-                                                        label: `${bank.bank_name} - ${bank.account_no} [Available: ${balanceFormatted}]`,
-                                                    };
-                                                }),
+                                                { value: "", label: conversionType === "bank_to_bank" ? "Select destination bank account" : "Select a bank account" },
+                                                ...groupBanks
+                                                    .filter(bank => conversionType === "cash_to_bank" || (bank._id || bank.id) !== formData.fromBankId) // Exclude source bank for bank_to_bank
+                                                    .map((bank) => {
+                                                        // Use available_balance if available, else fallback to current_balance or opening_balance
+                                                        const balance = bank.available_balance !== undefined
+                                                            ? bank.available_balance
+                                                            : (bank.current_balance !== undefined
+                                                                ? bank.current_balance
+                                                                : (bank.opening_balance || 0));
+                                                        const balanceFormatted = `₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                                        return {
+                                                            value: bank._id,
+                                                            label: `${bank.bank_name} - ${bank.account_no} [Available: ${balanceFormatted}]`,
+                                                        };
+                                                    }),
                                             ]}
                                             required
                                         />
@@ -727,20 +912,20 @@ export default function CashToBankConversion() {
                                 >
                                     <div className="grid grid-cols-2 gap-4 mb-4">
                                         <div>
+                                            <p className="text-sm text-gray-600">Conversion Type</p>
+                                            <p className="font-semibold">
+                                                {conversion.conversionType === "bank_to_bank" ? "Bank to Bank" : "Cash to Bank"}
+                                            </p>
+                                        </div>
+                                        <div>
                                             <p className="text-sm text-gray-600">Group</p>
                                             <p className="font-semibold">
                                                 {conversion.groupName} ({conversion.groupCode})
                                             </p>
                                         </div>
-                                        <div>
-                                            <p className="text-sm text-gray-600">Recovery Sessions</p>
-                                            <p className="font-semibold">
-                                                {conversion.recoveryIds?.length || (conversion.recoveryId ? 1 : 0)} session{(conversion.recoveryIds?.length || (conversion.recoveryId ? 1 : 0)) !== 1 ? 's' : ''}
-                                            </p>
-                                        </div>
                                         {conversion.recoveryDate && (
                                             <div>
-                                                <p className="text-sm text-gray-600">Earliest Date</p>
+                                                <p className="text-sm text-gray-600">Recovery Date</p>
                                                 <p className="font-semibold">{formatDate(conversion.recoveryDate)}</p>
                                             </div>
                                         )}
@@ -750,8 +935,18 @@ export default function CashToBankConversion() {
                                                 ₹{conversion.totalCashAmount?.toLocaleString()}
                                             </p>
                                         </div>
+                                        {conversion.conversionType === "bank_to_bank" && conversion.fromBankName && (
+                                            <div>
+                                                <p className="text-sm text-gray-600">From Bank</p>
+                                                <p className="font-semibold">
+                                                    {conversion.fromBankName} - {conversion.fromAccountNumber}
+                                                </p>
+                                            </div>
+                                        )}
                                         <div>
-                                            <p className="text-sm text-gray-600">Bank</p>
+                                            <p className="text-sm text-gray-600">
+                                                {conversion.conversionType === "bank_to_bank" ? "To Bank" : "Bank"}
+                                            </p>
                                             <p className="font-semibold">
                                                 {conversion.bankName} - {conversion.accountNumber}
                                             </p>

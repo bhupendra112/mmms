@@ -191,12 +191,12 @@ export default function LoanTaking() {
         if (selectedMember) {
             setTransactionType("");
             setPaymentMode("");
-                setSelectedBankId("");
-                setPurpose("");
-                setAmount("");
-                setTimePeriod("");
-                setInstallmentAmount("");
-                setBachanPathraPhoto(null);
+            setSelectedBankId("");
+            setPurpose("");
+            setAmount("");
+            setTimePeriod("");
+            setInstallmentAmount("");
+            setBachanPathraPhoto(null);
         }
     }, [selectedMember, allMembers]);
 
@@ -209,7 +209,7 @@ export default function LoanTaking() {
 
     // Filter members - all members can take loans
     const getAvailableMembers = () => {
-            return filteredMembers;
+        return filteredMembers;
     };
 
     // Handle photo upload
@@ -320,12 +320,12 @@ export default function LoanTaking() {
             setSelectedMember(null);
             setTransactionType("");
             setPaymentMode("");
-                setSelectedBankId("");
-                setPurpose("");
-                setAmount("");
-                setTimePeriod("");
-                setInstallmentAmount("");
-                setBachanPathraPhoto(null);
+            setSelectedBankId("");
+            setPurpose("");
+            setAmount("");
+            setTimePeriod("");
+            setInstallmentAmount("");
+            setBachanPathraPhoto(null);
         } catch (error) {
             console.error("Error saving loan:", error);
             alert("Error saving loan transaction");
@@ -471,12 +471,12 @@ export default function LoanTaking() {
                                         setSelectedMember(null);
                                         setTransactionType("");
                                         setPaymentMode("");
-                setSelectedBankId("");
-                setPurpose("");
-                setAmount("");
-                setTimePeriod("");
-                setInstallmentAmount("");
-                setBachanPathraPhoto(null);
+                                        setSelectedBankId("");
+                                        setPurpose("");
+                                        setAmount("");
+                                        setTimePeriod("");
+                                        setInstallmentAmount("");
+                                        setBachanPathraPhoto(null);
                                     }
                                 }}
                                 className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
@@ -490,86 +490,86 @@ export default function LoanTaking() {
                     {/* Loan Form - Member Selection Required */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* Left Sidebar - Member Selection */}
-                                <div className="lg:col-span-1">
-                                    <div className="bg-white rounded-lg shadow-md p-4 mb-4">
-                                        <div className="relative mb-4">
-                                            <Search className="absolute left-3 top-3 text-gray-400" size={20} />
-                                            <input
-                                                type="text"
-                                                placeholder="Search members..."
-                                                value={searchTerm}
-                                                onChange={(e) => setSearchTerm(e.target.value)}
-                                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="bg-white rounded-lg shadow-md overflow-hidden">
-                                        <div className="p-4 bg-gray-50 border-b">
-                                    <h3 className="font-semibold text-gray-800">Select Member *</h3>
-                                        </div>
-                                        <div className="max-h-[600px] overflow-y-auto">
-                                            {getAvailableMembers().length > 0 ? (
-                                                getAvailableMembers().map((member) => (
-                                                    <button
-                                                        key={member.id}
-                                                        onClick={() => setSelectedMember(member)}
-                                                        className={`w-full p-4 border-b text-left transition-colors ${selectedMember?.id === member.id
-                                                            ? "bg-blue-50 border-l-4 border-l-blue-600"
-                                                            : "hover:bg-gray-50"
-                                                            }`}
-                                                    >
-                                                        <div className="flex items-center justify-between">
-                                                            <div>
-                                                                <p className="font-semibold text-gray-800">{member.name}</p>
-                                                                <p className="text-sm text-gray-600">Code: {member.code}</p>
-                                                            </div>
-                                                            <User
-                                                                className={
-                                                                    selectedMember?.id === member.id
-                                                                        ? "text-blue-600"
-                                                                        : "text-gray-400"
-                                                                }
-                                                                size={20}
-                                                            />
-                                                        </div>
-                                                    </button>
-                                                ))
-                                            ) : (
-                                                <div className="p-8 text-center text-gray-500">
-                                                    <p>No members found</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
+                        <div className="lg:col-span-1">
+                            <div className="bg-white rounded-lg shadow-md p-4 mb-4">
+                                <div className="relative mb-4">
+                                    <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+                                    <input
+                                        type="text"
+                                        placeholder="Search members..."
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                    />
                                 </div>
+                            </div>
 
-                            {/* Right Side - Loan Form */}
+                            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+                                <div className="p-4 bg-gray-50 border-b">
+                                    <h3 className="font-semibold text-gray-800">Select Member *</h3>
+                                </div>
+                                <div className="max-h-[600px] overflow-y-auto">
+                                    {getAvailableMembers().length > 0 ? (
+                                        getAvailableMembers().map((member) => (
+                                            <button
+                                                key={member.id}
+                                                onClick={() => setSelectedMember(member)}
+                                                className={`w-full p-4 border-b text-left transition-colors ${selectedMember?.id === member.id
+                                                    ? "bg-blue-50 border-l-4 border-l-blue-600"
+                                                    : "hover:bg-gray-50"
+                                                    }`}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <p className="font-semibold text-gray-800">{member.name}</p>
+                                                        <p className="text-sm text-gray-600">Code: {member.code}</p>
+                                                    </div>
+                                                    <User
+                                                        className={
+                                                            selectedMember?.id === member.id
+                                                                ? "text-blue-600"
+                                                                : "text-gray-400"
+                                                        }
+                                                        size={20}
+                                                    />
+                                                </div>
+                                            </button>
+                                        ))
+                                    ) : (
+                                        <div className="p-8 text-center text-gray-500">
+                                            <p>No members found</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right Side - Loan Form */}
                         <div className="lg:col-span-2">
                             {selectedMember ? (
-                                    <div className="bg-white rounded-lg shadow-md p-6">
-                                            <div className="flex items-center justify-between mb-4">
-                                                <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
-                                                    <User size={24} className="text-blue-600" />
-                                                    {selectedMember.name} ({selectedMember.code})
-                                                </h2>
-                                                <button
-                                                    onClick={() => {
-                                                        setSelectedMember(null);
-                                                        setTransactionType("");
-                                                        setPaymentMode("");
-                setSelectedBankId("");
-                setPurpose("");
-                setAmount("");
-                setTimePeriod("");
-                setInstallmentAmount("");
-                setBachanPathraPhoto(null);
-                                                    }}
-                                                    className="text-sm text-gray-600 hover:text-gray-800"
-                                                >
-                                                    Change Member
-                                                </button>
-                                            </div>
+                                <div className="bg-white rounded-lg shadow-md p-6">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                                            <User size={24} className="text-blue-600" />
+                                            {selectedMember.name} ({selectedMember.code})
+                                        </h2>
+                                        <button
+                                            onClick={() => {
+                                                setSelectedMember(null);
+                                                setTransactionType("");
+                                                setPaymentMode("");
+                                                setSelectedBankId("");
+                                                setPurpose("");
+                                                setAmount("");
+                                                setTimePeriod("");
+                                                setInstallmentAmount("");
+                                                setBachanPathraPhoto(null);
+                                            }}
+                                            className="text-sm text-gray-600 hover:text-gray-800"
+                                        >
+                                            Change Member
+                                        </button>
+                                    </div>
 
                                     {/* Balance Display */}
                                     <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
@@ -620,39 +620,39 @@ export default function LoanTaking() {
                                                     {!selectedBankId && (
                                                         <span className="text-xs text-gray-500">Select a bank to see balance</span>
                                                     )}
-                                            </div>
-                                        )}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
                                     {/* Payment Mode */}
+                                    <div className="mb-6">
+                                        <Select
+                                            label="Payment Mode *"
+                                            name="paymentMode"
+                                            value={paymentMode}
+                                            handleChange={(e) => {
+                                                const newMode = e.target.value;
+                                                setPaymentMode(newMode);
+                                                // Clear bank selection if switching to Cash
+                                                if (newMode === "Cash") {
+                                                    setSelectedBankId("");
+                                                }
+                                            }}
+                                            options={["Cash", "Bank"]}
+                                            required
+                                        />
+                                    </div>
+
+                                    {/* Bank Selection - Show only when payment mode is "Bank" */}
+                                    {paymentMode === "Bank" && (
                                         <div className="mb-6">
                                             <Select
-                                                label="Payment Mode *"
-                                                name="paymentMode"
-                                                value={paymentMode}
-                                                handleChange={(e) => {
-                                                    const newMode = e.target.value;
-                                                    setPaymentMode(newMode);
-                                                    // Clear bank selection if switching to Cash
-                                                    if (newMode === "Cash") {
-                                                        setSelectedBankId("");
-                                                    }
-                                                }}
-                                                options={["Cash", "Bank"]}
-                                                required
-                                            />
-                                        </div>
-
-                                        {/* Bank Selection - Show only when payment mode is "Bank" */}
-                                        {paymentMode === "Bank" && (
-                                            <div className="mb-6">
-                                                <Select
-                                                    label="Select Bank *"
-                                                    name="selectedBankId"
-                                                    value={selectedBankId}
-                                                    handleChange={(e) => setSelectedBankId(e.target.value)}
-                                                    options={groupBanks.length > 0 
+                                                label="Select Bank *"
+                                                name="selectedBankId"
+                                                value={selectedBankId}
+                                                handleChange={(e) => setSelectedBankId(e.target.value)}
+                                                options={groupBanks.length > 0
                                                     ? groupBanks.map((bank) => {
                                                         // Use available_balance if available, else fallback to current_balance or opening_balance
                                                         const balance = bank.available_balance !== undefined
@@ -666,44 +666,44 @@ export default function LoanTaking() {
                                                             label: `${bank.bank_name} - ${bank.account_no}${bank.short_name ? ` (${bank.short_name})` : ""} [Available: ${balanceFormatted}]`
                                                         };
                                                     })
-                                                        : [{ value: "", label: "No banks available" }]
-                                                    }
-                                                    required
-                                                />
-                                                {groupBanks.length === 0 && (
-                                                    <p className="text-sm text-red-600 mt-1">
-                                                        No banks found for this group. Please add a bank account first.
-                                                    </p>
-                                                )}
-                                            </div>
-                                        )}
+                                                    : [{ value: "", label: "No banks available" }]
+                                                }
+                                                required
+                                            />
+                                            {groupBanks.length === 0 && (
+                                                <p className="text-sm text-red-600 mt-1">
+                                                    No banks found for this group. Please add a bank account first.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
 
-                                        {/* Purpose */}
-                                        {paymentMode && (
-                                            <div className="mb-6">
-                                                <Input
-                                                    label="Purpose *"
-                                                    name="purpose"
-                                                    value={purpose}
-                                                    handleChange={(e) => setPurpose(e.target.value)}
+                                    {/* Purpose */}
+                                    {paymentMode && (
+                                        <div className="mb-6">
+                                            <Input
+                                                label="Purpose *"
+                                                name="purpose"
+                                                value={purpose}
+                                                handleChange={(e) => setPurpose(e.target.value)}
                                                 placeholder="Enter purpose of loan"
-                                                    required
-                                                />
-                                            </div>
-                                        )}
+                                                required
+                                            />
+                                        </div>
+                                    )}
 
-                                        {/* Amount */}
-                                        {purpose && (
-                                            <div className="mb-6">
-                                                <Input
+                                    {/* Amount */}
+                                    {purpose && (
+                                        <div className="mb-6">
+                                            <Input
                                                 label="Loan Amount (₹) *"
-                                                    name="amount"
-                                                    type="number"
-                                                    value={amount}
-                                                    handleChange={(e) => setAmount(e.target.value)}
+                                                name="amount"
+                                                type="number"
+                                                value={amount}
+                                                handleChange={(e) => setAmount(e.target.value)}
                                                 placeholder="Enter loan amount"
-                                                    required
-                                                />
+                                                required
+                                            />
                                             {amount && parseFloat(amount) > 0 && (
                                                 <div className="mt-2">
                                                     {paymentMode === "Bank" && selectedBankId && (() => {
@@ -741,131 +741,131 @@ export default function LoanTaking() {
                                                     )}
                                                 </div>
                                             )}
-                                            </div>
-                                        )}
+                                        </div>
+                                    )}
 
                                     {/* Time Period - Required for member loans */}
                                     {amount && (
-                                            <div className="mb-6">
-                                                <Input
+                                        <div className="mb-6">
+                                            <Input
                                                 label="Time Period (Years) *"
-                                                    name="timePeriod"
-                                                    type="number"
-                                                    value={timePeriod}
-                                                    handleChange={(e) => setTimePeriod(e.target.value)}
+                                                name="timePeriod"
+                                                type="number"
+                                                value={timePeriod}
+                                                handleChange={(e) => setTimePeriod(e.target.value)}
                                                 placeholder="Enter loan duration in years"
                                                 min="0.1"
                                                 step="0.1"
                                                 required
-                                                />
-                                            </div>
-                                        )}
+                                            />
+                                        </div>
+                                    )}
 
                                     {/* Installment Amount - Auto-calculated */}
                                     {timePeriod && amount && (
-                                            <div className="mb-6">
-                                                <div className="mb-2">
-                                                    <label className="block text-sm font-semibold text-gray-700">
-                                                        Installment Amount Per Month (Auto-calculated)
-                                                    </label>
-                                                    <p className="text-xs text-gray-500 mt-1">
-                                                    Calculated: ₹{parseFloat(amount || 0).toLocaleString('en-IN')} ÷ {parseFloat(timePeriod || 0) * 12} months ({timePeriod} {parseFloat(timePeriod) === 1 ? 'year' : 'years'}) = ₹{installmentAmount || "0.00"}
-                                                    </p>
-                                                </div>
-                                                <Input
-                                                    label=""
-                                                    name="installmentAmount"
-                                                    type="number"
-                                                    value={installmentAmount}
-                                                    handleChange={(e) => setInstallmentAmount(e.target.value)}
-                                                    placeholder="Auto-calculated monthly installment"
-                                                    min="0"
-                                                    step="0.01"
-                                                />
+                                        <div className="mb-6">
+                                            <div className="mb-2">
+                                                <label className="block text-sm font-semibold text-gray-700">
+                                                    Installment Amount Per Month (Auto-calculated)
+                                                </label>
                                                 <p className="text-xs text-gray-500 mt-1">
-                                                    You can manually adjust if needed
+                                                    Calculated: ₹{parseFloat(amount || 0).toLocaleString('en-IN')} ÷ {parseFloat(timePeriod || 0) * 12} months ({timePeriod} {parseFloat(timePeriod) === 1 ? 'year' : 'years'}) = ₹{installmentAmount || "0.00"}
                                                 </p>
                                             </div>
-                                        )}
+                                            <Input
+                                                label=""
+                                                name="installmentAmount"
+                                                type="number"
+                                                value={installmentAmount}
+                                                handleChange={(e) => setInstallmentAmount(e.target.value)}
+                                                placeholder="Auto-calculated monthly installment"
+                                                min="0"
+                                                step="0.01"
+                                            />
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                You can manually adjust if needed
+                                            </p>
+                                        </div>
+                                    )}
 
                                     {/* Bachan Pathra Photo */}
                                     {amount && timePeriod && (
-                                            <div className="mb-6">
-                                                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                                    Bachan Pathra Photo (Optional)
-                                                </label>
-                                                <div className="flex flex-col items-center gap-4">
-                                                    {bachanPathraPhoto ? (
-                                                        <div className="relative">
-                                                            <img
-                                                                src={bachanPathraPhoto}
-                                                                alt="Bachan Pathra"
-                                                                className="max-w-full h-auto rounded-lg border-2 border-gray-300"
-                                                            />
-                                                            <button
-                                                                onClick={() => setBachanPathraPhoto(null)}
-                                                                className="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full hover:bg-red-700"
-                                                            >
-                                                                <XCircle size={20} />
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <label className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer">
-                                                            <Camera size={48} className="text-gray-400" />
-                                                            <span className="font-medium text-gray-700">Click to Upload Photo</span>
-                                                            <input
-                                                                type="file"
-                                                                accept="image/*"
-                                                                onChange={handlePhotoUpload}
-                                                                className="hidden"
-                                                            />
-                                                        </label>
-                                                    )}
-                                                </div>
+                                        <div className="mb-6">
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                Bachan Pathra Photo (Optional)
+                                            </label>
+                                            <div className="flex flex-col items-center gap-4">
+                                                {bachanPathraPhoto ? (
+                                                    <div className="relative">
+                                                        <img
+                                                            src={bachanPathraPhoto}
+                                                            alt="Bachan Pathra"
+                                                            className="max-w-full h-auto rounded-lg border-2 border-gray-300"
+                                                        />
+                                                        <button
+                                                            onClick={() => setBachanPathraPhoto(null)}
+                                                            className="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full hover:bg-red-700"
+                                                        >
+                                                            <XCircle size={20} />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <label className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer">
+                                                        <Camera size={48} className="text-gray-400" />
+                                                        <span className="font-medium text-gray-700">Click to Upload Photo</span>
+                                                        <input
+                                                            type="file"
+                                                            accept="image/*"
+                                                            onChange={handlePhotoUpload}
+                                                            className="hidden"
+                                                        />
+                                                    </label>
+                                                )}
                                             </div>
+                                        </div>
                                     )}
 
-                                        {/* Submit Button */}
+                                    {/* Submit Button */}
                                     {amount && timePeriod && (
-                                            <div className="flex justify-end gap-4">
-                                                <button
-                                                    onClick={() => {
-                                                        setSelectedMember(null);
-                                                        setTransactionType("");
-                                                        setPaymentMode("");
-                setSelectedBankId("");
-                setPurpose("");
-                setAmount("");
-                setTimePeriod("");
-                setInstallmentAmount("");
-                setBachanPathraPhoto(null);
-                                                    }}
-                                                    className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
-                                                >
-                                                    Cancel
-                                                </button>
-                                                <button
-                                                    onClick={handleSubmit}
-                                                    className="px-8 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md"
-                                                >
+                                        <div className="flex justify-end gap-4">
+                                            <button
+                                                onClick={() => {
+                                                    setSelectedMember(null);
+                                                    setTransactionType("");
+                                                    setPaymentMode("");
+                                                    setSelectedBankId("");
+                                                    setPurpose("");
+                                                    setAmount("");
+                                                    setTimePeriod("");
+                                                    setInstallmentAmount("");
+                                                    setBachanPathraPhoto(null);
+                                                }}
+                                                className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                onClick={handleSubmit}
+                                                className="px-8 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md"
+                                            >
                                                 Submit Loan
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="bg-white rounded-lg shadow-md p-12 text-center">
-                                        <User size={64} className="mx-auto mb-4 text-gray-400" />
-                                        <p className="text-gray-600 text-lg">
-                                            Please select a member to process loan transaction
-                                        </p>
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="bg-white rounded-lg shadow-md p-12 text-center">
+                                    <User size={64} className="mx-auto mb-4 text-gray-400" />
+                                    <p className="text-gray-600 text-lg">
+                                        Please select a member to process loan transaction
+                                    </p>
                                     <p className="text-gray-500 text-sm mt-2">
                                         Only members can take loans. Group expenses should be handled in the Expense section.
                                     </p>
-                                    </div>
-                                )}
-                            </div>
+                                </div>
+                            )}
                         </div>
+                    </div>
                 </div>
             )}
         </div>

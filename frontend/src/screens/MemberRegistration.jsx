@@ -5,7 +5,7 @@ import { Input, Select, TextArea, FormSection, FileInput } from "../components/f
 import { createApprovalRequest } from "../services/approvalDB";
 import { useGroup } from "../contexts/GroupContext";
 import { getGroups, getGroupDetail } from "../services/groupService";
-import { registerMember as registerMemberApi } from "../services/memberService";
+import { registerMember as registerMemberApi, getAutoMemberCode } from "../services/memberService";
 
 export default function MemberRegistration() {
   const { currentGroup, isGroupPanel, isGroupLoading } = useGroup();
@@ -16,6 +16,7 @@ export default function MemberRegistration() {
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [selectedClusterKey, setSelectedClusterKey] = useState("");
+  const [autoCodeLoading, setAutoCodeLoading] = useState(false);
   const [form, setForm] = useState({
     Member_Id: "",
     Member_Nm: "",
@@ -301,6 +302,27 @@ export default function MemberRegistration() {
     }));
   };
 
+  const handleAutoGenerateMemberCode = async () => {
+    const groupId = form.group_id;
+    if (!groupId) {
+      return;
+    }
+    setAutoCodeLoading(true);
+    try {
+      const res = await getAutoMemberCode(groupId);
+      const code = res?.data?.memberCode;
+      if (code) {
+        setForm((prev) => ({ ...prev, Member_Id: code }));
+      }
+    } catch (err) {
+      console.error("Auto-generate member code failed:", err);
+      const msg = err?.response?.data?.message || err?.message || "Failed to generate member code.";
+      alert(msg);
+    } finally {
+      setAutoCodeLoading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -553,13 +575,28 @@ export default function MemberRegistration() {
 
         {/* Basic Member Information */}
         <FormSection title="Basic Member Information" icon={User}>
-          <Input
-            label="Member ID"
-            name="Member_Id"
-            value={form.Member_Id}
-            handleChange={handleChange}
-            placeholder="Auto-generated or enter manually"
-          />
+          <div className="flex flex-col">
+            <label className="font-semibold mb-1.5 text-gray-700 text-sm">Member ID</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                name="Member_Id"
+                value={form.Member_Id || ""}
+                onChange={handleChange}
+                placeholder="Enter manually or use Auto generate"
+                className="flex-1 min-w-0 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
+              />
+              <button
+                type="button"
+                onClick={handleAutoGenerateMemberCode}
+                disabled={!form.group_id || autoCodeLoading}
+                className="shrink-0 px-4 py-2.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600 transition-colors"
+              >
+                {autoCodeLoading ? "..." : "Auto generate"}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Select a group first, then generate or type manually.</p>
+          </div>
           <Input
             label="Member Name"
             name="Member_Nm"

@@ -10,9 +10,8 @@ export default function LoginGroup() {
     const dispatch = useDispatch();
     const isAuthenticated = useSelector(selectIsGroupAuthenticated);
     const [form, setForm] = useState({
-        groupName: "",
-        groupIdOrCode: "",
-        isCode: false, // false = ID, true = Code
+        groupCode: "",
+        place: "",
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
@@ -40,9 +39,8 @@ export default function LoginGroup() {
 
         try {
             const response = await loginGroup(
-                form.groupName.trim(),
-                form.groupIdOrCode.trim(),
-                form.isCode
+                form.groupCode.trim(),
+                form.place.trim()
             );
 
             if (response.success && response.data) {
@@ -58,7 +56,7 @@ export default function LoginGroup() {
                 setError(response.message || "Login failed");
             }
         } catch (err) {
-            setError(err.message || "Invalid group name or ID/Code");
+            setError(err.message || "Invalid group code or place");
         } finally {
             setLoading(false);
         }
@@ -74,7 +72,7 @@ export default function LoginGroup() {
                         </div>
                     </div>
                     <h1 className="text-3xl font-bold text-gray-800 mb-2">Group Login</h1>
-                    <p className="text-gray-600">Enter your group name and ID/Code to access</p>
+                    <p className="text-gray-600">Enter your group code and place name to access</p>
                 </div>
 
                 {error && (
@@ -87,46 +85,32 @@ export default function LoginGroup() {
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-2">
-                            Group Name *
+                            Group Code *
                         </label>
                         <input
                             type="text"
-                            name="groupName"
-                            value={form.groupName}
+                            name="groupCode"
+                            value={form.groupCode}
                             onChange={handleChange}
                             required
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            placeholder="Enter group name"
+                            placeholder="Enter group code"
                         />
                     </div>
 
                     <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-2">
-                            Group ID or Code *
+                            Place Name *
                         </label>
                         <input
                             type="text"
-                            name="groupIdOrCode"
-                            value={form.groupIdOrCode}
+                            name="place"
+                            value={form.place}
                             onChange={handleChange}
                             required
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            placeholder="Enter group ID or code"
+                            placeholder="Enter place name"
                         />
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="checkbox"
-                            name="isCode"
-                            checked={form.isCode}
-                            onChange={handleChange}
-                            id="isCode"
-                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
-                        <label htmlFor="isCode" className="text-sm text-gray-700">
-                            I'm entering a Group Code (not ID)
-                        </label>
                     </div>
 
                     <button

@@ -497,6 +497,36 @@ export const listMembersByGroup = async (req, res) => {
     }
 };
 
+/**
+ * GET /api/admin/member/auto-member-code?group_id=...
+ * Returns next suggested member code (e.g. M001, M002) for the given group.
+ * Requires group_id. Uses count of existing members + 1, zero-padded to 3 digits.
+ */
+export const getAutoMemberCode = async (req, res) => {
+    try {
+        const groupId = req.query?.group_id;
+        if (!groupId) {
+            return apiResponse.error(res, "group_id is required", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+        }
+        const groupDetail = await GroupMaster.findById(groupId).select("group_code cluster_code").lean();
+        const groupCode = groupDetail?.group_code || "";
+        const cluster_code = groupDetail?.cluster_code || "";
+        const count = await Member.countDocuments({ group: groupId });
+        const next = count + 1;
+        const memberCode = cluster_code + groupCode + String(next).padStart(3, "0");
+
+        return apiResponse.success(res, "Auto member code generated", { memberCode });
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to generate member code", 500);
+    }
+};
+
 export const listMembers = async (req, res) => {
     try {
         const { group_id } = req.query;

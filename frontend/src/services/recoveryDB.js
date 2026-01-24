@@ -1,5 +1,6 @@
 import { createRxDatabase } from 'rxdb';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import Dexie from 'dexie'; // Use the same Dexie instance
 
 let recoveryDB = null;
 
@@ -130,7 +131,7 @@ export async function initRecoveryDB() {
     try {
         // Remove existing database if it exists (to fix schema issues)
         try {
-            const Dexie = (await import('dexie')).default;
+            // Use the imported Dexie instance instead of dynamic import
             await Dexie.delete('recoverydb');
         } catch (deleteError) {
             // Ignore errors if database doesn't exist

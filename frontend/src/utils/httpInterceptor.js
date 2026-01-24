@@ -12,8 +12,10 @@ export const createErrorInterceptor = (isAdmin = true) => {
         if (status === 401) {
             // Auto-detect if we're in group context based on current route
             const isGroupRoute = window.location.pathname.startsWith("/group");
-            const useGroupAuth = !isAdmin || isGroupRoute;
-            
+            // Also check if group token exists (more reliable than just route)
+            const hasGroupToken = !!localStorage.getItem("groupToken");
+            const useGroupAuth = isGroupRoute || (hasGroupToken && !isAdmin);
+
             // Clear tokens
             if (useGroupAuth) {
                 // For group authentication, clear group tokens

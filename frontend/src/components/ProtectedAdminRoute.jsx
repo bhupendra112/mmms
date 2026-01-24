@@ -1,16 +1,9 @@
 import { Navigate } from "react-router-dom";
-import { useAdmin } from "../contexts/AdminContext";
+import { useSelector } from "react-redux";
+import { selectIsAuthenticated } from "../store/authSlice";
 
 export default function ProtectedAdminRoute({ children }) {
-  const { isAuthenticated, isLoading } = useAdmin();
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-gray-600">Loading...</div>
-      </div>
-    );
-  }
+  const isAuthenticated = useSelector(selectIsAuthenticated);
 
   if (!isAuthenticated) {
     return <Navigate to="/login-admin" replace />;

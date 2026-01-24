@@ -601,7 +601,7 @@ export const updateBankDetail = async (req, res) => {
 export const addGroupCharge = async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { name, amount, type, startDate, frequency, isActive } = req.body;
+        const { name, amount, type, startDate, frequency, isActive, entryType } = req.body;
 
         if (!groupId) {
             return apiResponse.error(res, "groupId is required", 400);
@@ -623,6 +623,13 @@ export const addGroupCharge = async (req, res) => {
             return apiResponse.error(res, "frequency must be 'yearly' or 'monthly' for recurring charges", 400);
         }
 
+        // Validate entryType - must be in allowed enum values, default to "expense" if not provided
+        const allowedEntryTypes = ["income", "expense", "assets", "liability"];
+        const chargeEntryType = entryType || "expense";
+        if (!allowedEntryTypes.includes(chargeEntryType)) {
+            return apiResponse.error(res, `entryType must be one of: ${allowedEntryTypes.join(", ")}`, 400);
+        }
+
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
 
@@ -641,6 +648,7 @@ export const addGroupCharge = async (req, res) => {
             startDate: new Date(startDate),
             frequency: type === "recurring" ? frequency : undefined,
             isActive: isActive !== undefined ? isActive : true,
+            entryType: chargeEntryType,
             createdAt: new Date(),
             updatedAt: new Date()
         };
@@ -662,7 +670,7 @@ export const addGroupCharge = async (req, res) => {
 export const updateGroupCharge = async (req, res) => {
     try {
         const { groupId, chargeId } = req.params;
-        const { name, amount, type, startDate, frequency, isActive } = req.body;
+        const { name, amount, type, startDate, frequency, isActive, entryType } = req.body;
 
         if (!groupId || !chargeId) {
             return apiResponse.error(res, "groupId and chargeId are required", 400);
@@ -707,6 +715,16 @@ export const updateGroupCharge = async (req, res) => {
             charge.frequency = charge.type === "recurring" ? frequency : undefined;
         }
         if (isActive !== undefined) charge.isActive = isActive;
+
+        // Validate and update entryType if provided
+        if (entryType !== undefined) {
+            const allowedEntryTypes = ["income", "expense", "assets", "liability"];
+            if (!allowedEntryTypes.includes(entryType)) {
+                return apiResponse.error(res, `entryType must be one of: ${allowedEntryTypes.join(", ")}`, 400);
+            }
+            charge.entryType = entryType;
+        }
+
         charge.updatedAt = new Date();
 
         await group.save();
@@ -759,6 +777,7 @@ export const deleteGroupCharge = async (req, res) => {
 export const getGroupCharges = async (req, res) => {
     try {
         const { groupId } = req.params;
+        const { entryType } = req.query;
 
         if (!groupId) {
             return apiResponse.error(res, "groupId is required", 400);
@@ -775,7 +794,12 @@ export const getGroupCharges = async (req, res) => {
 
         const group = await GroupMaster.findById(groupId).select("charges");
 
-        const charges = group.charges || [];
+        let charges = group.charges || [];
+
+        // Filter by entryType if provided
+        if (entryType) {
+            charges = charges.filter(charge => charge.entryType === entryType);
+        }
 
         return apiResponse.success(res, "Charges fetched successfully", charges);
     } catch (error) {

@@ -9,6 +9,14 @@ const CashToBankConversionSchema = new mongoose.Schema({
     groupName: { type: String, required: true },
     groupCode: { type: String },
 
+    // Conversion type
+    conversionType: {
+        type: String,
+        enum: ["cash_to_bank", "bank_to_bank"],
+        required: true,
+        default: "cash_to_bank", // Default for backward compatibility
+    },
+
     // Recovery session references (can be multiple for bulk conversion)
     recoveryIds: [{
         type: mongoose.Schema.Types.ObjectId,
@@ -23,14 +31,29 @@ const CashToBankConversionSchema = new mongoose.Schema({
     recoveryDate: { type: Date }, // Optional for bulk conversions
 
     // Conversion details
-    totalCashAmount: { type: Number, required: true }, // Total cash amount to convert
+    totalCashAmount: { type: Number, required: true }, // Total amount to convert
+    // Destination bank (for both cash_to_bank and bank_to_bank)
     bankId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "BankMaster",
-        required: true,
+        required: function() {
+            return this.conversionType === "cash_to_bank" || this.conversionType === "bank_to_bank";
+        },
     },
-    bankName: { type: String, required: true },
+    bankName: { type: String, required: function() {
+        return this.conversionType === "cash_to_bank" || this.conversionType === "bank_to_bank";
+    }},
     accountNumber: { type: String },
+    // Source bank (for bank_to_bank only)
+    fromBankId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "BankMaster",
+        required: function() {
+            return this.conversionType === "bank_to_bank";
+        },
+    },
+    fromBankName: { type: String },
+    fromAccountNumber: { type: String },
     paymentImage: { type: String }, // Path to uploaded image
     onlineRef: { type: String }, // Optional reference number
 

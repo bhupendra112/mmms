@@ -86,7 +86,8 @@ export default function GroupManagement() {
         type: "one-time",
         startDate: "",
         frequency: "yearly",
-        isActive: true
+        isActive: true,
+        entryType: "expense"
     });
     const [showEditMemberModal, setShowEditMemberModal] = useState(false);
     const [editingMember, setEditingMember] = useState(null);
@@ -529,7 +530,8 @@ export default function GroupManagement() {
             type: "one-time",
             startDate: "",
             frequency: "yearly",
-            isActive: true
+            isActive: true,
+            entryType: "expense"
         });
         setShowChargeModal(true);
     };
@@ -542,7 +544,8 @@ export default function GroupManagement() {
             type: charge.type || "one-time",
             startDate: charge.startDate ? new Date(charge.startDate).toISOString().split('T')[0] : "",
             frequency: charge.frequency || "yearly",
-            isActive: charge.isActive !== false
+            isActive: charge.isActive !== false,
+            entryType: charge.entryType || "expense"
         });
         setShowChargeModal(true);
     };
@@ -748,19 +751,19 @@ export default function GroupManagement() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto">
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-                    <Building2 size={32} />
-                    Group Management Dashboard
+        <div className="w-full">
+            <div className="mb-4 md:mb-6">
+                <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-800 flex items-center gap-2 md:gap-3">
+                    <Building2 size={24} className="shrink-0" />
+                    <span>Group Management Dashboard</span>
                 </h1>
-                <p className="text-gray-600 mt-2">Manage all village samooh groups, members, bank details, and finance</p>
+                <p className="text-sm md:text-base text-gray-600 mt-1 md:mt-2">Manage all village samooh groups, members, bank details, and finance</p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
                 {/* Left Sidebar - Groups List */}
                 <div className="lg:col-span-1">
-                    <div className="bg-white rounded-lg shadow-md p-4 mb-4">
+                    <div className="bg-white rounded-xl shadow-sm p-3 md:p-4 mb-3 md:mb-4">
                         <select
                             value={selectedClusterKey}
                             onChange={(e) => {
@@ -769,7 +772,7 @@ export default function GroupManagement() {
                                 setSelectedGroupData(null);
                                 setSelectedGroupRaw(null);
                             }}
-                            className="w-full mb-4 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                            className="w-full mb-3 md:mb-4 px-3 md:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                         >
                             <option value="">Select Cluster</option>
                             {clusterOptions.map((c) => (
@@ -778,32 +781,32 @@ export default function GroupManagement() {
                                 </option>
                             ))}
                         </select>
-                        <div className="relative mb-4">
-                            <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+                        <div className="relative mb-3 md:mb-4">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                             <input
                                 type="text"
                                 placeholder="Search groups..."
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
-                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                className="w-full pl-9 md:pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                             />
                         </div>
                         <Link
                             to="/admin/create-group"
-                            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm"
+                            className="w-full flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm"
                         >
                             <Plus size={18} />
-                            Create New Group
+                            <span>Create New Group</span>
                         </Link>
                     </div>
 
-                    <div className="bg-white rounded-lg shadow-md overflow-hidden">
-                        <div className="p-4 bg-gray-50 border-b">
-                            <h3 className="font-semibold text-gray-800">
+                    <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                        <div className="p-3 md:p-4 bg-gray-50 border-b">
+                            <h3 className="text-sm md:text-base font-semibold text-gray-800">
                                 {groupsLoading ? "Loading groups..." : `All Groups (${filteredGroups.length})`}
                             </h3>
                         </div>
-                        <div className="max-h-[600px] overflow-y-auto">
+                        <div className="max-h-[400px] md:max-h-[600px] overflow-y-auto">
                             {!selectedClusterKey ? (
                                 <div className="p-4 text-center text-gray-500">
                                     Please select a cluster to view groups.
@@ -822,26 +825,26 @@ export default function GroupManagement() {
                                             calculateFinance(group.id);
                                             loadGroupCharges(group.id);
                                         }}
-                                        className={`p-4 border-b cursor-pointer transition-colors ${selectedGroup === group.id
+                                        className={`p-3 md:p-4 border-b cursor-pointer transition-colors ${selectedGroup === group.id
                                             ? "bg-blue-50 border-l-4 border-l-blue-600"
                                             : "hover:bg-gray-50"
                                             }`}
                                     >
-                                        <div className="flex items-start justify-between">
-                                            <div className="flex-1">
-                                                <p className="font-semibold text-gray-800">{group.name}</p>
-                                                <p className="text-sm text-gray-600">Code: {group.code}</p>
-                                                <p className="text-sm text-gray-500">{group.village}</p>
-                                                <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-semibold text-sm md:text-base text-gray-800 truncate">{group.name}</p>
+                                                <p className="text-xs md:text-sm text-gray-600">Code: {group.code}</p>
+                                                <p className="text-xs md:text-sm text-gray-500 truncate">{group.village}</p>
+                                                <div className="flex items-center gap-2 md:gap-4 mt-1 md:mt-2 text-xs text-gray-500">
                                                     <span className="flex items-center gap-1">
-                                                        <Users size={14} />
+                                                        <Users size={12} />
                                                         {group.noMembers} members
                                                     </span>
                                                 </div>
                                             </div>
                                             <Building2
-                                                className={selectedGroup === group.id ? "text-blue-600" : "text-gray-400"}
-                                                size={20}
+                                                className={`${selectedGroup === group.id ? "text-blue-600" : "text-gray-400"} shrink-0`}
+                                                size={18}
                                             />
                                         </div>
                                     </div>
@@ -856,61 +859,65 @@ export default function GroupManagement() {
                     {selectedGroupData ? (
                         <div className="space-y-6">
                             {/* Group Header */}
-                            <div className="bg-white rounded-lg shadow-md p-6">
-                                <div className="flex items-start justify-between mb-4">
-                                    <div>
-                                        <h2 className="text-2xl font-bold text-gray-800">{selectedGroupData.name}</h2>
-                                        <p className="text-gray-600">Code: {selectedGroupData.code} | Village: {selectedGroupData.village}</p>
+                            <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4 mb-4">
+                                    <div className="flex-1 min-w-0">
+                                        <h2 className="text-xl md:text-2xl font-bold text-gray-800 break-words">{selectedGroupData.name}</h2>
+                                        <p className="text-sm md:text-base text-gray-600 mt-1 break-words">Code: {selectedGroupData.code} | Village: {selectedGroupData.village}</p>
                                     </div>
                                     <button
                                         onClick={handleEditGroup}
-                                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                        className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm shrink-0"
                                     >
                                         <Edit size={16} />
-                                        Edit Group
+                                        <span className="hidden sm:inline">Edit Group</span>
+                                        <span className="sm:hidden">Edit</span>
                                     </button>
                                 </div>
                                 {detailLoading && (
                                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                                        <p className="text-blue-700 text-sm font-medium">Refreshing group details…</p>
+                                        <p className="text-blue-700 text-xs md:text-sm font-medium">Refreshing group details…</p>
                                     </div>
                                 )}
 
                                 {/* Tabs */}
-                                <div className="flex gap-2 border-b">
-                                    {[
-                                        { id: "overview", label: "Overview", icon: Eye },
-                                        { id: "members", label: "Members", icon: Users },
-                                        { id: "bank", label: "Bank Details", icon: Banknote },
-                                        { id: "cash", label: "Cash Details", icon: Wallet },
-                                        { id: "finance", label: "Finance", icon: DollarSign },
-                                        { id: "charges", label: "Charges", icon: CreditCard },
-                                        { id: "recovery-details", label: "Recovery Details", icon: Receipt },
-                                    ].map((tab) => {
-                                        const Icon = tab.icon;
-                                        return (
-                                            <button
-                                                key={tab.id}
-                                                onClick={() => setActiveTab(tab.id)}
-                                                className={`flex items-center gap-2 px-4 py-2 font-medium text-sm transition-colors ${activeTab === tab.id
-                                                    ? "text-blue-600 border-b-2 border-blue-600"
-                                                    : "text-gray-600 hover:text-gray-800"
-                                                    }`}
-                                            >
-                                                <Icon size={18} />
-                                                {tab.label}
-                                            </button>
-                                        );
-                                    })}
+                                <div className="w-full overflow-x-auto -mx-4 md:mx-0 px-4 md:px-0">
+                                    <div className="flex gap-1 md:gap-2 border-b min-w-max md:min-w-0">
+                                        {[
+                                            { id: "overview", label: "Overview", icon: Eye },
+                                            { id: "members", label: "Members", icon: Users },
+                                            { id: "bank", label: "Bank Details", icon: Banknote },
+                                            { id: "cash", label: "Cash Details", icon: Wallet },
+                                            { id: "finance", label: "Finance", icon: DollarSign },
+                                            { id: "charges", label: "Charges", icon: CreditCard },
+                                            { id: "recovery-details", label: "Recovery Details", icon: Receipt },
+                                        ].map((tab) => {
+                                            const Icon = tab.icon;
+                                            return (
+                                                <button
+                                                    key={tab.id}
+                                                    onClick={() => setActiveTab(tab.id)}
+                                                    className={`flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 font-medium text-xs md:text-sm transition-colors whitespace-nowrap shrink-0 ${activeTab === tab.id
+                                                        ? "text-blue-600 border-b-2 border-blue-600"
+                                                        : "text-gray-600 hover:text-gray-800"
+                                                        }`}
+                                                >
+                                                    <Icon size={16} className="shrink-0" />
+                                                    <span className="hidden sm:inline">{tab.label}</span>
+                                                    <span className="sm:hidden">{tab.label.split(' ')[0]}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
 
                             {/* Tab Content */}
                             {activeTab === "overview" && selectedGroupRaw && (
-                                <div className="space-y-6">
+                                <div className="space-y-4 md:space-y-6">
                                     {/* Basic Group Information */}
-                                    <div className="bg-white rounded-lg shadow-md p-6">
-                                        <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Basic Group Information</h3>
+                                    <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800 mb-3 md:mb-4 pb-2 md:pb-3 border-b">Basic Group Information</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <div className="p-4 bg-gray-50 rounded-lg">
                                                 <p className="text-sm text-gray-600 mb-1">Group Name</p>
@@ -936,8 +943,8 @@ export default function GroupManagement() {
                                     </div>
 
                                     {/* Formation & Meeting Details */}
-                                    <div className="bg-white rounded-lg shadow-md p-6">
-                                        <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Formation & Meeting Details</h3>
+                                    <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800 mb-3 md:mb-4 pb-2 md:pb-3 border-b">Formation & Meeting Details</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             {selectedGroupRaw.formation_date && (
                                                 <div className="p-4 bg-gray-50 rounded-lg">
@@ -970,8 +977,8 @@ export default function GroupManagement() {
 
                                     {/* Office Bearers */}
                                     {selectedGroupRaw.mitan_name && (
-                                        <div className="bg-white rounded-lg shadow-md p-6">
-                                            <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Office Bearers</h3>
+                                        <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                            <h3 className="text-lg md:text-xl font-semibold text-gray-800 mb-3 md:mb-4 pb-2 md:pb-3 border-b">Office Bearers</h3>
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div className="p-4 bg-gray-50 rounded-lg">
                                                     <p className="text-sm text-gray-600 mb-1">Mitan Name</p>
@@ -983,8 +990,8 @@ export default function GroupManagement() {
 
                                     {/* Financial Information */}
                                     {(selectedGroupRaw.saving_per_member || selectedGroupRaw.membership_fees || selectedGroupRaw.sahyog_rashi || selectedGroupRaw.shar_capital || selectedGroupRaw.Mship_Group) && (
-                                        <div className="bg-white rounded-lg shadow-md p-6">
-                                            <h3 className="text-xl font-semibold text-gray-800 mb-4 pb-3 border-b">Financial Information</h3>
+                                        <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                            <h3 className="text-lg md:text-xl font-semibold text-gray-800 mb-3 md:mb-4 pb-2 md:pb-3 border-b">Financial Information</h3>
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 {selectedGroupRaw.saving_per_member && (
                                                     <div className="p-4 bg-gray-50 rounded-lg">
@@ -1065,25 +1072,25 @@ export default function GroupManagement() {
                             )}
 
                             {activeTab === "members" && (
-                                <div className="bg-white rounded-lg shadow-md p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-xl font-semibold text-gray-800">Group Members</h3>
+                                <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800">Group Members</h3>
                                         <div className="flex items-center gap-2">
                                             <Link
                                                 to={`/admin/member-registration?groupId=${selectedGroupData.id}`}
-                                                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                                className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm w-full sm:w-auto"
                                             >
                                                 <Plus size={16} />
-                                                Add Member
+                                                <span>Add Member</span>
                                             </Link>
                                         </div>
                                     </div>
 
                                     {/* Date Range Filter and Export Buttons */}
-                                    <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-                                        <div className="flex items-center gap-4 mb-3">
-                                            <div className="flex-1">
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">From Date</label>
+                                    <div className="mb-4 p-3 md:p-4 bg-gray-50 rounded-lg">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 mb-3">
+                                            <div>
+                                                <label className="block text-xs md:text-sm font-semibold text-gray-700 mb-1">From Date</label>
                                                 <input
                                                     type="date"
                                                     value={dateRange.fromDate}
@@ -1091,8 +1098,8 @@ export default function GroupManagement() {
                                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                                                 />
                                             </div>
-                                            <div className="flex-1">
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">To Date</label>
+                                            <div>
+                                                <label className="block text-xs md:text-sm font-semibold text-gray-700 mb-1">To Date</label>
                                                 <input
                                                     type="date"
                                                     value={dateRange.toDate}
@@ -1101,70 +1108,72 @@ export default function GroupManagement() {
                                                 />
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                                             <button
                                                 onClick={() => handleExportGroupLedger('excel')}
                                                 disabled={exportLoading}
-                                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+                                                className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs md:text-sm disabled:opacity-50"
                                             >
                                                 <Download size={16} />
-                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (Excel)"}
+                                                <span className="hidden sm:inline">{exportLoading ? "Exporting..." : "Export All Members Ledger (Excel)"}</span>
+                                                <span className="sm:hidden">{exportLoading ? "Exporting..." : "Export Excel"}</span>
                                             </button>
                                             <button
                                                 onClick={() => handleExportGroupLedger('pdf')}
                                                 disabled={exportLoading}
-                                                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm disabled:opacity-50"
+                                                className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-xs md:text-sm disabled:opacity-50"
                                             >
                                                 <FileText size={16} />
-                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (PDF)"}
+                                                <span className="hidden sm:inline">{exportLoading ? "Exporting..." : "Export All Members Ledger (PDF)"}</span>
+                                                <span className="sm:hidden">{exportLoading ? "Exporting..." : "Export PDF"}</span>
                                             </button>
                                         </div>
                                     </div>
                                     {membersLoading && (
-                                        <p className="text-gray-600 mb-4">Loading members…</p>
+                                        <p className="text-sm md:text-base text-gray-600 mb-4">Loading members…</p>
                                     )}
-                                    <div className="overflow-x-auto">
-                                        <table className="w-full border-collapse">
+                                    <div className="w-full overflow-x-auto rounded-lg border bg-white">
+                                        <table className="min-w-[600px] w-full border-collapse text-xs md:text-sm">
                                             <thead>
                                                 <tr className="bg-gray-100">
-                                                    <th className="border p-3 text-left font-semibold text-gray-700">Code</th>
-                                                    <th className="border p-3 text-left font-semibold text-gray-700">Name</th>
-                                                    <th className="border p-3 text-center font-semibold text-gray-700">Status</th>
-                                                    <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
+                                                    <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Code</th>
+                                                    <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Name</th>
+                                                    <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Status</th>
+                                                    <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {groupMembers.map((member) => (
                                                     <tr key={member._id} className="hover:bg-gray-50">
-                                                        <td className="border p-3 text-gray-800">{member.Member_Id}</td>
-                                                        <td className="border p-3 text-gray-800">{member.Member_Nm}</td>
-                                                        <td className="border p-3 text-center">
-                                                            <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                                                        <td className="border p-2 md:p-3 text-gray-800">{member.Member_Id}</td>
+                                                        <td className="border p-2 md:p-3 text-gray-800">{member.Member_Nm}</td>
+                                                        <td className="border p-2 md:p-3 text-center">
+                                                            <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs md:text-sm">
                                                                 Active
                                                             </span>
                                                         </td>
-                                                        <td className="border p-3 text-center">
-                                                            <div className="flex items-center gap-2 justify-center">
+                                                        <td className="border p-2 md:p-3">
+                                                            <div className="flex flex-wrap items-center gap-1 md:gap-2 justify-center">
                                                                 <button
                                                                     onClick={() => handleEditMember(member)}
-                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                                                    className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs md:text-sm"
                                                                 >
-                                                                    <Edit size={14} />
-                                                                    Edit
+                                                                    <Edit size={12} />
+                                                                    <span className="hidden sm:inline">Edit</span>
                                                                 </button>
                                                                 <Link
                                                                     to={`/admin/members/${member._id}`}
-                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                    className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs md:text-sm"
                                                                 >
-                                                                    <Eye size={14} />
-                                                                    View
+                                                                    <Eye size={12} />
+                                                                    <span className="hidden sm:inline">View</span>
                                                                 </Link>
                                                                 <button
                                                                     onClick={() => handleDeleteMember(member)}
-                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+                                                                    className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-xs md:text-sm"
                                                                 >
-                                                                    <Trash2 size={14} />
-                                                                    Delete
+                                                                    <Trash2 size={12} />
+                                                                    <span className="hidden sm:inline">Delete</span>
                                                                 </button>
                                                             </div>
                                                         </td>
@@ -1184,55 +1193,55 @@ export default function GroupManagement() {
                             )}
 
                             {activeTab === "bank" && (
-                                <div className="bg-white rounded-lg shadow-md p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-xl font-semibold text-gray-800">Bank Details</h3>
+                                <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800">Bank Details</h3>
                                         <Link
                                             to={`/admin/bank-details?groupId=${selectedGroupData.id}`}
-                                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                            className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm w-full sm:w-auto"
                                         >
                                             <Edit size={16} />
-                                            Edit Bank Details
+                                            <span>Edit Bank Details</span>
                                         </Link>
                                     </div>
                                     {banksLoading ? (
-                                        <p className="text-gray-600">Loading bank accounts…</p>
+                                        <p className="text-sm md:text-base text-gray-600">Loading bank accounts…</p>
                                     ) : groupBanks.length > 0 ? (
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full border-collapse">
+                                        <div className="w-full overflow-x-auto rounded-lg border bg-white">
+                                            <table className="min-w-[800px] w-full border-collapse text-xs md:text-sm">
                                                 <thead>
                                                     <tr className="bg-gray-100">
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Bank</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Account No</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">IFSC</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Type</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Branch</th>
-                                                        <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Bank</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Account No</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">IFSC</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Type</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Branch</th>
+                                                        <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Actions</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     {groupBanks.map((b) => (
                                                         <tr key={b._id} className="hover:bg-gray-50">
-                                                            <td className="border p-3 text-gray-800">{b.bank_name}</td>
-                                                            <td className="border p-3 text-gray-800">{b.account_no}</td>
-                                                            <td className="border p-3 text-gray-600">{b.ifsc || "-"}</td>
-                                                            <td className="border p-3 text-gray-600">{b.account_type}</td>
-                                                            <td className="border p-3 text-gray-600">{b.branch_name || "-"}</td>
-                                                            <td className="border p-3 text-center">
-                                                                <div className="flex items-center gap-2 justify-center">
+                                                            <td className="border p-2 md:p-3 text-gray-800">{b.bank_name}</td>
+                                                            <td className="border p-2 md:p-3 text-gray-800">{b.account_no}</td>
+                                                            <td className="border p-2 md:p-3 text-gray-600">{b.ifsc || "-"}</td>
+                                                            <td className="border p-2 md:p-3 text-gray-600">{b.account_type}</td>
+                                                            <td className="border p-2 md:p-3 text-gray-600">{b.branch_name || "-"}</td>
+                                                            <td className="border p-2 md:p-3">
+                                                                <div className="flex flex-wrap items-center gap-1 md:gap-2 justify-center">
                                                                     <button
                                                                         onClick={() => handleEditBank(b)}
-                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                                                        className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs md:text-sm"
                                                                     >
-                                                                        <Edit size={14} />
-                                                                        Edit
+                                                                        <Edit size={12} />
+                                                                        <span className="hidden sm:inline">Edit</span>
                                                                     </button>
                                                                     <button
                                                                         onClick={() => handleViewBank(b._id)}
-                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                        className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs md:text-sm"
                                                                     >
-                                                                        <Eye size={14} />
-                                                                        View
+                                                                        <Eye size={12} />
+                                                                        <span className="hidden sm:inline">View</span>
                                                                     </button>
                                                                 </div>
                                                             </td>
@@ -1242,12 +1251,12 @@ export default function GroupManagement() {
                                             </table>
                                         </div>
                                     ) : (
-                                        <div className="text-center py-12">
-                                            <Banknote size={48} className="mx-auto mb-4 text-gray-400" />
-                                            <p className="text-gray-600">No bank accounts added yet</p>
+                                        <div className="text-center py-8 md:py-12">
+                                            <Banknote size={40} className="mx-auto mb-4 text-gray-400" />
+                                            <p className="text-sm md:text-base text-gray-600 mb-4">No bank accounts added yet</p>
                                             <Link
                                                 to={`/admin/bank-details?groupId=${selectedGroupData.id}`}
-                                                className="mt-4 inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                                className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
                                             >
                                                 Add Bank Account
                                             </Link>
@@ -1257,56 +1266,56 @@ export default function GroupManagement() {
                             )}
 
                             {activeTab === "cash" && (
-                                <div className="bg-white rounded-lg shadow-md p-6">
-                                    <div className="flex items-center justify-between mb-6">
-                                        <h3 className="text-xl font-semibold text-gray-800">Cash Details</h3>
+                                <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                    <div className="mb-4 md:mb-6">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800">Cash Details</h3>
                                     </div>
 
                                     {/* Current Cash Balance */}
-                                    <div className="mb-6 p-6 bg-green-50 rounded-lg border border-green-200">
+                                    <div className="mb-4 md:mb-6 p-4 md:p-6 bg-green-50 rounded-lg border border-green-200">
                                         <div className="flex items-center justify-between">
                                             <div>
-                                                <p className="text-sm text-gray-600 mb-2">Current Cash Balance</p>
-                                                <p className="text-3xl font-bold text-green-800">₹{cashBalance.toLocaleString()}</p>
+                                                <p className="text-xs md:text-sm text-gray-600 mb-2">Current Cash Balance</p>
+                                                <p className="text-2xl md:text-3xl font-bold text-green-800">₹{cashBalance.toLocaleString()}</p>
                                             </div>
-                                            <Wallet size={48} className="text-green-600" />
+                                            <Wallet size={32} className="text-green-600 shrink-0" />
                                         </div>
                                     </div>
 
                                     {/* Cash Transactions Table */}
                                     <div>
-                                        <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-3 border-b">
+                                        <h4 className="text-base md:text-lg font-semibold text-gray-800 mb-3 md:mb-4 pb-2 md:pb-3 border-b">
                                             Cash Transactions ({cashTransactions.length})
                                         </h4>
                                         {cashTransactionsLoading ? (
-                                            <div className="text-center py-12">
-                                                <p className="text-gray-600">Loading cash transactions...</p>
+                                            <div className="text-center py-8 md:py-12">
+                                                <p className="text-sm md:text-base text-gray-600">Loading cash transactions...</p>
                                             </div>
                                         ) : cashTransactions.length > 0 ? (
-                                            <div className="overflow-x-auto">
-                                                <table className="w-full border-collapse">
+                                            <div className="w-full overflow-x-auto rounded-lg border bg-white">
+                                                <table className="min-w-[900px] w-full border-collapse text-xs md:text-sm">
                                                     <thead>
                                                         <tr className="bg-gray-100">
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Date</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Direction</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Transaction Type</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Member</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Description</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Amount</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Status</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Date</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Direction</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Transaction Type</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Member</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Description</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Amount</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Status</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
                                                         {cashTransactions.map((tx) => (
                                                             <tr key={tx.id || tx._id} className="hover:bg-gray-50">
-                                                                <td className="border p-3 text-gray-800">
+                                                                <td className="border p-2 md:p-3 text-gray-800">
                                                                     {tx.date
                                                                         ? new Date(tx.date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
                                                                         : tx.createdAt
                                                                             ? new Date(tx.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
                                                                             : "-"}
                                                                 </td>
-                                                                <td className="border p-3">
+                                                                <td className="border p-2 md:p-3">
                                                                     <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.direction === "incoming" || tx.isCredit
                                                                         ? "bg-green-100 text-green-800"
                                                                         : "bg-red-100 text-red-800"
@@ -1314,20 +1323,20 @@ export default function GroupManagement() {
                                                                         {tx.direction === "incoming" || tx.isCredit ? "Incoming" : "Outgoing"}
                                                                     </span>
                                                                 </td>
-                                                                <td className="border p-3 text-gray-800 capitalize">{tx.transactionType || "-"}</td>
-                                                                <td className="border p-3 text-gray-800">
+                                                                <td className="border p-2 md:p-3 text-gray-800 capitalize">{tx.transactionType || "-"}</td>
+                                                                <td className="border p-2 md:p-3 text-gray-800">
                                                                     {tx.memberName && tx.memberName !== "-" ? (
                                                                         <>
-                                                                            {tx.memberName}
+                                                                            <span className="break-words">{tx.memberName}</span>
                                                                             {tx.memberCode && <span className="text-xs text-gray-500 ml-1">({tx.memberCode})</span>}
                                                                         </>
                                                                     ) : "-"}
                                                                 </td>
-                                                                <td className="border p-3 text-gray-800">{tx.description || "-"}</td>
-                                                                <td className="border p-3 text-right font-semibold text-gray-800">
+                                                                <td className="border p-2 md:p-3 text-gray-800 break-words">{tx.description || "-"}</td>
+                                                                <td className="border p-2 md:p-3 text-right font-semibold text-gray-800">
                                                                     ₹{(tx.amount || 0).toLocaleString()}
                                                                 </td>
-                                                                <td className="border p-3">
+                                                                <td className="border p-2 md:p-3">
                                                                     <span className={`px-2 py-1 rounded-full text-xs font-semibold ${tx.status === "verified" || tx.status === "completed"
                                                                         ? "bg-green-100 text-green-800"
                                                                         : tx.status === "pending"
@@ -1343,9 +1352,9 @@ export default function GroupManagement() {
                                                 </table>
                                             </div>
                                         ) : (
-                                            <div className="text-center py-12 bg-gray-50 rounded-lg">
-                                                <Wallet size={48} className="mx-auto mb-4 text-gray-400" />
-                                                <p className="text-gray-600">No cash transactions found</p>
+                                            <div className="text-center py-8 md:py-12 bg-gray-50 rounded-lg">
+                                                <Wallet size={40} className="mx-auto mb-4 text-gray-400" />
+                                                <p className="text-sm md:text-base text-gray-600">No cash transactions found</p>
                                             </div>
                                         )}
                                     </div>
@@ -1353,33 +1362,33 @@ export default function GroupManagement() {
                             )}
 
                             {activeTab === "finance" && (
-                                <div className="bg-white rounded-lg shadow-md p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-xl font-semibold text-gray-800">Finance Summary</h3>
-                                        <div className="flex gap-2">
+                                <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800">Finance Summary</h3>
+                                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                                             <button
                                                 onClick={() => selectedGroup && calculateFinance(selectedGroup)}
-                                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
                                                 disabled={financeData.loading}
                                             >
                                                 {financeData.loading ? "Calculating..." : "Refresh"}
                                             </button>
                                             <Link
                                                 to="/admin/demand-recovery"
-                                                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                                                className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
                                             >
                                                 <DollarSign size={16} />
-                                                Manage Recovery
+                                                <span>Manage Recovery</span>
                                             </Link>
                                         </div>
                                     </div>
 
                                     {/* Export Section */}
-                                    <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Export All Members Ledger</h4>
-                                        <div className="flex items-center gap-4 mb-3">
-                                            <div className="flex-1">
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">From Date</label>
+                                    <div className="mb-4 md:mb-6 p-3 md:p-4 bg-gray-50 rounded-lg">
+                                        <h4 className="text-xs md:text-sm font-semibold text-gray-700 mb-3">Export All Members Ledger</h4>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 mb-3">
+                                            <div>
+                                                <label className="block text-xs md:text-sm font-semibold text-gray-700 mb-1">From Date</label>
                                                 <input
                                                     type="date"
                                                     value={dateRange.fromDate}
@@ -1387,8 +1396,8 @@ export default function GroupManagement() {
                                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                                                 />
                                             </div>
-                                            <div className="flex-1">
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">To Date</label>
+                                            <div>
+                                                <label className="block text-xs md:text-sm font-semibold text-gray-700 mb-1">To Date</label>
                                                 <input
                                                     type="date"
                                                     value={dateRange.toDate}
@@ -1397,104 +1406,106 @@ export default function GroupManagement() {
                                                 />
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                                             <button
                                                 onClick={() => handleExportGroupLedger('excel')}
                                                 disabled={exportLoading}
-                                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+                                                className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs md:text-sm disabled:opacity-50"
                                             >
                                                 <Download size={16} />
-                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (Excel)"}
+                                                <span className="hidden sm:inline">{exportLoading ? "Exporting..." : "Export All Members Ledger (Excel)"}</span>
+                                                <span className="sm:hidden">{exportLoading ? "Exporting..." : "Export Excel"}</span>
                                             </button>
                                             <button
                                                 onClick={() => handleExportGroupLedger('pdf')}
                                                 disabled={exportLoading}
-                                                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm disabled:opacity-50"
+                                                className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-xs md:text-sm disabled:opacity-50"
                                             >
                                                 <FileText size={16} />
-                                                {exportLoading ? "Exporting..." : "Export All Members Ledger (PDF)"}
+                                                <span className="hidden sm:inline">{exportLoading ? "Exporting..." : "Export All Members Ledger (PDF)"}</span>
+                                                <span className="sm:hidden">{exportLoading ? "Exporting..." : "Export PDF"}</span>
                                             </button>
                                         </div>
                                     </div>
                                     {financeData.loading ? (
                                         <div className="text-center py-8">
-                                            <p className="text-gray-600">Calculating finance details...</p>
+                                            <p className="text-sm md:text-base text-gray-600">Calculating finance details...</p>
                                         </div>
                                     ) : (
                                         <>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                                                <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mb-4 md:mb-6">
+                                                <div className="p-3 md:p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
                                                     <div className="flex items-center justify-between">
-                                                        <div>
-                                                            <p className="text-sm text-gray-600">Total Savings</p>
-                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalSavings.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1">From members + loan transactions</p>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-xs md:text-sm text-gray-600">Total Savings</p>
+                                                            <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalSavings.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">From members + loan transactions</p>
                                                         </div>
-                                                        <TrendingUp className="text-blue-600" size={24} />
+                                                        <TrendingUp className="text-blue-600 shrink-0 ml-2" size={20} />
                                                     </div>
                                                 </div>
-                                                <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                                                <div className="p-3 md:p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
                                                     <div className="flex items-center justify-between">
-                                                        <div>
-                                                            <p className="text-sm text-gray-600">Total Loans</p>
-                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalLoans.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1">From members + approved loans</p>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-xs md:text-sm text-gray-600">Total Loans</p>
+                                                            <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalLoans.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">From members + approved loans</p>
                                                         </div>
-                                                        <DollarSign className="text-green-600" size={24} />
+                                                        <DollarSign className="text-green-600 shrink-0 ml-2" size={20} />
                                                     </div>
                                                 </div>
-                                                <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+                                                <div className="p-3 md:p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
                                                     <div className="flex items-center justify-between">
-                                                        <div>
-                                                            <p className="text-sm text-gray-600">Total FD</p>
-                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalFD.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1">From members + FD transactions</p>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-xs md:text-sm text-gray-600">Total FD</p>
+                                                            <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalFD.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">From members + FD transactions</p>
                                                         </div>
-                                                        <Banknote className="text-purple-600" size={24} />
+                                                        <Banknote className="text-purple-600 shrink-0 ml-2" size={20} />
                                                     </div>
                                                 </div>
-                                                <div className="p-4 bg-orange-50 rounded-lg border-l-4 border-orange-500">
+                                                <div className="p-3 md:p-4 bg-orange-50 rounded-lg border-l-4 border-orange-500">
                                                     <div className="flex items-center justify-between">
-                                                        <div>
-                                                            <p className="text-sm text-gray-600">Total Interest</p>
-                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalInterest.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1">Overdue interest from members</p>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-xs md:text-sm text-gray-600">Total Interest</p>
+                                                            <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalInterest.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">Overdue interest from members</p>
                                                         </div>
-                                                        <TrendingUp className="text-orange-600" size={24} />
+                                                        <TrendingUp className="text-orange-600 shrink-0 ml-2" size={20} />
                                                     </div>
                                                 </div>
-                                                <div className="p-4 bg-indigo-50 rounded-lg border-l-4 border-indigo-500">
+                                                <div className="p-3 md:p-4 bg-indigo-50 rounded-lg border-l-4 border-indigo-500">
                                                     <div className="flex items-center justify-between">
-                                                        <div>
-                                                            <p className="text-sm text-gray-600">Total Yogdan</p>
-                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalYogdan.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1">Opening Yogdan from members</p>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-xs md:text-sm text-gray-600">Total Yogdan</p>
+                                                            <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalYogdan.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">Opening Yogdan from members</p>
                                                         </div>
-                                                        <DollarSign className="text-indigo-600" size={24} />
+                                                        <DollarSign className="text-indigo-600 shrink-0 ml-2" size={20} />
                                                     </div>
                                                 </div>
-                                                <div className="p-4 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
+                                                <div className="p-3 md:p-4 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
                                                     <div className="flex items-center justify-between">
-                                                        <div>
-                                                            <p className="text-sm text-gray-600">Total Recovery</p>
-                                                            <p className="text-2xl font-bold text-gray-800">₹{financeData.totalRecovery.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1">From approved recovery sessions</p>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-xs md:text-sm text-gray-600">Total Recovery</p>
+                                                            <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalRecovery.toLocaleString()}</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">From approved recovery sessions</p>
                                                         </div>
-                                                        <DollarSign className="text-yellow-600" size={24} />
+                                                        <DollarSign className="text-yellow-600 shrink-0 ml-2" size={20} />
                                                     </div>
                                                 </div>
                                             </div>
 
                                             {/* Net Total and Summary */}
-                                            <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg p-6 border-2 border-gray-300">
-                                                <div className="flex items-center justify-between mb-4">
-                                                    <h4 className="text-lg font-semibold text-gray-800">Net Financial Position</h4>
-                                                    <TrendingUp className="text-gray-600" size={28} />
+                                            <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg p-4 md:p-6 border-2 border-gray-300">
+                                                <div className="flex items-center justify-between mb-3 md:mb-4">
+                                                    <h4 className="text-base md:text-lg font-semibold text-gray-800">Net Financial Position</h4>
+                                                    <TrendingUp className="text-gray-600 shrink-0" size={24} />
                                                 </div>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                                                     <div>
-                                                        <p className="text-sm text-gray-600 mb-2">Total Assets</p>
-                                                        <p className="text-3xl font-bold text-green-700">
+                                                        <p className="text-xs md:text-sm text-gray-600 mb-2">Total Assets</p>
+                                                        <p className="text-2xl md:text-3xl font-bold text-green-700">
                                                             ₹{(
                                                                 financeData.totalSavings +
                                                                 financeData.totalFD +
@@ -1504,8 +1515,8 @@ export default function GroupManagement() {
                                                         </p>
                                                     </div>
                                                     <div>
-                                                        <p className="text-sm text-gray-600 mb-2">Total Liabilities</p>
-                                                        <p className="text-3xl font-bold text-red-700">
+                                                        <p className="text-xs md:text-sm text-gray-600 mb-2">Total Liabilities</p>
+                                                        <p className="text-2xl md:text-3xl font-bold text-red-700">
                                                             ₹{(
                                                                 financeData.totalLoans +
                                                                 financeData.totalInterest
@@ -1513,9 +1524,9 @@ export default function GroupManagement() {
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <div className="mt-4 pt-4 border-t border-gray-300">
-                                                    <p className="text-sm text-gray-600 mb-1">Net Balance</p>
-                                                    <p className={`text-4xl font-bold ${(financeData.totalSavings + financeData.totalFD + financeData.totalRecovery + financeData.totalYogdan) -
+                                                <div className="mt-3 md:mt-4 pt-3 md:pt-4 border-t border-gray-300">
+                                                    <p className="text-xs md:text-sm text-gray-600 mb-1">Net Balance</p>
+                                                    <p className={`text-3xl md:text-4xl font-bold ${(financeData.totalSavings + financeData.totalFD + financeData.totalRecovery + financeData.totalYogdan) -
                                                         (financeData.totalLoans + financeData.totalInterest) >= 0
                                                         ? "text-green-700"
                                                         : "text-red-700"
@@ -1533,72 +1544,83 @@ export default function GroupManagement() {
                             )}
 
                             {activeTab === "charges" && (
-                                <div className="bg-white rounded-lg shadow-md p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-xl font-semibold text-gray-800">Group Charges</h3>
+                                <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800">Group Charges</h3>
                                         <button
                                             onClick={handleAddCharge}
-                                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                            className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm w-full sm:w-auto"
                                         >
                                             <Plus size={16} />
-                                            Add Charge
+                                            <span>Add Charge</span>
                                         </button>
                                     </div>
 
                                     {chargesLoading ? (
-                                        <p className="text-gray-600">Loading charges...</p>
+                                        <p className="text-sm md:text-base text-gray-600">Loading charges...</p>
                                     ) : groupCharges.length > 0 ? (
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full border-collapse">
+                                        <div className="w-full overflow-x-auto rounded-lg border bg-white">
+                                            <table className="min-w-[900px] w-full border-collapse text-xs md:text-sm">
                                                 <thead>
                                                     <tr className="bg-gray-100">
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Name</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Amount</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Type</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Frequency</th>
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Start Date</th>
-                                                        <th className="border p-3 text-center font-semibold text-gray-700">Status</th>
-                                                        <th className="border p-3 text-center font-semibold text-gray-700">Actions</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Name</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Amount</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Type</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Entry Type</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Frequency</th>
+                                                        <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Start Date</th>
+                                                        <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Status</th>
+                                                        <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Actions</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     {groupCharges.map((charge) => (
                                                         <tr key={charge._id} className="hover:bg-gray-50">
-                                                            <td className="border p-3 text-gray-800">{charge.name}</td>
-                                                            <td className="border p-3 text-gray-800">₹{charge.amount?.toLocaleString() || 0}</td>
-                                                            <td className="border p-3 text-gray-800">
+                                                            <td className="border p-2 md:p-3 text-gray-800">{charge.name}</td>
+                                                            <td className="border p-2 md:p-3 text-gray-800">₹{charge.amount?.toLocaleString() || 0}</td>
+                                                            <td className="border p-2 md:p-3 text-gray-800">
                                                                 <span className={`px-2 py-1 rounded-full text-xs font-semibold ${charge.type === "one-time" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"
                                                                     }`}>
                                                                     {charge.type === "one-time" ? "One-Time" : "Recurring"}
                                                                 </span>
                                                             </td>
-                                                            <td className="border p-3 text-gray-800">
+                                                            <td className="border p-2 md:p-3 text-gray-800">
+                                                                <span className={`px-2 py-1 rounded text-xs font-medium ${charge.entryType === "income" ? "bg-green-100 text-green-800" :
+                                                                    charge.entryType === "expense" ? "bg-red-100 text-red-800" :
+                                                                        charge.entryType === "assets" ? "bg-purple-100 text-purple-800" :
+                                                                            charge.entryType === "liability" ? "bg-orange-100 text-orange-800" :
+                                                                                "bg-gray-100 text-gray-800"
+                                                                    }`}>
+                                                                    {charge.entryType ? charge.entryType.charAt(0).toUpperCase() + charge.entryType.slice(1) : "Expense"}
+                                                                </span>
+                                                            </td>
+                                                            <td className="border p-2 md:p-3 text-gray-800">
                                                                 {charge.type === "recurring" ? (charge.frequency === "yearly" ? "Yearly" : "Monthly") : "-"}
                                                             </td>
-                                                            <td className="border p-3 text-gray-800">
+                                                            <td className="border p-2 md:p-3 text-gray-800">
                                                                 {charge.startDate ? new Date(charge.startDate).toLocaleDateString("en-GB") : "-"}
                                                             </td>
-                                                            <td className="border p-3 text-center">
+                                                            <td className="border p-2 md:p-3 text-center">
                                                                 <span className={`px-2 py-1 rounded-full text-xs font-semibold ${charge.isActive !== false ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
                                                                     }`}>
                                                                     {charge.isActive !== false ? "Active" : "Inactive"}
                                                                 </span>
                                                             </td>
-                                                            <td className="border p-3 text-center">
-                                                                <div className="flex items-center gap-2 justify-center">
+                                                            <td className="border p-2 md:p-3">
+                                                                <div className="flex flex-wrap items-center gap-1 md:gap-2 justify-center">
                                                                     <button
                                                                         onClick={() => handleEditCharge(charge)}
-                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                        className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs md:text-sm"
                                                                     >
-                                                                        <Edit size={14} />
-                                                                        Edit
+                                                                        <Edit size={12} />
+                                                                        <span className="hidden sm:inline">Edit</span>
                                                                     </button>
                                                                     <button
                                                                         onClick={() => handleDeleteCharge(charge._id)}
-                                                                        className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+                                                                        className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-xs md:text-sm"
                                                                     >
-                                                                        <X size={14} />
-                                                                        Delete
+                                                                        <X size={12} />
+                                                                        <span className="hidden sm:inline">Delete</span>
                                                                     </button>
                                                                 </div>
                                                             </td>
@@ -1608,12 +1630,12 @@ export default function GroupManagement() {
                                             </table>
                                         </div>
                                     ) : (
-                                        <div className="text-center py-12">
-                                            <CreditCard size={48} className="mx-auto mb-4 text-gray-400" />
-                                            <p className="text-gray-600">No charges added yet</p>
+                                        <div className="text-center py-8 md:py-12">
+                                            <CreditCard size={40} className="mx-auto mb-4 text-gray-400" />
+                                            <p className="text-sm md:text-base text-gray-600 mb-4">No charges added yet</p>
                                             <button
                                                 onClick={handleAddCharge}
-                                                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
                                             >
                                                 Add First Charge
                                             </button>
@@ -1623,10 +1645,10 @@ export default function GroupManagement() {
                             )}
 
                             {activeTab === "recovery-details" && (
-                                <div className="bg-white rounded-lg shadow-md p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-xl font-semibold text-gray-800">Recovery Details</h3>
-                                        <div className="flex items-center gap-4">
+                                <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800">Recovery Details</h3>
+                                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
                                             {/* Date Range Filter */}
                                             <div className="flex items-center gap-2">
                                                 <input
@@ -1638,10 +1660,10 @@ export default function GroupManagement() {
                                                             loadRecoveryDetails(selectedGroup);
                                                         }
                                                     }}
-                                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
                                                     placeholder="From Date"
                                                 />
-                                                <span className="text-gray-600">to</span>
+                                                <span className="text-gray-600 text-sm">to</span>
                                                 <input
                                                     type="date"
                                                     value={dateRange.toDate}
@@ -1651,7 +1673,7 @@ export default function GroupManagement() {
                                                             loadRecoveryDetails(selectedGroup);
                                                         }
                                                     }}
-                                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
                                                     placeholder="To Date"
                                                 />
                                             </div>
@@ -1659,8 +1681,8 @@ export default function GroupManagement() {
                                     </div>
 
                                     {recoveryDetailsLoading ? (
-                                        <div className="text-center py-12">
-                                            <p className="text-gray-600">Loading recovery details...</p>
+                                        <div className="text-center py-8 md:py-12">
+                                            <p className="text-sm md:text-base text-gray-600">Loading recovery details...</p>
                                         </div>
                                     ) : selectedRecovery ? (
                                         <div className="space-y-6">
@@ -1802,26 +1824,26 @@ export default function GroupManagement() {
                                             </div>
 
                                             {/* Member Recovery Details Table */}
-                                            <div className="overflow-x-auto">
-                                                <table className="w-full border-collapse">
+                                            <div className="w-full overflow-x-auto rounded-lg border bg-white">
+                                                <table className="min-w-[1400px] w-full border-collapse text-xs md:text-sm">
                                                     <thead>
                                                         <tr className="bg-gray-100">
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Member Code</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Member Name</th>
-                                                            <th className="border p-3 text-center font-semibold text-gray-700">Attendance</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Saving</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Loan</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Interest</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Yogdan</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Mem Fees SHG</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Mem Fees Group</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Mem Fees Samiti</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Penalty</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Other</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">FD</th>
-                                                            <th className="border p-3 text-left font-semibold text-gray-700">Charges</th>
-                                                            <th className="border p-3 text-center font-semibold text-gray-700">Payment Mode</th>
-                                                            <th className="border p-3 text-right font-semibold text-gray-700">Total</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Member Code</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Member Name</th>
+                                                            <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Attendance</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Saving</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Loan</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Interest</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Yogdan</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Mem Fees SHG</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Mem Fees Group</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Mem Fees Samiti</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Penalty</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Other</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">FD</th>
+                                                            <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Charges</th>
+                                                            <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Payment Mode</th>
+                                                            <th className="border p-2 md:p-3 text-right font-semibold text-gray-700">Total</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -1857,35 +1879,35 @@ export default function GroupManagement() {
 
                                                                 return (
                                                                     <tr key={idx} className={`hover:bg-gray-50 ${memberRec.attendance === "absent" ? "bg-red-50" : ""}`}>
-                                                                        <td className="border p-3 text-gray-800">{memberRec.memberCode || "—"}</td>
-                                                                        <td className="border p-3 text-gray-800">{memberRec.memberName || "—"}</td>
-                                                                        <td className="border p-3 text-center">
+                                                                        <td className="border p-2 md:p-3 text-gray-800">{memberRec.memberCode || "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-gray-800 break-words">{memberRec.memberName || "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-center">
                                                                             <span className={`px-2 py-1 rounded-full text-xs font-semibold ${memberRec.attendance === "present" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
                                                                                 {memberRec.attendance === "present" ? "Present" : "Absent"}
                                                                             </span>
                                                                         </td>
-                                                                        <td className="border p-3 text-right text-gray-800">{saving > 0 ? `₹${saving.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{loan > 0 ? `₹${loan.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{interest > 0 ? `₹${interest.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{yogdan > 0 ? `₹${yogdan.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{memFeesSHG > 0 ? `₹${memFeesSHG.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{memFeesGroup > 0 ? `₹${memFeesGroup.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{memFeesSamiti > 0 ? `₹${memFeesSamiti.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{penalty > 0 ? `₹${penalty.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{other > 0 ? `₹${other.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-right text-gray-800">{fd > 0 ? `₹${fd.toLocaleString()}` : "—"}</td>
-                                                                        <td className="border p-3 text-left text-gray-800" title={chargesDetails}>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{saving > 0 ? `₹${saving.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{loan > 0 ? `₹${loan.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{interest > 0 ? `₹${interest.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{yogdan > 0 ? `₹${yogdan.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{memFeesSHG > 0 ? `₹${memFeesSHG.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{memFeesGroup > 0 ? `₹${memFeesGroup.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{memFeesSamiti > 0 ? `₹${memFeesSamiti.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{penalty > 0 ? `₹${penalty.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{other > 0 ? `₹${other.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right text-gray-800">{fd > 0 ? `₹${fd.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-left text-gray-800 break-words" title={chargesDetails}>
                                                                             {chargesTotal > 0 ? `₹${chargesTotal.toLocaleString()}` : "—"}
                                                                             {chargesDetails !== "—" && (
                                                                                 <span className="block text-xs text-gray-500 mt-1">{chargesDetails}</span>
                                                                             )}
                                                                         </td>
-                                                                        <td className="border p-3 text-center">
-                                                                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${paymentMode === "Cash" ? "bg-green-100 text-green-800" : paymentMode === "Online" ? "bg-blue-100 text-blue-800" : paymentMode === "Cash + Online" ? "bg-purple-100 text-purple-800" : "bg-gray-100 text-gray-800"}`}>
+                                                                        <td className="border p-2 md:p-3 text-center">
+                                                                            <span className={`px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${paymentMode === "Cash" ? "bg-green-100 text-green-800" : paymentMode === "Online" ? "bg-blue-100 text-blue-800" : paymentMode === "Cash + Online" ? "bg-purple-100 text-purple-800" : "bg-gray-100 text-gray-800"}`}>
                                                                                 {paymentMode}
                                                                             </span>
                                                                         </td>
-                                                                        <td className="border p-3 text-right font-semibold text-gray-800">{total > 0 ? `₹${total.toLocaleString()}` : "—"}</td>
+                                                                        <td className="border p-2 md:p-3 text-right font-semibold text-gray-800">{total > 0 ? `₹${total.toLocaleString()}` : "—"}</td>
                                                                     </tr>
                                                                 );
                                                             })
@@ -2949,6 +2971,19 @@ export default function GroupManagement() {
                                     onChange={(e) => setChargeForm({ ...chargeForm, startDate: e.target.value })}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                 />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Entry Type *</label>
+                                <select
+                                    value={chargeForm.entryType}
+                                    onChange={(e) => setChargeForm({ ...chargeForm, entryType: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="income">Income</option>
+                                    <option value="expense">Expense</option>
+                                    <option value="assets">Assets</option>
+                                    <option value="liability">Liability</option>
+                                </select>
                             </div>
                             <div>
                                 <label className="flex items-center gap-2">

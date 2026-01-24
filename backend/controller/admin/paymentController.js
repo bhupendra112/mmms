@@ -6,6 +6,8 @@ import { GroupMaster, BankMaster } from "../../model/index.js";
 import RecoveryMaster from "../../model/RecoveryMaster.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
 import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
+import { postTransaction } from "../../service/ledgerPostingService.js";
+import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 
 // Get matured FDs
 export const getMaturedFDs = async (req, res) => {
@@ -14,7 +16,7 @@ export const getMaturedFDs = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         const filter = {
             status: "active",
             maturityDate: { $lte: new Date() }, // Matured FDs
@@ -146,7 +148,7 @@ export const createPayment = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         // Verify group exists and belongs to admin's place
         const accessCheck = await verifyGroupAccess(groupId, adminPlace);
         if (!accessCheck.valid) {
@@ -363,6 +365,52 @@ export const createPayment = async (req, res) => {
             // For now, payment is created with pending status
         }
 
+        // Post ledger entry for approved payments (admin payments are immediately approved)
+        if (isAdmin && payment.status === "approved") {
+            if (payment.paymentType === "saving_withdrawal") {
+                const headInfo = await findOrCreateHead(group._id, "Saving Return", "liability");
+                await postTransaction({
+                    sourceDoc: payment,
+                    headName: "Saving Return",
+                    headType: headInfo?.headType || "groupMaster",
+                    headId: headInfo?.headId,
+                    section: "liability",
+                    amount: paymentAmount,
+                    direction: "out",
+                    groupId: group._id,
+                    memberId: payment.memberId,
+                    date: paymentDate,
+                    notes: `Saving withdrawal - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                    paymentMode: paymentMode,
+                    bankId: paymentMode === "Bank" && bank ? bank._id : undefined,
+                    referenceModel: "PaymentMaster",
+                    referenceId: payment._id,
+                    createdBy: req.user?.id || "admin",
+                });
+            } else if (payment.paymentType === "fd_maturity" && payment.fdId) {
+                const fd = await FDMaster.findById(payment.fdId).lean();
+                const headInfo = await findOrCreateHead(group._id, "FD Return", "liability");
+                await postTransaction({
+                    sourceDoc: payment,
+                    headName: "FD Return",
+                    headType: headInfo?.headType || "groupMaster",
+                    headId: headInfo?.headId,
+                    section: "liability",
+                    amount: paymentAmount,
+                    direction: "out",
+                    groupId: group._id,
+                    memberId: payment.memberId,
+                    date: paymentDate,
+                    notes: `FD maturity payment - Amount: ₹${paymentAmount} - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                    paymentMode: paymentMode,
+                    bankId: paymentMode === "Bank" && bank ? bank._id : undefined,
+                    referenceModel: "PaymentMaster",
+                    referenceId: payment._id,
+                    createdBy: req.user?.id || "admin",
+                });
+            }
+        }
+
         return apiResponse.success(res, isAdmin ? "Payment created successfully" : "Payment request created successfully", payment);
 
     } catch (error) {
@@ -422,7 +470,7 @@ export const getPayments = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         const filter = {};
         if (groupId) {
             // Verify group access
@@ -481,7 +529,7 @@ export const approvePayment = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         // Verify payment's group belongs to admin's place
         if (payment.groupId) {
             const accessCheck = await verifyGroupAccess(payment.groupId, adminPlace);
@@ -498,6 +546,52 @@ export const approvePayment = async (req, res) => {
         payment.approvedBy = req.user?.id || "admin";
         payment.approvedAt = new Date();
         await payment.save();
+
+        // Post ledger entry when payment is approved
+        const group = await GroupMaster.findById(payment.groupId).lean();
+        if (group) {
+            if (payment.paymentType === "saving_withdrawal") {
+                const headInfo = await findOrCreateHead(payment.groupId, "Saving Return", "liability");
+                await postTransaction({
+                    sourceDoc: payment,
+                    headName: "Saving Return",
+                    headType: headInfo?.headType || "groupMaster",
+                    headId: headInfo?.headId,
+                    section: "liability",
+                    amount: payment.amount,
+                    direction: "out",
+                    groupId: payment.groupId,
+                    memberId: payment.memberId,
+                    date: payment.paymentDate,
+                    notes: `Saving withdrawal - Member: ${payment.memberName} (${payment.memberCode})`,
+                    paymentMode: payment.paymentMode || "Cash",
+                    bankId: payment.bankId || undefined,
+                    referenceModel: "PaymentMaster",
+                    referenceId: payment._id,
+                    createdBy: req.user?.id || "admin",
+                });
+            } else if (payment.paymentType === "fd_maturity" && payment.fdId) {
+                const headInfo = await findOrCreateHead(payment.groupId, "FD Return", "liability");
+                await postTransaction({
+                    sourceDoc: payment,
+                    headName: "FD Return",
+                    headType: headInfo?.headType || "groupMaster",
+                    headId: headInfo?.headId,
+                    section: "liability",
+                    amount: payment.amount,
+                    direction: "out",
+                    groupId: payment.groupId,
+                    memberId: payment.memberId,
+                    date: payment.paymentDate,
+                    notes: `FD maturity payment - Amount: ₹${payment.amount} - Member: ${payment.memberName} (${payment.memberCode})`,
+                    paymentMode: payment.paymentMode || "Cash",
+                    bankId: payment.bankId || undefined,
+                    referenceModel: "PaymentMaster",
+                    referenceId: payment._id,
+                    createdBy: req.user?.id || "admin",
+                });
+            }
+        }
 
         return apiResponse.success(res, "Payment approved successfully", payment);
     } catch (error) {
@@ -518,7 +612,7 @@ export const rejectPayment = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        
+
         // Verify payment's group belongs to admin's place
         if (payment.groupId) {
             const accessCheck = await verifyGroupAccess(payment.groupId, adminPlace);

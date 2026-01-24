@@ -63,6 +63,7 @@ export const getRecoveries = async (groupId = null, testMode = false) => {
 export const getRecoveryDetail = async (id, testMode = false) => {
   const params = testMode ? { testMode: 'true' } : {};
   const res = await httpRecovery.get(`/detail/${id}`, { params });
+  console.log(" getRecoveryDetail res : ", res.data)
   return res.data;
 };
 

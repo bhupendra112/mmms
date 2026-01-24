@@ -8,22 +8,36 @@ import { Admin } from "../model/index.js";
  * @returns {Promise<string|null>} - Admin place or null if not found
  */
 export const getAdminPlace = async (req) => {
-    // First try to get from token
+    // First try to get from token (already set by middleware for group tokens)
     let adminPlace = req.user?.place || req.admin?.place;
 
-    // If not in token, fetch from database using admin ID
+    // If not in token, fetch from database
     if (!adminPlace && (req.user?.id || req.admin?.id)) {
         try {
-            const adminId = req.user?.id || req.admin?.id;
-            const admin = await Admin.findById(adminId).select('place').lean();
-            if (admin && admin.place) {
-                adminPlace = admin.place;
-                // Update req.user and req.admin for subsequent use
-                if (req.user) req.user.place = adminPlace;
-                if (req.admin) req.admin.place = adminPlace;
+            const id = req.user?.id || req.admin?.id;
+            
+            // Check if this is a group token
+            if (req.user?.type === "group" || req.admin?.type === "group") {
+                // Fetch place from group document
+                const group = await GroupMaster.findById(id).select('place').lean();
+                if (group && group.place) {
+                    adminPlace = group.place;
+                    // Update req.user and req.admin for subsequent use
+                    if (req.user) req.user.place = adminPlace;
+                    if (req.admin) req.admin.place = adminPlace;
+                }
+            } else {
+                // Fetch place from admin document
+                const admin = await Admin.findById(id).select('place').lean();
+                if (admin && admin.place) {
+                    adminPlace = admin.place;
+                    // Update req.user and req.admin for subsequent use
+                    if (req.user) req.user.place = adminPlace;
+                    if (req.admin) req.admin.place = adminPlace;
+                }
             }
         } catch (error) {
-            console.error("[getAdminPlace] Error fetching admin place:", error);
+            console.error("[getAdminPlace] Error fetching place:", error);
         }
     }
 

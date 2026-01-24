@@ -24,6 +24,9 @@ export default defineConfig({
     },
     // Optimize dependencies
     optimizeDeps: {
-        include: ['react', 'react-dom', 'react-router-dom', 'axios'],
+        include: ['react', 'react-dom', 'react-router-dom', 'axios', 'dexie'],
+    },
+    resolve: {
+        dedupe: ['dexie'], // Ensure only one version of Dexie is used
     },
 })
