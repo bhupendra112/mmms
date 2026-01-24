@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Users, DollarSign, FileText, TrendingUp } from "lucide-react";
 import { useGroup } from "../../contexts/GroupContext";
-import { getMembersByGroup } from "../../services/memberService";
-import { getLoans } from "../../services/loanService";
-import { getRecoveries } from "../../services/recoveryService";
+import { getMembersByGroup } from "../../services/memberServiceOffline";
+import { getLoans } from "../../services/loanServiceOffline";
+import { getRecoveries } from "../../services/recoveryServiceOffline";
 
 export default function GroupDashboard() {
     const { currentGroup, isGroupLoading } = useGroup();

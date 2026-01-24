@@ -50,8 +50,8 @@ const API_ENDPOINTS = {
         delete: (id) => `/api/admin/payment/${id}`,
     },
     recovery: {
-        create: '/api/admin/recovery',
-        update: (id) => `/api/admin/recovery/${id}`,
+        create: '/api/admin/recovery/register-recovery',
+        update: (id) => `/api/admin/recovery/update-member`,
         delete: (id) => `/api/admin/recovery/${id}`,
     },
     fd: {

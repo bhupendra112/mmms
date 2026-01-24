@@ -7,9 +7,9 @@ import {
     getMemberSavings, 
     createPayment, 
     getPayments
-} from "../../services/paymentService";
-import { getGroupBanks } from "../../services/groupService";
-import { getMembersByGroup } from "../../services/memberService";
+} from "../../services/paymentServiceOffline";
+import { getGroupBanks } from "../../services/groupServiceOffline";
+import { getMembersByGroup } from "../../services/memberServiceOffline";
 import { getCashAmount } from "../../services/cashAmount";
 
 export default function PaymentManagement() {

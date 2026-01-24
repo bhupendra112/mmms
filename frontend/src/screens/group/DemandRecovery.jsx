@@ -12,10 +12,10 @@ import {
   getMemberLoanTotals,
   exportRecoveryPDF,
   getMemberRecoveryStatus,
-} from "../../services/recoveryService";
-import { getLoans } from "../../services/loanService";
-import { getGroups, getGroupBanks } from "../../services/groupService";
-import { getMembersByGroup } from "../../services/memberService";
+} from "../../services/recoveryServiceOffline";
+import { getLoans } from "../../services/loanServiceOffline";
+import { getGroups, getGroupBanks } from "../../services/groupServiceOffline";
+import { getMembersByGroup } from "../../services/memberServiceOffline";
 import {
   isMeetingDay,
   getNextMeetingDate,

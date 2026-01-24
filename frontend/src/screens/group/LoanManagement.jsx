@@ -14,7 +14,7 @@ import { Link } from "react-router-dom";
 import { exportLoanToExcel, exportLoanToPDF } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { getAllApprovals, getUnsyncedApprovals } from "../../services/approvalDB";
-import { getLoans } from "../../services/loanService";
+import { getLoans } from "../../services/loanServiceOffline";
 
 export default function LoanManagement() {
     const { currentGroup, isOnline } = useGroup();

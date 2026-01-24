@@ -20,7 +20,7 @@ import {
     deleteExpense,
 } from "../../services/expenseServiceOffline";
 
-import { getGroupBanks } from "../../services/groupService";
+import { getGroupBanks } from "../../services/groupServiceOffline";
 import { getCashAmount } from "../../services/cashAmount";
 
 export default function ExpenseManagement() {
