@@ -3,8 +3,8 @@ import LedgerFilters from "../components/LedgerFilters";
 import LedgerTable from "../components/LedgerTable";
 import GroupProfile from "./GroupProfile";
 import { useGroup } from "../contexts/GroupContext";
-import { getRecoveries } from "../services/recoveryService";
-import { getMembersByGroup } from "../services/memberService";
+import { getRecoveries } from "../services/recoveryServiceOffline";
+import { getMembersByGroup } from "../services/memberServiceOffline";
 
 const GroupLedger = () => {
   const { currentGroup, isGroupLoading } = useGroup();
