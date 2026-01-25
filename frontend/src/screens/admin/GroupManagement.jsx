@@ -387,7 +387,8 @@ export default function GroupManagement() {
             branch_name: bank.branch_name || "",
             ifsc: bank.ifsc || "",
             account_type: bank.account_type || "Saving",
-            opening_balance: bank.opening_balance || "",
+            opening_balance: bank.opening_balance ?? "",
+            cc_limit: bank.cc_limit ?? "",
             ac_open_date: bank.ac_open_date ? new Date(bank.ac_open_date).toISOString().split('T')[0] : "",
             govt_linked: bank.govt_linked || "No",
             govt_project_type: bank.govt_project_type || "",
@@ -2874,6 +2875,16 @@ export default function GroupManagement() {
                                         type="number"
                                         value={editBankForm.opening_balance || ""}
                                         onChange={(e) => setEditBankForm({ ...editBankForm, opening_balance: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">CC Limit</label>
+                                    <input
+                                        type="number"
+                                        value={editBankForm.cc_limit || ""}
+                                        onChange={(e) => setEditBankForm({ ...editBankForm, cc_limit: e.target.value })}
+                                        placeholder="For CC accounts"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                     />
                                 </div>

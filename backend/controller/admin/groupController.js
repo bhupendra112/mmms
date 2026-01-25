@@ -90,9 +90,17 @@ export const addBankDetail = async (req, res) => {
         }
 
         // Create bank record (store full payload as-is)
-        // Initialize current_balance with opening_balance if provided
-        if (payload.opening_balance !== undefined && payload.current_balance === undefined) {
-            payload.current_balance = payload.opening_balance || 0;
+        // Initialize current_balance: CC uses cc_limit; Saving/FD use opening_balance
+        if (payload.current_balance === undefined) {
+            if (payload.account_type === "CC" && payload.cc_limit !== undefined) {
+                payload.current_balance = payload.cc_limit || 0;
+                console.log("[addBankDetail] CC account: current_balance set from cc_limit", { cc_limit: payload.cc_limit, current_balance: payload.current_balance });
+            } else if (payload.opening_balance !== undefined) {
+                payload.current_balance = payload.opening_balance || 0;
+                console.log("[addBankDetail] Saving/FD account: current_balance set from opening_balance", { opening_balance: payload.opening_balance, current_balance: payload.current_balance });
+            } else {
+                console.log("[addBankDetail] current_balance left undefined (using model default)", { account_type: payload.account_type });
+            }
         }
         const newBank = await BankMaster.create(payload);
 
@@ -153,8 +161,11 @@ export const listBanksByGroup = async (req, res) => {
                 bank.pending_credits = balanceInfo.pendingCredits;
             } catch (error) {
                 console.error(`Error calculating balance for bank ${bank._id}:`, error);
-                bank.current_balance = bank.opening_balance || 0;
-                bank.available_balance = bank.opening_balance || 0;
+                const fallback = (bank.account_type === "CC" && (bank.cc_limit !== undefined && bank.cc_limit !== null))
+                    ? (bank.cc_limit || 0)
+                    : (bank.opening_balance || 0);
+                bank.current_balance = fallback;
+                bank.available_balance = fallback;
                 bank.pending_debits = 0;
                 bank.pending_credits = 0;
             }
@@ -337,8 +348,11 @@ export const getBankDetail = async (req, res) => {
             bank.pending_credits = balanceInfo.pendingCredits;
         } catch (error) {
             console.error(`Error calculating balance for bank ${bankId}:`, error);
-            bank.current_balance = bank.opening_balance || 0;
-            bank.available_balance = bank.opening_balance || 0;
+            const fallback = (bank.account_type === "CC" && (bank.cc_limit !== undefined && bank.cc_limit !== null))
+                ? (bank.cc_limit || 0)
+                : (bank.opening_balance || 0);
+            bank.current_balance = fallback;
+            bank.available_balance = fallback;
             bank.pending_debits = 0;
             bank.pending_credits = 0;
         }
