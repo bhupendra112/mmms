@@ -77,10 +77,10 @@ export function OfflineProvider({ children }) {
                         setLastRefreshedAt(Date.now());
                     } catch (err) {
                         console.error('Refresh on online failed:', err);
-                        try { 
+                        try {
                             await syncManager.syncNow();
-                        } catch (e) { 
-                            console.error('Sync failed:', e); 
+                        } catch (e) {
+                            console.error('Sync failed:', e);
                         }
                     }
                 } else {
@@ -183,7 +183,7 @@ export function OfflineProvider({ children }) {
 
         try {
             const progressTracker = {};
-            
+
             const results = await executePreSync((key, status, data) => {
                 progressTracker[key] = { status, ...data };
                 setPreSyncStatus(prev => ({
@@ -264,5 +264,3 @@ export function OfflineProvider({ children }) {
         </OfflineContext.Provider>
     );
 }
-
-export default OfflineContext;
