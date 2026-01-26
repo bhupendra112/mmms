@@ -447,8 +447,6 @@ export default function ApprovalManagement() {
                 return <FileText className="text-purple-600" size={20} />;
             case "fd":
                 return <DollarSign className="text-indigo-600" size={20} />;
-            case "recovery":
-                return <DollarSign className="text-green-600" size={20} />;
             case "cash_to_bank":
                 return <ArrowLeftRight className="text-orange-600" size={20} />;
             default:
@@ -466,8 +464,6 @@ export default function ApprovalManagement() {
                 return "Loan Application";
             case "fd":
                 return "Fixed Deposit";
-            case "recovery":
-                return "Demand Recovery";
             case "cash_to_bank":
                 // Check if we have conversionType in the approval data
                 const conversionType = approval?.conversionType || approval?.data?.conversionType;
