@@ -8,8 +8,8 @@
  * - Repository access
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { executePreSync, isPreSyncCompleted, getPreSyncStatus } from '../database/preSync';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { executePreSync, getPreSyncStatus } from '../database/preSync';
 import syncManager from '../database/syncEngine';
 import networkService from '../services/networkService';
 import db from '../database/db';
@@ -43,22 +43,58 @@ export function OfflineProvider({ children }) {
         total: 0,
     });
 
+    const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+    const prevOnlineRef = useRef(null);
+
     // Check pre-sync status on mount
     useEffect(() => {
         checkPreSyncStatus();
     }, []);
 
-    // Subscribe to network status
+    // Subscribe to network status; when offline→online on group panel, refresh all master data
     useEffect(() => {
-        const unsubscribe = networkService.onStatusChange((isOnline) => {
+        const unsubscribe = networkService.onStatusChange(async (isOnline) => {
+            const prevOnline = prevOnlineRef.current;
+            prevOnlineRef.current = isOnline;
             setNetworkStatus({ isOnline });
-            
-            // Start auto-sync when coming online
+
             if (isOnline) {
                 syncManager.startAutoSync();
-                syncManager.syncNow().catch(err => {
-                    console.error('Auto-sync failed:', err);
-                });
+                const path = typeof window !== 'undefined' ? window.location?.pathname || '' : '';
+                const isGroupRoute = path.startsWith('/group') && !path.startsWith('/group/login');
+                const transitionFromOffline = prevOnline === false;
+
+                if (isGroupRoute && transitionFromOffline) {
+                    try {
+                        // First, sync pending loan, FD, and recovery approvals to repository (so they get added to sync_queue)
+                        const { syncPendingLoanApprovals, syncPendingFDApprovals, syncPendingRecoveryApprovals } = await import('../services/approvalDB');
+                        await syncPendingLoanApprovals();
+                        await syncPendingFDApprovals();
+                        await syncPendingRecoveryApprovals();
+
+                        await executePreSync();
+                        await syncManager.syncNow();
+                        setLastRefreshedAt(Date.now());
+                    } catch (err) {
+                        console.error('Refresh on online failed:', err);
+                        try { 
+                            await syncManager.syncNow();
+                        } catch (e) { 
+                            console.error('Sync failed:', e); 
+                        }
+                    }
+                } else {
+                    // Also sync pending loan, FD, and recovery approvals for non-group routes
+                    try {
+                        const { syncPendingLoanApprovals, syncPendingFDApprovals, syncPendingRecoveryApprovals } = await import('../services/approvalDB');
+                        await syncPendingLoanApprovals();
+                        await syncPendingFDApprovals();
+                        await syncPendingRecoveryApprovals();
+                    } catch (e) {
+                        console.error('Error syncing pending approvals:', e);
+                    }
+                    syncManager.syncNow().catch(err => console.error('Auto-sync failed:', err));
+                }
             }
         });
 
@@ -187,6 +223,18 @@ export function OfflineProvider({ children }) {
         return await syncManager.syncNow();
     }, [networkStatus.isOnline]);
 
+    const triggerRefresh = useCallback(async () => {
+        if (!networkStatus.isOnline) {
+            throw new Error('Cannot refresh while offline');
+        }
+        try {
+            await executePreSync();
+            setLastRefreshedAt(Date.now());
+        } catch (e) {
+            throw e;
+        }
+    }, [networkStatus.isOnline]);
+
     const value = {
         // Pre-sync
         preSyncCompleted: preSyncStatus.completed,
@@ -198,11 +246,13 @@ export function OfflineProvider({ children }) {
 
         // Network
         isOnline: networkStatus.isOnline,
+        lastRefreshedAt,
 
         // Sync
         isSyncing: syncStatus.isSyncing,
         syncPending: syncStatus.pending,
         triggerSync,
+        triggerRefresh,
 
         // Database
         db,

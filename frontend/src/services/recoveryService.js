@@ -147,3 +147,13 @@ export const getMemberRecoveryStatus = async (memberId, groupId, date) => {
   const res = await httpRecovery.get(`/status/${memberId}`, { params });
   return res.data;
 };
+
+export const approveRecovery = async (id) => {
+  const res = await httpRecovery.put(`/approve/${id}`);
+  return res.data;
+};
+
+export const rejectRecovery = async (id, reason) => {
+  const res = await httpRecovery.put(`/reject/${id}`, { reason });
+  return res.data;
+};

@@ -140,8 +140,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
 
     return {
       saving: {
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Use ONLY demandDetails from backend, not recovery amounts
         prev: dd.saving?.prevDemand ?? 0,
         curr: dd.saving?.currDemand ?? 0,
         total: dd.saving?.totalDemand ?? 0,
@@ -151,8 +149,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         closing: dd.saving?.closingBalance ?? 0,
       },
       loan: {
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Use ONLY demandDetails from backend, not recovery amounts
         prev: dd.loan?.prevDemand ?? 0,
         curr: dd.loan?.currDemand ?? 0,
         total: dd.loan?.totalDemand ?? 0,
@@ -162,8 +158,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         closing: dd.loan?.closingBalance ?? 0,
       },
       interest: {
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Use ONLY demandDetails from backend, not recovery amounts
         prev: dd.interest?.prevDemand ?? 0,
         curr: dd.interest?.currDemand ?? 0,
         total: dd.interest?.totalDemand ?? 0,
@@ -176,16 +170,12 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         prev: 0,
         curr: 0,
         total: 0,
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Use ONLY demandDetails from backend, not recovery amounts
         actual: dd.fd?.actualPaid ?? 0,
         unpaid: 0,
         opening: dd.fd?.openingBalance ?? 0,
         closing: dd.fd?.closingBalance ?? 0,
       },
       yogdan: {
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Use ONLY demandDetails from backend, not recovery amounts - this fixes the issue where recovery.amounts.yogdan was showing 300 instead of 0
         prev: dd.yogdan?.prevDemand ?? 0,
         curr: dd.yogdan?.currDemand ?? 0,
         total: dd.yogdan?.totalDemand ?? 0,
@@ -195,8 +185,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         closing: dd.yogdan?.closingBalance ?? 0,
       },
       memFeesSHG: {
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Use ONLY demandDetails from backend, not recovery amounts
         prev: dd.memFeesSHG?.prevDemand ?? 0,
         curr: dd.memFeesSHG?.currDemand ?? 0,
         total: dd.memFeesSHG?.totalDemand ?? 0,
@@ -208,8 +196,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
       memFeesSamiti: {
         prev: 0,
         curr: 0,
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Note: memFeesSamiti is not in demandDetails, so we use recovery amounts if available
         total: recovery?.amounts?.memFeesSamiti ?? 0,
         actual: recovery?.amounts?.memFeesSamiti ?? 0,
         unpaid: 0,
@@ -217,8 +203,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         closing: 0,
       },
       memFeesGroup: {
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
-        // Use ONLY demandDetails from backend, not recovery amounts
         prev: dd.memFeesGroup?.prevDemand ?? 0,
         curr: dd.memFeesGroup?.currDemand ?? 0,
         total: dd.memFeesGroup?.totalDemand ?? 0,
@@ -230,7 +214,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
       penalty: {
         prev: 0,
         curr: 0,
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
         total: recovery?.amounts?.penalty ?? 0,
         actual: recovery?.amounts?.penalty ?? 0,
         unpaid: 0,
@@ -240,7 +223,6 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
       other: {
         prev: 0,
         curr: 0,
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
         total: (recovery?.amounts?.other1 ?? 0) + (recovery?.amounts?.other2 ?? 0) + (recovery?.amounts?.other ?? 0),
         actual: (recovery?.amounts?.other1 ?? 0) + (recovery?.amounts?.other2 ?? 0) + (recovery?.amounts?.other ?? 0),
         unpaid: 0,
@@ -250,9 +232,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
       charges: {
         prev: 0,
         curr: 0,
-        // Use nullish coalescing (??) instead of || to preserve 0 values for numeric fields
         total: dd.charges?.chargesTotalDemand ?? 0,
-        // For reduce operations, use ?? to preserve 0 values in array elements
         actual: Object.values(recovery?.amounts?.charges ?? {}).reduce((sum, amount) => sum + (amount ?? 0), 0),
         unpaid: dd.charges?.unpaidDemandTotal ?? 0,
         opening: 0,

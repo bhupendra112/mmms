@@ -47,3 +47,13 @@ export const updateFDStatus = async (id, status) => {
     return res.data;
 };
 
+export const approveFD = async (id) => {
+    const res = await httpFD.put(`/approve/${id}`);
+    return res.data;
+};
+
+export const rejectFD = async (id, reason) => {
+    const res = await httpFD.put(`/reject/${id}`, { reason });
+    return res.data;
+};
+

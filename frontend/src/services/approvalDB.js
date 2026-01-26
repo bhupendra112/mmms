@@ -273,6 +273,168 @@ export const getUnsyncedApprovals = async () => {
     }
 };
 
+// Sync pending loan approvals to repository (so they get added to sync_queue)
+export const syncPendingLoanApprovals = async () => {
+    try {
+        if (!approvalDB || !approvalDB.approvals) {
+            await initApprovalDB();
+        }
+
+        if (!approvalDB || !approvalDB.approvals) {
+            return { synced: 0, errors: [] };
+        }
+
+        // Get unsynced pending loan approvals
+        const approvals = await approvalDB.approvals.find({
+            selector: {
+                type: "loan",
+                status: "pending",
+                synced: false,
+            },
+        }).exec();
+
+        const approvalDocs = approvals.map((doc) => doc.toJSON());
+        let synced = 0;
+        const errors = [];
+
+        // Import registerLoan dynamically to avoid circular dependency
+        const { registerLoan } = await import('./loanServiceOffline');
+
+        for (const approval of approvalDocs) {
+            try {
+                // Convert approval request to repository record
+                // This will add it to sync_queue automatically
+                await registerLoan(approval.data);
+
+                // Mark approval as synced (converted to repository)
+                const approvalDoc = await approvalDB.approvals.findOne(approval.id).exec();
+                if (approvalDoc) {
+                    await approvalDoc.incrementalModify((doc) => {
+                        doc.synced = true;
+                        return doc;
+                    });
+                    synced++;
+                }
+            } catch (error) {
+                console.error(`Error syncing approval ${approval.id}:`, error);
+                errors.push({ approvalId: approval.id, error: error.message });
+            }
+        }
+
+        return { synced, errors };
+    } catch (error) {
+        console.error("Error syncing pending loan approvals:", error);
+        return { synced: 0, errors: [{ error: error.message }] };
+    }
+};
+
+// Sync pending FD approvals to repository (so they get added to sync_queue)
+export const syncPendingFDApprovals = async () => {
+    try {
+        if (!approvalDB || !approvalDB.approvals) {
+            await initApprovalDB();
+        }
+
+        if (!approvalDB || !approvalDB.approvals) {
+            return { synced: 0, errors: [] };
+        }
+
+        // Get unsynced pending FD approvals
+        const approvals = await approvalDB.approvals.find({
+            selector: {
+                type: "fd",
+                status: "pending",
+                synced: false,
+            },
+        }).exec();
+
+        const approvalDocs = approvals.map((doc) => doc.toJSON());
+        let synced = 0;
+        const errors = [];
+
+        // Import registerFD dynamically to avoid circular dependency
+        const { registerFD } = await import('./fdServiceOffline');
+
+        for (const approval of approvalDocs) {
+            try {
+                // Convert approval request to repository record
+                // This will add it to sync_queue automatically
+                await registerFD(approval.data);
+
+                // Mark approval as synced (converted to repository)
+                const approvalDoc = await approvalDB.approvals.findOne(approval.id).exec();
+                if (approvalDoc) {
+                    await approvalDoc.incrementalModify((doc) => {
+                        doc.synced = true;
+                        return doc;
+                    });
+                    synced++;
+                }
+            } catch (error) {
+                console.error(`Error syncing FD approval ${approval.id}:`, error);
+                errors.push({ approvalId: approval.id, error: error.message });
+            }
+        }
+
+        return { synced, errors };
+    } catch (error) {
+        console.error("Error syncing pending FD approvals:", error);
+        return { synced: 0, errors: [{ error: error.message }] };
+    }
+};
+
+// Sync pending recovery approvals
+// Note: Recoveries are already in repository (saved via updateMemberRecovery)
+// This function just marks approval requests as synced since the recovery data will sync automatically
+export const syncPendingRecoveryApprovals = async () => {
+    try {
+        if (!approvalDB || !approvalDB.approvals) {
+            await initApprovalDB();
+        }
+
+        if (!approvalDB || !approvalDB.approvals) {
+            return { synced: 0, errors: [] };
+        }
+
+        // Get unsynced pending recovery approvals
+        const approvals = await approvalDB.approvals.find({
+            selector: {
+                type: "recovery",
+                status: "pending",
+                synced: false,
+            },
+        }).exec();
+
+        const approvalDocs = approvals.map((doc) => doc.toJSON());
+        let synced = 0;
+        const errors = [];
+
+        // Recoveries are already in repository, so we just mark approval requests as synced
+        // The actual recovery data will sync automatically when online
+        for (const approval of approvalDocs) {
+            try {
+                // Mark approval as synced (recovery is already in repository)
+                const approvalDoc = await approvalDB.approvals.findOne(approval.id).exec();
+                if (approvalDoc) {
+                    await approvalDoc.incrementalModify((doc) => {
+                        doc.synced = true;
+                        return doc;
+                    });
+                    synced++;
+                }
+            } catch (error) {
+                console.error(`Error syncing recovery approval ${approval.id}:`, error);
+                errors.push({ approvalId: approval.id, error: error.message });
+            }
+        }
+
+        return { synced, errors };
+    } catch (error) {
+        console.error("Error syncing pending recovery approvals:", error);
+        return { synced: 0, errors: [{ error: error.message }] };
+    }
+};
+
 // Subscribe to Approvals
 export const subscribeToApprovals = (callback, groupId = null) => {
     if (!approvalDB) {

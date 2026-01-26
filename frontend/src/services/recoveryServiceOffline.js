@@ -8,7 +8,7 @@
  * Components should use this service instead of making direct API calls.
  */
 
-import { recoveryRepository, loanRepository, memberRepository } from '../database/repository';
+import { recoveryRepository, loanRepository, memberRepository, groupRepository, fdRepository } from '../database/repository';
 import db from '../database/db';
 
 /**
@@ -40,6 +40,7 @@ export const registerRecovery = async (data, testMode = false) => {
  * Update member recovery
  */
 export const updateMemberRecovery = async (groupId, date, memberRecovery, testMode = false) => {
+    
     if (testMode) {
         memberRecovery.testMode = true;
     }
@@ -68,11 +69,17 @@ export const updateMemberRecovery = async (groupId, date, memberRecovery, testMo
         // Add or update the member recovery
         filtered.push(memberRecovery);
         
-        const updated = await recoveryRepository.update(existing._uuid || existing._id, {
+        // Check if we're in group panel context
+        const isGroupPanel = typeof window !== 'undefined' && window.location?.pathname?.includes('/group');
+        const updatePayload = {
             ...existing,
             recoveries: filtered,
             memberRecoveries: filtered, // Support both field names
-        });
+            // Add requireApproval flag for group panel requests if not already set
+            ...(isGroupPanel && !existing.requireApproval ? { requireApproval: true,             source: 'group_sync' } : {}),
+        };
+        
+        const updated = await recoveryRepository.update(existing._uuid || existing._id, updatePayload);
         return {
             success: true,
             data: {
@@ -84,17 +91,22 @@ export const updateMemberRecovery = async (groupId, date, memberRecovery, testMo
         };
     } else {
         // Create new recovery record
+        // Check if we're in group panel context (from window.location or other means)
+        const isGroupPanel = typeof window !== 'undefined' && window.location?.pathname?.includes('/group');
         const payload = {
             groupId,
             date: dateStr,
             recoveries: [memberRecovery],
             memberRecoveries: [memberRecovery],
+            // Add requireApproval flag for group panel requests
+            ...(isGroupPanel ? { requireApproval: true, source: 'group_sync' } : {}),
         };
         if (testMode) {
             payload.testMode = true;
         }
         
         const record = await recoveryRepository.create(payload);
+        
         return {
             success: true,
             data: {
@@ -114,7 +126,48 @@ export const getRecoveryByDate = async (groupId, date, testMode = false) => {
     const recoveries = await recoveryRepository.getMerged({ groupId });
     const recovery = recoveries.find(r => {
         const rDate = r.date || r.recoveryDate;
-        return rDate === date || (rDate && new Date(rDate).toISOString().split('T')[0] === date);
+        if (!rDate) return false;
+        
+        // Direct string match (handles en-GB format like "25/01/2026")
+        if (rDate === date) return true;
+        
+        // Try to parse and compare dates
+        try {
+            // Handle string dates (could be in various formats)
+            let dateObj;
+            if (typeof rDate === 'string') {
+                // If rDate is in en-GB format (DD/MM/YYYY), convert it
+                if (rDate.includes('/')) {
+                    const [day, month, year] = rDate.split('/');
+                    dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+                } else {
+                    dateObj = new Date(rDate);
+                }
+            } else {
+                dateObj = new Date(rDate);
+            }
+            
+            // Check if date is valid
+            if (isNaN(dateObj.getTime())) return false;
+            
+            // Convert to ISO string and compare YYYY-MM-DD format
+            const rDateISO = dateObj.toISOString().split('T')[0];
+            
+            // Convert input date to YYYY-MM-DD format if it's in en-GB format
+            let dateISO = date;
+            if (date.includes('/')) {
+                const [day, month, year] = date.split('/');
+                const inputDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+                if (!isNaN(inputDateObj.getTime())) {
+                    dateISO = inputDateObj.toISOString().split('T')[0];
+                }
+            }
+            
+            return rDateISO === dateISO;
+        } catch (error) {
+            // If date parsing fails, skip this recovery
+            return false;
+        }
     });
     
     if (recovery) {
@@ -288,30 +341,299 @@ export const getPreviousRecoveryData = async (groupId, memberId, date, testMode 
 };
 
 /**
- * Get demand details - computed from local IndexedDB
+ * Get demand details - calls backend API when online, falls back to local data when offline
  */
 export const getDemandDetails = async (groupId, memberId, date, testMode = false) => {
-    // This would typically compute from loans, revenues, etc.
-    // For offline, we'll compute from local data
-    const loans = await loanRepository.getMerged({ groupId, memberId });
-    const members = await memberRepository.getMerged({ groupId });
-    const member = members.find(m => 
-        m._id === memberId || 
-        m.id === memberId ||
-        m.Member_Id === memberId
-    );
+    // When online, call backend API to get full demand details
+    if (navigator.onLine) {
+        try {
+            const httpRecovery = (await import('../api/httpRecovery')).default;
+            const params = { groupId, memberId, date };
+            if (testMode) {
+                params.testMode = 'true';
+            }
+            const res = await httpRecovery.get("/demand-details", { params });
+            return res.data;
+        } catch (error) {
+            console.error('Error fetching demand details from backend:', error);
+            // Fall through to offline calculation
+        }
+    }
+
+    // Offline fallback: compute from local data
+    // Get previous recovery data first
+    const previousDataRes = await getPreviousRecoveryData(groupId, memberId, date);
+    const previousData = previousDataRes?.success ? (previousDataRes.data || {}) : {};
     
-    // Compute demand from loans and member data
-    const totalLoan = loans.reduce((sum, loan) => sum + (parseFloat(loan.amount || 0) - parseFloat(loan.loanPaid || 0)), 0);
+    // Get all required data
+    // Note: Groups don't have groupId field, so get all groups and filter by _id
+    const [loans, members, allGroups, fds, recoveries] = await Promise.all([
+        loanRepository.getMerged({ groupId, memberId }),
+        memberRepository.getMerged({ groupId }),
+        groupRepository.getMerged({}), // Get all groups, then filter by _id
+        fdRepository.getMerged({ groupId, memberId }),
+        recoveryRepository.getMerged({ groupId })
+    ]);
     
+    // Find the specific group by _id
+    const group = allGroups.find(g => {
+        const gId = g._id || g.id || g.uuid;
+        const targetId = groupId;
+        return String(gId) === String(targetId);
+    });
+    
+    const member = members.find(m => {
+        const mId = m._id || m.id || m.Member_Id;
+        return String(mId) === String(memberId);
+    });
+    
+    if (!member) {
+        return {
+            success: false,
+            message: 'Member not found',
+            data: null,
+        };
+    }
+    
+    // Parse date
+    let parsedDate = date ? new Date(date) : new Date();
+    if (typeof date === 'string' && date.includes('/')) {
+        const [d, m, y] = date.split('/');
+        parsedDate = new Date(+y, +m - 1, +d);
+    }
+    parsedDate.setHours(0, 0, 0, 0);
+    
+    // Helper: Get cumulative payments from previous recoveries (before current date)
+    const getCumulativePayments = (category) => {
+        let total = 0;
+        recoveries.forEach(recovery => {
+            const rDate = recovery.date || recovery.recoveryDate;
+            if (!rDate) return;
+            const recoveryDate = new Date(rDate);
+            recoveryDate.setHours(0, 0, 0, 0);
+            if (recoveryDate >= parsedDate) return; // Skip current and future dates
+            
+            const memberRecoveries = recovery.memberRecoveries || recovery.recoveries || [];
+            const memberRecovery = memberRecoveries.find(mr => 
+                (mr.memberId || mr.id) === memberId ||
+                (mr.memberCode || mr.memberId) === memberId
+            );
+            
+            if (memberRecovery && memberRecovery.amounts) {
+                const amounts = memberRecovery.amounts;
+                if (category === 'saving') total += parseFloat(amounts.saving || 0);
+                else if (category === 'loan') total += parseFloat(amounts.loan || 0);
+                else if (category === 'interest') total += parseFloat(amounts.interest || 0);
+                else if (category === 'yogdan') total += parseFloat(amounts.yogdan || 0);
+                else if (category === 'fd') total += parseFloat(amounts.fd || 0);
+            }
+        });
+        return total;
+    };
+    
+    // ------------------ LOAN ------------------
+    const memberLoanPaid = parseFloat(member.loanPaid || member.loanDetails?.loanPaid || 0);
+    const isExistingMember = member.isExistingMember || false;
+    const loanPaidFromRecoveries = getCumulativePayments('loan');
+    const totalLoanPaid = memberLoanPaid + loanPaidFromRecoveries;
+    
+    const approvedLoans = loans.filter(l => 
+        l.transactionType === 'Loan' && 
+        l.status === 'approved' &&
+        (!l.date || new Date(l.date) <= parsedDate)
+    ).sort((a, b) => {
+        const dateA = a.date ? new Date(a.date) : new Date(0);
+        const dateB = b.date ? new Date(b.date) : new Date(0);
+        return dateA - dateB;
+    });
+    
+    // Calculate total loan amount (backend logic: for existing members with loanPaid, add it to principal)
+    let totalLoanAmount = 0;
+    if (approvedLoans.length > 0) {
+        const principal = approvedLoans.reduce((sum, loan) => sum + parseFloat(loan.amount || 0), 0);
+        totalLoanAmount = isExistingMember && memberLoanPaid > 0
+            ? principal + memberLoanPaid
+            : principal;
+    } else {
+        totalLoanAmount = parseFloat(member.loanDetails?.amount || 0);
+    }
+    
+    const remainingLoan = Math.max(0, totalLoanAmount - totalLoanPaid);
+    
+    // Calculate current loan demand (monthly installment if applicable, otherwise remaining loan)
+    let loanCurrDemand = remainingLoan;
+    if (approvedLoans.length > 0 && group?.meeting_date_1_day && group?.meeting_date_2_day) {
+        // Calculate monthly installment from all active loans
+        let monthlyInstallment = 0;
+        for (const loan of approvedLoans) {
+            if (loan.installment_amount) {
+                monthlyInstallment += parseFloat(loan.installment_amount);
+            } else if (loan.time_period) {
+                monthlyInstallment += parseFloat(loan.amount || 0) / parseFloat(loan.time_period);
+            }
+        }
+        // If two meetings, divide by 2
+        loanCurrDemand = monthlyInstallment / 2;
+    }
+    
+    const loanPrevDemand = previousData.loan?.unpaidDemand || 0;
+    const loanTotalDemand = loanPrevDemand + loanCurrDemand;
+    // Unpaid demand is min of remaining loan and (total demand - actual paid)
+    const loanUnpaidDemand = Math.min(remainingLoan, Math.max(0, loanTotalDemand - 0)); // actualLoan is 0 for display
+    
+    // ------------------ SAVING ------------------
+    const savingPerMember = member.isExistingMember && member.saving_per_member_snapshot
+        ? member.saving_per_member_snapshot
+        : (group?.saving_per_member || 0);
+    
+    const openingSaving = parseFloat(member.openingSaving || 0);
+    const savingPaidFromRecoveries = getCumulativePayments('saving');
+    const totalSavingPaid = openingSaving + savingPaidFromRecoveries;
+    
+    const savingPrevDemand = previousData.saving?.unpaidDemand || 0;
+    const savingCurrDemand = savingPerMember;
+    const savingTotalDemand = savingPrevDemand + savingCurrDemand;
+    const savingUnpaidDemand = Math.max(0, savingTotalDemand - 0); // actualSaving is 0 for display
+    
+    // ------------------ INTEREST ------------------
+    // Get overdue interest from member
+    const overdueInterest = parseFloat(member.loanDetails?.overdueInterest || 0);
+    const interestPaid = getCumulativePayments('interest');
+    const remainingOverdueInterest = Math.max(0, overdueInterest - interestPaid);
+    
+    // Simplified interest calculation for offline
+    // In full version, this would calculate interest per loan based on meeting dates
+    const interestPrevDemand = previousData.interest?.unpaidDemand || 0;
+    const interestCurrDemand = remainingOverdueInterest > 0 
+        ? remainingOverdueInterest 
+        : 0; // Complex calculation simplified - would need meeting dates and loan rates
+    const interestTotalDemand = interestPrevDemand + interestCurrDemand;
+    const interestUnpaidDemand = Math.max(0, interestTotalDemand - 0); // actualInterest is 0 for display
+    
+    // ------------------ FD ------------------
+    const openingFd = parseFloat(member.fdDetails?.amount || 0);
+    const fdPaidFromRecoveries = getCumulativePayments('fd');
+    const fdFromFDMaster = fds
+        .filter(fd => fd.status === 'active' || fd.status === 'matured')
+        .reduce((sum, fd) => sum + parseFloat(fd.amount || 0), 0);
+    const totalFdPaid = openingFd + fdFromFDMaster + fdPaidFromRecoveries;
+    
+    // ------------------ YOGDAN ------------------
+    // Calculate yogdan (1% of loan amount) for loans where yogdanCollected is false
+    const unpaidYogdanLoans = approvedLoans.filter(loan => !loan.yogdanCollected);
+    const yogdanTotalDemand = unpaidYogdanLoans.reduce((sum, loan) => {
+        const loanAmount = parseFloat(loan.amount || 0);
+        const yogdanAmount = loan.yogdanAmount 
+            ? parseFloat(loan.yogdanAmount)
+            : Math.round((loanAmount * 0.01) * 100) / 100;
+        return sum + yogdanAmount;
+    }, 0);
+    
+    const yogdanPaidFromRecoveries = getCumulativePayments('yogdan');
+    const yogdanPrevUnpaid = previousData.yogdan?.prevDemand || previousData.yogdan?.unpaidDemand || 0;
+    const yogdanTotalDemandWithPrev = yogdanPrevUnpaid + yogdanTotalDemand;
+    const yogdanUnpaidDemand = Math.max(0, yogdanTotalDemandWithPrev - 0); // actualYogdan is 0 for display
+    
+    // ------------------ MEMBERSHIP FEES ------------------
+    // Simplified calculation based on group settings
+    const memFeesSHGTotalDemand = group?.Mship_Group || 0;
+    const memFeesGroupTotalDemand = group?.membership_fees || 0;
+    
+    const memFeesSHGPrevUnpaid = previousData.memFeesSHG?.prevDemand || previousData.memFeesSHG?.unpaidDemand || 0;
+    const memFeesGroupPrevUnpaid = previousData.memFeesGroup?.prevDemand || previousData.memFeesGroup?.unpaidDemand || 0;
+    
+    const memFeesSHGUnpaidDemand = Math.max(0, memFeesSHGPrevUnpaid + memFeesSHGTotalDemand - 0); // actualMemFeesSHG is 0 for display
+    const memFeesGroupUnpaidDemand = Math.max(0, memFeesGroupPrevUnpaid + memFeesGroupTotalDemand - 0); // actualMemFeesGroup is 0 for display
+    
+    // ------------------ CHARGES ------------------
+    const chargesDue = {};
+    if (group?.charges && Array.isArray(group.charges)) {
+        // Simplified: calculate charges based on group charge cycles
+        // This is a simplified version - full calculation would require date-based cycle logic
+        group.charges.forEach(charge => {
+            if (charge.name && charge.amount) {
+                chargesDue[charge.name] = parseFloat(charge.amount) || 0;
+            }
+        });
+    }
+    
+    const chargesTotalDemand = Object.values(chargesDue).reduce((sum, amt) => sum + parseFloat(amt || 0), 0);
+    const chargesPrevUnpaid = previousData.charges?.unpaidDemand || {};
+    const chargesPrevUnpaidTotal = Object.values(chargesPrevUnpaid).reduce((sum, amt) => sum + parseFloat(amt || 0), 0);
+    const chargesUnpaidDemand = { ...chargesDue, ...chargesPrevUnpaid };
+    const chargesUnpaidTotal = chargesTotalDemand + chargesPrevUnpaidTotal;
+    
+    const demandDetails = {
+            loan: {
+                prevDemand: loanPrevDemand,
+                currDemand: loanCurrDemand,
+                totalDemand: loanTotalDemand,
+                actualPaid: 0,
+                unpaidDemand: loanUnpaidDemand,
+                openingBalance: totalLoanPaid,
+                closingBalance: totalLoanPaid,
+            },
+            interest: {
+                prevDemand: interestPrevDemand,
+                currDemand: interestCurrDemand,
+                totalDemand: interestTotalDemand,
+                actualPaid: 0,
+                unpaidDemand: interestUnpaidDemand,
+                openingBalance: interestPaid,
+                closingBalance: interestPaid,
+            },
+            saving: {
+                prevDemand: savingPrevDemand,
+                currDemand: savingCurrDemand,
+                totalDemand: savingTotalDemand,
+                actualPaid: 0,
+                unpaidDemand: savingUnpaidDemand,
+                openingBalance: totalSavingPaid,
+                closingBalance: totalSavingPaid,
+            },
+            fd: {
+                actualPaid: 0,
+                openingBalance: totalFdPaid,
+                closingBalance: totalFdPaid,
+            },
+            yogdan: {
+                prevDemand: yogdanPrevUnpaid,
+                currDemand: yogdanTotalDemand,
+                totalDemand: yogdanTotalDemandWithPrev,
+                actualPaid: 0,
+                unpaidDemand: yogdanUnpaidDemand,
+                openingBalance: yogdanPaidFromRecoveries,
+                closingBalance: yogdanPaidFromRecoveries,
+            },
+            memFeesSHG: {
+                prevDemand: memFeesSHGPrevUnpaid,
+                currDemand: memFeesSHGTotalDemand,
+                totalDemand: memFeesSHGPrevUnpaid + memFeesSHGTotalDemand,
+                actualPaid: 0,
+                unpaidDemand: memFeesSHGUnpaidDemand,
+            },
+            memFeesGroup: {
+                prevDemand: memFeesGroupPrevUnpaid,
+                currDemand: memFeesGroupTotalDemand,
+                totalDemand: memFeesGroupPrevUnpaid + memFeesGroupTotalDemand,
+                actualPaid: 0,
+                unpaidDemand: memFeesGroupUnpaidDemand,
+            },
+            charges: {
+                chargesDue,
+                chargesTotalDemand,
+                chargesPrevUnpaid,
+                chargesPrevUnpaidTotal,
+                actualPaid: {},
+                actualPaidTotal: 0,
+                unpaidDemand: chargesUnpaidDemand,
+                unpaidDemandTotal: chargesUnpaidTotal,
+            },
+        };
+
     return {
         success: true,
-        data: {
-            memberId,
-            memberName: member?.Member_Nm || member?.name || '',
-            totalLoan,
-            // Add other demand calculations as needed
-        },
+        data: demandDetails,
     };
 };
 

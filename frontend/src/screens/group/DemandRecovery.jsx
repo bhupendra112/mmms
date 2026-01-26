@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { DollarSign } from "lucide-react";
+import { DollarSign, RefreshCw, CloudOff } from "lucide-react";
 import { exportRecoveryToExcel } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
+import { useOffline } from "../../contexts/OfflineContext";
 import { createApprovalRequest } from "../../services/approvalDB";
 import {
   updateMemberRecovery,
@@ -32,6 +33,7 @@ import FullLoanRecoveryModal from "../../components/recovery/FullLoanRecoveryMod
 
 export default function DemandRecovery() {
   const { currentGroup, isGroupPanel, isGroupLoading } = useGroup();
+  const { isOnline, triggerRefresh, lastRefreshedAt } = useOffline();
   const isAdminMode = !isGroupPanel;
 
   const [groups, setGroups] = useState([]);
@@ -98,6 +100,9 @@ export default function DemandRecovery() {
   const [fullLoanRecoveryOnlineRef, setFullLoanRecoveryOnlineRef] = useState("");
   const [fullLoanRecoveryScreenshot, setFullLoanRecoveryScreenshot] = useState(null);
 
+  const [refreshInProgress, setRefreshInProgress] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState(null);
+
   const [loanTotals, setLoanTotals] = useState({
     totalLoanAmount: 0,
     totalLoanRecovered: 0,
@@ -151,7 +156,8 @@ export default function DemandRecovery() {
 
   // Responsive-safe wrapper demand summary (FIX: always pass required args)
   const getMemberDemandSummary = (memberId) => {
-    return getDemandSummaryUtil(memberId, recoveries, demandSummaries);
+    const summary = getDemandSummaryUtil(memberId, recoveries, demandSummaries);
+    return summary;
   };
 
   // Admin mode: load groups list
@@ -180,7 +186,7 @@ export default function DemandRecovery() {
         setGroups([]);
       })
       .finally(() => setGroupsLoading(false));
-  }, [isAdminMode]);
+  }, [isAdminMode, lastRefreshedAt]);
 
   // Load members when active group changes
   useEffect(() => {
@@ -209,7 +215,7 @@ export default function DemandRecovery() {
         console.error("Failed to load members:", e);
         setAllMembers([]);
       });
-  }, [activeGroup?.id]);
+  }, [activeGroup?.id, lastRefreshedAt]);
 
   // Load active loans (latest approved loan per member)
   useEffect(() => {
@@ -233,7 +239,7 @@ export default function DemandRecovery() {
         console.error("Error loading loans:", err);
         setActiveLoans({});
       });
-  }, [activeGroup?.id]);
+  }, [activeGroup?.id, lastRefreshedAt]);
 
   // Load group banks
   useEffect(() => {
@@ -252,7 +258,7 @@ export default function DemandRecovery() {
         console.error("Error loading banks:", e);
         setGroupBanks([]);
       });
-  }, [activeGroup?.id]);
+  }, [activeGroup?.id, lastRefreshedAt]);
 
   const loadRecoveries = async () => {
     if (!activeGroup?.id) return;
@@ -282,7 +288,7 @@ export default function DemandRecovery() {
   useEffect(() => {
     if (activeGroup?.id) loadRecoveries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGroup?.id]);
+  }, [activeGroup?.id, lastRefreshedAt]);
 
   // Current member derived
   const currentMember = allMembers[currentMemberIndex];
@@ -321,10 +327,14 @@ export default function DemandRecovery() {
     getDemandDetails(activeGroup.id, member.id, today)
       .then((res) => {
         if (res?.success && res?.data) {
-          setDemandSummaries((prev) => ({ ...prev, [member.id]: res.data }));
+          // FIX: Store res.data.data (the actual demandDetails) instead of res.data (the wrapper)
+          const demandDetails = res.data.data || res.data;
+          setDemandSummaries((prev) => ({ ...prev, [member.id]: demandDetails }));
         }
       })
-      .catch((err) => console.error("Error loading demand details:", err));
+      .catch((err) => {
+        console.error("Error loading demand details:", err);
+      });
 
     getMemberLoanTotals(activeGroup.id, member.id)
       .then((res) => {
@@ -931,15 +941,39 @@ export default function DemandRecovery() {
       getDemandDetails(activeGroup.id, currentMember.id, today)
         .then((res) => {
           if (res?.success && res?.data) {
-            setDemandSummaries((prev) => ({ ...prev, [currentMember.id]: res.data }));
+            // FIX: Store res.data.data (the actual demandDetails) instead of res.data (the wrapper)
+            const demandDetails = res.data.data || res.data;
+            setDemandSummaries((prev) => ({ ...prev, [currentMember.id]: demandDetails }));
           }
         })
-        .catch((err) => console.error("Error reloading demand details:", err));
+        .catch((err) => {
+          console.error("Error reloading demand details:", err);
+        });
     } catch (error) {
       console.error("Error saving full loan recovery:", error);
       alert(error?.response?.data?.message || error?.message || "Error saving full loan recovery");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGetFreshData = async () => {
+    if (!isOnline) {
+      setRefreshMessage({ type: "error", text: "You are offline. Connect to the internet to fetch fresh data." });
+      setTimeout(() => setRefreshMessage(null), 4000);
+      return;
+    }
+    setRefreshMessage(null);
+    setRefreshInProgress(true);
+    try {
+      await triggerRefresh();
+      setRefreshMessage({ type: "success", text: "Full fresh data loaded (groups, members, loans, FDs, payments, recoveries, expenses)." });
+      setTimeout(() => setRefreshMessage(null), 4000);
+    } catch (err) {
+      setRefreshMessage({ type: "error", text: err?.message || "Failed to fetch fresh data." });
+      setTimeout(() => setRefreshMessage(null), 5000);
+    } finally {
+      setRefreshInProgress(false);
     }
   };
 
@@ -1078,21 +1112,56 @@ export default function DemandRecovery() {
       <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-5 md:py-6">
         {/* Header */}
         <div className="mb-4 sm:mb-6">
-          <div className="flex flex-col gap-2 sm:gap-3">
-            <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-gray-800 flex items-center gap-2 sm:gap-3">
-              <DollarSign className="shrink-0 w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7" />
-              <span className="truncate">Recovery Management</span>
-            </h1>
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
+            <div className="flex flex-col gap-2 sm:gap-3">
+              <h1 className="text-lg sm:text-2xl md:text-3xl font-bold text-gray-800 flex items-center gap-2 sm:gap-3">
+                <DollarSign className="shrink-0 w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7" />
+                <span className="truncate">Recovery Management</span>
+              </h1>
 
-            <p className="text-xs sm:text-sm md:text-base text-gray-600 break-words">
-              {activeGroup
-                ? `Enter recovery for all members of ${activeGroup.name}`
-                : isAdminMode
-                  ? "Select a group to start recovery process"
-                  : "Loading group information..."}
-            </p>
+              <p className="text-xs sm:text-sm md:text-base text-gray-600 break-words">
+                {activeGroup
+                  ? `Enter recovery for all members of ${activeGroup.name}`
+                  : isAdminMode
+                    ? "Select a group to start recovery process"
+                    : "Loading group information..."}
+              </p>
+            </div>
+            
+            {/* Get Fresh Data Button */}
+            {isOnline ? (
+              <button
+                type="button"
+                onClick={handleGetFreshData}
+                disabled={refreshInProgress || !activeGroup?.id}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                title="Fetch latest data from backend (groups, members, loans, FDs, payments, recoveries, expenses)"
+              >
+                <RefreshCw className={`w-4 h-4 shrink-0 ${refreshInProgress ? "animate-spin" : ""}`} />
+                {refreshInProgress ? "Fetching…" : "Get full fresh data"}
+              </button>
+            ) : (
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-100 text-gray-500 text-sm shrink-0">
+                <CloudOff className="w-4 h-4" />
+                <span className="hidden sm:inline">Offline – connect to get full fresh data</span>
+                <span className="sm:hidden">Offline</span>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Refresh Message */}
+        {refreshMessage && (
+          <div
+            className={`mb-4 px-4 py-3 rounded-lg text-sm ${
+              refreshMessage.type === "success"
+                ? "bg-green-50 text-green-800 border border-green-200"
+                : "bg-red-50 text-red-800 border border-red-200"
+            }`}
+          >
+            {refreshMessage.text}
+          </div>
+        )}
 
         {/* Step 0: Select Cluster & Group (Admin only) */}
         {isAdminMode && currentStep === 0 && (

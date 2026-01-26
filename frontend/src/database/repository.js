@@ -269,12 +269,23 @@ export class BaseRepository {
         }
 
         let query = db[masterStoreName].where('entityType').equals(this.entityType);
-        
+
+        const norm = (v) => (v == null ? '' : typeof v === 'object' && v._id != null ? String(v._id) : String(v));
         if (filters.groupId) {
-            query = query.filter(record => record.payload?.groupId === filters.groupId);
+            const g = norm(filters.groupId);
+            query = query.filter((record) => {
+                const p = record.payload || {};
+                const pg = p.groupId ?? p.group_id ?? p.group;
+                return norm(pg) === g;
+            });
         }
         if (filters.memberId) {
-            query = query.filter(record => record.payload?.memberId === filters.memberId);
+            const m = norm(filters.memberId);
+            query = query.filter((record) => {
+                const p = record.payload || {};
+                const pm = p.memberId ?? p.member_id ?? p.member;
+                return norm(pm) === m;
+            });
         }
 
         return await query.toArray();
@@ -293,9 +304,23 @@ export class BaseRepository {
             this.getAll(filters),
         ]);
 
+        // Skip synced member creates that are pending approval — they "go for approval";
+        // hide in group panel until approved, then show from master.
+        const toAdd = transactions.filter((tx) => {
+            if (
+                this.entityType === EntityTypes.MEMBER &&
+                tx.operation === Operations.CREATE &&
+                tx.syncStatus === SyncStatuses.SYNCED &&
+                tx.payload?.approvalStatus === 'pending'
+            ) {
+                return false;
+            }
+            return true;
+        });
+
         // Create a map of transactions by their backend ID (if synced) or UUID
         const transactionMap = new Map();
-        transactions.forEach(tx => {
+        toAdd.forEach((tx) => {
             const id = tx.payload?._id || tx.payload?.id || tx.uuid;
             transactionMap.set(id, tx);
         });
@@ -304,8 +329,8 @@ export class BaseRepository {
         const merged = [];
         const processedIds = new Set();
 
-        // Add all transactions (includes local creates)
-        transactions.forEach(tx => {
+        // Add all transactions (includes local creates), excluding skipped pending member creates
+        toAdd.forEach((tx) => {
             const id = tx.payload?._id || tx.payload?.id || tx.uuid;
             if (!tx.payload?._deleted) {
                 merged.push({
@@ -320,7 +345,7 @@ export class BaseRepository {
         });
 
         // Add master data that hasn't been overridden
-        masterData.forEach(master => {
+        masterData.forEach((master) => {
             const id = master.payload?._id || master.payload?.id || master.uuid;
             if (!processedIds.has(id) && !transactionMap.has(id)) {
                 merged.push({

@@ -5,7 +5,9 @@ import {
     getFDsByGroup,
     getAllFDs,
     getFDDetail,
-    updateFDStatus
+    updateFDStatus,
+    approveFD,
+    rejectFD
 } from "../../controller/admin/fdController.js";
 import authAdmin from "../../middleware/authorization.js";
 
@@ -28,6 +30,12 @@ Router.get("/detail/:id", authAdmin, getFDDetail);
 
 // Update FD status
 Router.put("/status/:id", authAdmin, updateFDStatus);
+
+// Approve FD (from group panel)
+Router.put("/approve/:id", authAdmin, approveFD);
+
+// Reject FD (from group panel)
+Router.put("/reject/:id", authAdmin, rejectFD);
 
 export default Router;
 

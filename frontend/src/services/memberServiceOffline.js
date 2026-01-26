@@ -9,7 +9,8 @@
  */
 
 import { memberRepository, loanRepository, recoveryRepository, paymentRepository } from '../database/repository';
-import { EntityTypes, Operations } from '../database/db';
+import { EntityTypes, Operations, SyncStatuses } from '../database/db';
+import { getMembersByGroup as fetchMembersByGroupApi } from './memberService';
 
 /**
  * Register a new member
@@ -36,7 +37,8 @@ export const registerMember = async (data) => {
                 payload[key] = value;
             }
         }
-        
+        payload.groupId = payload.group_id || payload.groupId;
+
         const record = await memberRepository.create(payload);
         return {
             success: true,
@@ -68,15 +70,43 @@ export const registerMember = async (data) => {
 };
 
 /**
- * Get members by group
+ * Get members by group.
+ * When online: fetches fresh approved members from API (so newly approved appear)
+ * and merges with local pending creates. When offline: uses getMerged (master + tx).
  */
 export const getMembersByGroup = async (groupId) => {
+    if (!groupId) {
+        return { success: true, data: [] };
+    }
+
+    const localTx = await memberRepository.getAll({ groupId });
+    const localPendingCreates = localTx.filter(
+        (tx) =>
+            tx.operation === Operations.CREATE &&
+            !tx.payload?._deleted &&
+            (tx.syncStatus === SyncStatuses.PENDING || tx.syncStatus === SyncStatuses.FAILED)
+    );
+    const localMembers = localPendingCreates.map((tx) => ({
+        ...tx.payload,
+        _uuid: tx.uuid,
+        _syncStatus: tx.syncStatus,
+        _operation: tx.operation,
+        _isLocal: true,
+    }));
+
+    if (navigator.onLine) {
+        try {
+            const apiRes = await fetchMembersByGroupApi(groupId);
+            const apiList = Array.isArray(apiRes?.data) ? apiRes.data : [];
+            const members = [...apiList, ...localMembers];
+            return { success: true, data: members };
+        } catch (e) {
+            console.warn('getMembersByGroup: API fetch failed, using local merge', e);
+        }
+    }
+
     const members = await memberRepository.getMerged({ groupId });
-    
-    return {
-        success: true,
-        data: members,
-    };
+    return { success: true, data: members };
 };
 
 /**

@@ -11,6 +11,7 @@ import {
     AlertTriangle,
 } from "lucide-react";
 import { useGroup } from "../../contexts/GroupContext";
+import { useOffline } from "../../contexts/OfflineContext";
 
 // Offline-first service - all operations save to IndexedDB first
 import {
@@ -25,6 +26,7 @@ import { getCashAmount } from "../../services/cashAmount";
 
 export default function ExpenseManagement() {
     const { currentGroup, isGroupLoading } = useGroup();
+    const { lastRefreshedAt } = useOffline();
 
     const [expenses, setExpenses] = useState([]);
     const [expensesLoading, setExpensesLoading] = useState(false);
@@ -89,7 +91,7 @@ export default function ExpenseManagement() {
             loadCashBalance();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentGroup?.id]);
+    }, [currentGroup?.id, lastRefreshedAt]);
 
     const loadCashBalance = async () => {
         if (!currentGroup?.id) return;

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { DollarSign, Calendar, Banknote, Search, Filter, CheckCircle, XCircle, Clock, Eye, Wallet, CreditCard } from "lucide-react";
 import { Input, Select, FormSection } from "../../components/forms/FormComponents";
 import { useGroup } from "../../contexts/GroupContext";
+import { useOffline } from "../../contexts/OfflineContext";
 import { 
     getMaturedFDs, 
     getMemberSavings, 
@@ -14,6 +15,7 @@ import { getCashAmount } from "../../services/cashAmount";
 
 export default function PaymentManagement() {
     const { currentGroup, isGroupLoading } = useGroup();
+    const { lastRefreshedAt } = useOffline();
     const [activeTab, setActiveTab] = useState("fd_maturity"); // "fd_maturity", "saving_withdrawal", "history"
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
@@ -60,7 +62,7 @@ export default function PaymentManagement() {
                 loadPaymentHistory();
             }
         }
-    }, [currentGroup, isGroupLoading, activeTab]);
+    }, [currentGroup, isGroupLoading, activeTab, lastRefreshedAt]);
 
     const loadCashBalance = async (groupId) => {
         if (!groupId) return;

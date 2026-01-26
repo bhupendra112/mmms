@@ -10,8 +10,9 @@ import db, { createRecord, EntityTypes, SyncStatuses } from './db';
 import { getAuthToken } from '../utils/getAuthToken';
 
 /**
- * Configuration for pre-sync endpoints
- * Each endpoint fetches master data for a specific entity type
+ * Configuration for pre-sync endpoints.
+ * Each endpoint fetches master data for a specific entity type.
+ * Covers all group-panel list APIs: groups, members, loans, FDs, payments, recoveries, expenses.
  */
 const PRE_SYNC_CONFIG = {
     // Groups
@@ -49,11 +50,17 @@ const PRE_SYNC_CONFIG = {
         entityType: EntityTypes.PAYMENT,
     },
     
-    // Recoveries
-    recoveries: {
-        endpoint: '/api/admin/recovery/list',
-        store: 'master_recoveries',
-        entityType: EntityTypes.RECOVERY,
+    // Recoveries (fetched per group so list returns data)
+    recoveries: { store: 'master_recoveries', entityType: EntityTypes.RECOVERY, customFetch: null },
+
+    // Banks (per group; full fresh data)
+    banks: { store: 'master_banks', entityType: EntityTypes.BANK, customFetch: null },
+
+    // Expenses (group panel)
+    expenses: {
+        endpoint: '/api/admin/expense',
+        store: 'master_expenses',
+        entityType: EntityTypes.EXPENSE,
     },
 };
 
@@ -70,6 +77,10 @@ function getApiOrigin() {
     }
 }
 
+const DEBUG_LOG = (loc, msg, data, hypothesisId = 'H1') => {
+    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId }) }).catch(() => {});
+};
+
 /**
  * Fetch data from backend endpoint
  */
@@ -82,6 +93,10 @@ async function fetchFromBackend(endpoint) {
     const baseURL = getApiOrigin();
     const url = `${baseURL}${endpoint}`;
 
+    // #region agent log
+    DEBUG_LOG('preSync.js:fetchFromBackend', 'API fetch start', { endpoint, url }, 'H1');
+    // #endregion
+
     const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -89,6 +104,10 @@ async function fetchFromBackend(endpoint) {
             'Content-Type': 'application/json',
         },
     });
+
+    // #region agent log
+    DEBUG_LOG('preSync.js:fetchFromBackend', 'API fetch response', { endpoint, status: response.status, ok: response.ok }, 'H1');
+    // #endregion
 
     // Handle 404 gracefully - return empty array instead of throwing
     if (response.status === 404) {
@@ -106,8 +125,91 @@ async function fetchFromBackend(endpoint) {
         throw new Error(`Failed to fetch ${endpoint}: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json();
-    return data?.data || data || [];
+    const raw = await response.json();
+    const data = raw?.data || raw || [];
+
+    // #region agent log
+    const isArr = Array.isArray(data);
+    let firstKeys = [];
+    try {
+        if (isArr && data[0]) firstKeys = Object.keys(data[0]).slice(0, 12);
+        else if (data && typeof data === 'object' && !Array.isArray(data)) firstKeys = Object.keys(data).slice(0, 12);
+    } catch (_) {}
+    DEBUG_LOG('preSync.js:fetchFromBackend', 'API fetch data', {
+        endpoint,
+        baseURL,
+        isArray: isArr,
+        length: isArr ? data.length : 0,
+        firstKeys,
+    }, 'H1');
+    // #endregion
+
+    return data;
+}
+
+/**
+ * Fetch from backend with query params (e.g. ?groupId=...)
+ */
+async function fetchFromBackendWithQuery(endpoint, params = {}) {
+    const token = getAuthToken();
+    if (!token) throw new Error('Authentication token not found');
+    const baseURL = getApiOrigin();
+    const search = new URLSearchParams(params).toString();
+    const url = `${baseURL}${endpoint}${search ? `?${search}` : ''}`;
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (response.status === 404) return [];
+    if (response.status === 401) throw new Error('Authentication failed. Please login again.');
+    if (!response.ok) throw new Error(`Failed to fetch ${endpoint}: ${response.status} ${response.statusText}`);
+    const raw = await response.json();
+    return raw?.data || raw || [];
+}
+
+/**
+ * Fetch recoveries per group (list returns 0 without groupId; per-group returns data).
+ */
+async function fetchRecoveriesForAllGroups() {
+    const groups = await db.master_groups.toArray();
+    const ids = groups.map((r) => r.payload?._id || r.payload?.id || r.uuid).filter(Boolean);
+    const out = [];
+    for (const gid of ids) {
+        const sid = typeof gid === 'object' && gid?.toString ? gid.toString() : String(gid);
+        const arr = await fetchFromBackendWithQuery('/api/admin/recovery/list', { groupId: sid });
+        if (Array.isArray(arr)) {
+            arr.forEach((r) => {
+                const g = r.groupId?._id ?? r.groupId ?? r.group_id ?? r.group ?? sid;
+                out.push({ ...r, groupId: typeof g === 'object' && g != null && g._id != null ? String(g._id) : String(g) });
+            });
+        }
+    }
+    return out;
+}
+
+/**
+ * Fetch banks per group and flatten (full fresh data includes banks).
+ */
+async function fetchBanksForAllGroups() {
+    const groups = await db.master_groups.toArray();
+    const ids = groups.map((r) => r.payload?._id || r.payload?.id || r.uuid).filter(Boolean);
+    const baseURL = getApiOrigin();
+    const token = getAuthToken();
+    if (!token) return [];
+    const out = [];
+    for (const gid of ids) {
+        const sid = typeof gid === 'object' && gid?.toString ? gid.toString() : String(gid);
+        const url = `${baseURL}/api/admin/group/${sid}/banks`;
+        const res = await fetch(url, { method: 'GET', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
+        if (!res.ok) continue;
+        const raw = await res.json().catch(() => ({}));
+        const arr = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
+        arr.forEach((b) => {
+            const g = b.groupId ?? b.group_id ?? b.group ?? sid;
+            out.push({ ...b, groupId: typeof g === 'object' && g != null && g._id != null ? String(g._id) : String(g) });
+        });
+    }
+    return out;
 }
 
 /**
@@ -116,6 +218,9 @@ async function fetchFromBackend(endpoint) {
 async function storeMasterData(storeName, entityType, data) {
     const store = db[storeName];
     if (!store) {
+        // #region agent log
+        DEBUG_LOG('preSync.js:storeMasterData', 'Store missing', { storeName, entityType }, 'H2');
+        // #endregion
         console.warn(`Store ${storeName} does not exist`);
         return;
     }
@@ -144,6 +249,10 @@ async function storeMasterData(storeName, entityType, data) {
         await store.bulkPut(snapshotRecords);
     }
 
+    // #region agent log
+    DEBUG_LOG('preSync.js:storeMasterData', 'Stored master data', { storeName, entityType, count: snapshotRecords.length }, 'H2');
+    // #endregion
+
     return snapshotRecords.length;
 }
 
@@ -153,21 +262,36 @@ async function storeMasterData(storeName, entityType, data) {
 async function preSyncEntity(key, config, onProgress) {
     try {
         onProgress?.(key, 'fetching');
-        
-        // Fetch data from backend
-        const data = await fetchFromBackend(config.endpoint);
-        
+        // #region agent log
+        DEBUG_LOG('preSync.js:preSyncEntity', 'Entity sync start', { key, endpoint: config.endpoint || (key === 'recoveries' ? 'per-group' : key === 'banks' ? 'per-group' : ''), store: config.store }, 'H3');
+        // #endregion
+
+        let data;
+        if (key === 'recoveries') {
+            data = await fetchRecoveriesForAllGroups();
+        } else if (key === 'banks') {
+            data = await fetchBanksForAllGroups();
+        } else {
+            data = await fetchFromBackend(config.endpoint);
+        }
+
         onProgress?.(key, 'storing');
-        
+
         // Store in IndexedDB
         const count = await storeMasterData(config.store, config.entityType, data);
-        
+
         onProgress?.(key, 'completed', { count });
+        // #region agent log
+        DEBUG_LOG('preSync.js:preSyncEntity', 'Entity sync done', { key, count, success: true }, 'H3');
+        // #endregion
         return { success: true, key, count };
     } catch (error) {
         // Don't throw auth errors - mark as failed but continue
         const isAuthError = error.message.includes('Authentication') || error.message.includes('401');
         onProgress?.(key, 'failed', { error: error.message, isAuthError });
+        // #region agent log
+        DEBUG_LOG('preSync.js:preSyncEntity', 'Entity sync failed', { key, error: error.message, isAuthError }, 'H3');
+        // #endregion
         return { success: false, key, error: error.message, isAuthError };
     }
 }
@@ -180,14 +304,19 @@ async function preSyncEntity(key, config, onProgress) {
  */
 export async function executePreSync(onProgress) {
     const startTime = Date.now();
+    const totalEntities = Object.keys(PRE_SYNC_CONFIG).length;
     const results = {
         success: true,
-        total: Object.keys(PRE_SYNC_CONFIG).length,
+        total: totalEntities,
         completed: 0,
         failed: 0,
         details: {},
         duration: 0,
     };
+
+    // #region agent log
+    DEBUG_LOG('preSync.js:executePreSync', 'PreSync start', { totalEntities, keys: Object.keys(PRE_SYNC_CONFIG) }, 'H4');
+    // #endregion
 
     try {
         // Check if user is authenticated
@@ -223,16 +352,18 @@ export async function executePreSync(onProgress) {
                     // Continue with other entities even if one fails
                 }
             } catch (error) {
-                // Handle unexpected errors gracefully
                 results.failed++;
                 results.details[key] = { success: false, key, error: error.message };
+                DEBUG_LOG('preSync.js:executePreSync', 'Entity loop catch', { key, error: error.message }, 'H4');
                 console.error(`Pre-sync failed for ${key}:`, error);
-                // Continue with other entities
             }
         }
 
+        const summary = { completed: results.completed, failed: results.failed, details: {} };
+        Object.entries(results.details).forEach(([k, v]) => { summary.details[k] = { success: v.success, count: v.count, error: v.error }; });
+        DEBUG_LOG('preSync.js:executePreSync', 'PreSync loop done', summary, 'H4');
+
         // Mark pre-sync as completed (even if some endpoints failed)
-        // Allow app to continue if at least some endpoints succeeded or if only auth errors occurred
         const endTime = Date.now();
         results.duration = endTime - startTime;
 

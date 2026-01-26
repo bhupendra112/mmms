@@ -15,6 +15,18 @@ import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 export const registerRecovery = async (req, res) => {
     try {
         const payload = req.body || {};
+        
+        // #region agent log
+        console.log('[RECOVERY_DEBUG] registerRecovery called', {
+            hasGroupId: !!payload.groupId,
+            hasRecoveries: !!payload.recoveries,
+            recoveriesCount: payload.recoveries?.length || 0,
+            requireApproval: payload.requireApproval,
+            source: payload.source,
+            date: payload.date,
+            timestamp: Date.now()
+        });
+        // #endregion
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
@@ -185,513 +197,69 @@ export const registerRecovery = async (req, res) => {
             }
         }
 
+        // Check if approval is required (from group panel)
+        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        const approvalStatus = requireApproval ? 'pending' : 'approved';
+        
+        // #region agent log
+        console.log('[RECOVERY_DEBUG] Approval check', {
+            requireApproval,
+            source: payload.source,
+            approvalStatus,
+            groupId: groupDoc._id.toString(),
+            recoveriesCount: payload.recoveries?.length || 0,
+            timestamp: Date.now()
+        });
+        // #endregion
+
         // Create recovery session
-        const recovery = await RecoveryMaster.create({
+        const recoveryData = {
             ...payload,
             date: parsedDate,
             meetingSequence: meetingSequence,
             groupId: groupDoc._id,
             groupName: payload.groupName || groupDoc.group_name,
             groupCode: payload.groupCode || groupDoc.group_code,
-            status: "approved", // Admin actions are directly approved
-            createdBy: req.user?.id || "admin",
+            status: "approved", // Keep status for backward compatibility
+            approvalStatus: approvalStatus,
+            createdBy: req.user?.id || payload.createdBy || "admin",
+        };
+        
+        // #region agent log
+        console.log('[RECOVERY_DEBUG] Creating recovery in database', {
+            groupId: recoveryData.groupId.toString(),
+            date: recoveryData.date,
+            approvalStatus: recoveryData.approvalStatus,
+            recoveriesCount: recoveryData.recoveries?.length || 0,
+            hasRecoveries: !!recoveryData.recoveries,
+            timestamp: Date.now()
         });
+        // #endregion
+        
+        const recovery = await RecoveryMaster.create(recoveryData);
+        
+        // #region agent log
+        console.log('[RECOVERY_DEBUG] Recovery created successfully', {
+            recoveryId: recovery._id.toString(),
+            approvalStatus: recovery.approvalStatus,
+            groupId: recovery.groupId.toString(),
+            date: recovery.date,
+            recoveriesCount: recovery.recoveries?.length || 0,
+            timestamp: Date.now()
+        });
+        // #endregion
 
-        // Update member's lastMembershipPaidDate and lastMembershipGroupPaidDate if membership fees were paid
-        // Also create bank transaction records for online payments
-        if (recovery.recoveries && Array.isArray(recovery.recoveries)) {
-            console.log("[RECOVERY] Processing recoveries array, count:", recovery.recoveries.length);
-            for (const memberRecovery of recovery.recoveries) {
-                // Calculate total if not set
-                if (!memberRecovery.total || memberRecovery.total === 0) {
-                    const amounts = memberRecovery.amounts || {};
-                    // Calculate charges total
-                    const chargesTotal = amounts.charges ?
-                        Object.values(amounts.charges).reduce((sum, amount) => sum + (amount || 0), 0) : 0;
-
-                    memberRecovery.total = (amounts.saving || 0) +
-                        (amounts.loan || 0) +
-                        (amounts.interest || 0) +
-                        (amounts.yogdan || 0) +
-                        (amounts.memFeesSHG || 0) +
-                        (amounts.memFeesSamiti || 0) +
-                        (amounts.memFeesGroup || 0) +
-                        (amounts.penalty || 0) +
-                        (amounts.other || 0) +
-                        (amounts.fd || 0) +
-                        chargesTotal;
-                    console.log("[RECOVERY] Calculated total for member:", {
-                        memberCode: memberRecovery.memberCode,
-                        calculatedTotal: memberRecovery.total
-                    });
-                }
-
-                // Mark yogdan as collected when yogdan is paid
-                // Yogdan is now managed only in LoanMaster, not in MemberRevenueDemand or member model
-                if (memberRecovery.amounts?.yogdan > 0 && memberRecovery.memberId) {
-                    let remainingYogdan = memberRecovery.amounts.yogdan;
-
-                    // Handle yogdan for loans - only use LoanMaster
-                    if (remainingYogdan > 0) {
-                        // Find loans for this member where yogdan hasn't been collected yet
-                        const memberLoans = await LoanMaster.find({
-                            groupId: groupDoc._id,
-                            memberId: memberRecovery.memberId.toString(),
-                            transactionType: "Loan",
-                            status: "approved",
-                            yogdanCollected: false,
-                            date: { $lte: parsedDate } // Loan date should be before or on recovery date
-                        })
-                            .sort({ date: 1 })
-                            .lean();
-
-                        for (const loan of memberLoans) {
-                            if (remainingYogdan <= 0) break;
-
-                            const loanAmount = loan.amount || 0;
-                            const yogdanAmount = loan.yogdanAmount || (loanAmount * 0.01);
-
-                            if (remainingYogdan >= yogdanAmount) {
-                                // Mark this loan's yogdan as collected in LoanMaster only
-                                await LoanMaster.findByIdAndUpdate(loan._id, {
-                                    yogdanCollected: true,
-                                    yogdanCollectedDate: parsedDate
-                                });
-
-                                remainingYogdan -= yogdanAmount;
-                            }
-                        }
-                    }
-                }
-
-                // Handle loan payment - update member's loanPaid field for backward compatibility
-                // Note: For new registrations (after this fix), loan payments are tracked in RecoveryMaster
-                // This update is kept for backward compatibility with members registered before this fix
-                // member.loanDetails.loanPaid should only represent pre-registration payments for existing members
-                // Post-registration payments are tracked via RecoveryMaster records
-                if (memberRecovery.amounts?.loan > 0 && memberRecovery.memberId) {
-                    const member = await Member.findById(memberRecovery.memberId);
-                    if (member && member.loanDetails) {
-                        // Only update loanPaid if member was registered before this fix (no LoanMaster entries exist)
-                        // For new registrations with LoanMaster entries, we don't update member.loanPaid
-                        // to avoid double-counting (payments are tracked via RecoveryMaster)
-                        const hasLoanMasterEntries = await LoanMaster.findOne({
-                            groupId: groupDoc._id,
-                            memberId: memberRecovery.memberId.toString(),
-                            transactionType: "Loan",
-                            status: "approved"
-                        }).lean();
-
-                        // Only update if no LoanMaster entries exist (backward compatibility)
-                        // This means the member was registered before this fix and loan payments need to be tracked in member.loanDetails.loanPaid
-                        if (!hasLoanMasterEntries) {
-                            // Get current loan paid amount
-                            const currentLoanPaid = member.loanDetails.loanPaid || 0;
-                            const newLoanPaid = currentLoanPaid + memberRecovery.amounts.loan;
-
-                            // Update loanPaid field (for backward compatibility only)
-                            if (!member.loanDetails.loanPaid) {
-                                member.loanDetails.loanPaid = 0;
-                            }
-                            member.loanDetails.loanPaid = newLoanPaid;
-                            await member.save();
-                        }
-                        // If LoanMaster entries exist, payments are tracked in RecoveryMaster only (via getCumulativePayments)
-                    }
-                }
-
-                // Handle membership fees SHG payment
-                if (memberRecovery.amounts?.memFeesSHG > 0 && memberRecovery.memberId) {
-                    const member = await Member.findById(memberRecovery.memberId);
-                    if (member) {
-                        member.lastMembershipPaidDate = parsedDate;
-                        await member.save();
-                    }
-
-                    // Find ALL unpaid demands for membership fees SHG (not filtered by year)
-                    // Priority: registration demand first, then annual demand (oldest first)
-                    const unpaidMemFeesDemands = await MemberRevenueDemand.find({
-                        memberId: memberRecovery.memberId,
-                        groupId: groupDoc._id,
-                        revenueType: "membership_fees_shg",
-                        isPaid: false,
-                    }).sort({ isAnnualDemand: 1, demandDate: 1 }); // Registration demand first, then oldest first
-
-                    let remainingPayment = parseFloat(memberRecovery.amounts.memFeesSHG) || 0;
-
-                    // Distribute payment across unpaid demands
-                    for (const demand of unpaidMemFeesDemands) {
-                        if (remainingPayment <= 0) break;
-
-                        const demandAmount = parseFloat(demand.amount) || 0;
-                        const currentPaidAmount = parseFloat(demand.paidAmount) || 0;
-                        const remainingDemand = Math.max(0, demandAmount - currentPaidAmount);
-
-                        // Pay as much as possible for this demand
-                        const paymentForThisDemand = Math.min(remainingPayment, remainingDemand);
-                        const newPaidAmount = currentPaidAmount + paymentForThisDemand;
-
-                        // Update paid amount
-                        demand.paidAmount = newPaidAmount;
-                        demand.paidDate = parsedDate;
-                        demand.recoveryId = recovery._id;
-
-                        // Mark as paid if fully paid
-                        if (newPaidAmount >= demandAmount) {
-                            demand.isPaid = true;
-                        }
-
-                        await demand.save();
-                        remainingPayment -= paymentForThisDemand;
-                    }
-                }
-
-                // Handle membership fees Group payment
-                if (memberRecovery.amounts?.memFeesGroup > 0 && memberRecovery.memberId) {
-                    const member = await Member.findById(memberRecovery.memberId);
-                    if (member) {
-                        member.lastMembershipGroupPaidDate = parsedDate;
-                        await member.save();
-                    }
-
-                    // Find ALL unpaid demands for membership fees Group (not filtered by year)
-                    // Priority: registration demand first, then annual demand (oldest first)
-                    const unpaidMemGroupDemands = await MemberRevenueDemand.find({
-                        memberId: memberRecovery.memberId,
-                        groupId: groupDoc._id,
-                        revenueType: "membership_fees_group",
-                        isPaid: false,
-                    }).sort({ isAnnualDemand: 1, demandDate: 1 }); // Registration demand first, then oldest first
-
-                    let remainingPayment = parseFloat(memberRecovery.amounts.memFeesGroup) || 0;
-
-                    // Distribute payment across unpaid demands
-                    for (const demand of unpaidMemGroupDemands) {
-                        if (remainingPayment <= 0) break;
-
-                        const demandAmount = parseFloat(demand.amount) || 0;
-                        const currentPaidAmount = parseFloat(demand.paidAmount) || 0;
-                        const remainingDemand = Math.max(0, demandAmount - currentPaidAmount);
-
-                        // Pay as much as possible for this demand
-                        const paymentForThisDemand = Math.min(remainingPayment, remainingDemand);
-                        const newPaidAmount = currentPaidAmount + paymentForThisDemand;
-
-                        // Update paid amount
-                        demand.paidAmount = newPaidAmount;
-                        demand.paidDate = parsedDate;
-                        demand.recoveryId = recovery._id;
-
-                        // Mark as paid if fully paid
-                        if (newPaidAmount >= demandAmount) {
-                            demand.isPaid = true;
-                        }
-
-                        await demand.save();
-                        remainingPayment -= paymentForThisDemand;
-                    }
-                }
-
-                // Create bank transaction record if online payment with bank
-                if (memberRecovery.paymentMode?.online && memberRecovery.bankId && memberRecovery.total > 0) {
-                    const totalAmount = memberRecovery.total || 0;
-                    await createBankTransactionRecord({
-                        bankId: memberRecovery.bankId,
-                        groupId: groupDoc._id,
-                        transactionType: "recovery",
-                        amount: totalAmount,
-                        date: parsedDate,
-                        onlineRef: memberRecovery.onlineRef || null,
-                        receipt: memberRecovery.screenshot || null,
-                        description: `Recovery payment - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        recoveryId: recovery._id,
-                        recoveryMemberId: memberRecovery.memberId,
-                        memberId: memberRecovery.memberId,
-                        memberCode: memberRecovery.memberCode,
-                        memberName: memberRecovery.memberName,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Create cash transaction record if cash payment
-                // Handle different paymentMode formats
-                const isCashPayment = memberRecovery.paymentMode?.cash === true ||
-                    memberRecovery.paymentMode?.cash === "true" ||
-                    (typeof memberRecovery.paymentMode === 'object' && memberRecovery.paymentMode?.cash);
-                const hasTotal = memberRecovery.total > 0;
-
-                console.log("[RECOVERY] Checking cash payment for member:", {
-                    memberId: memberRecovery.memberId,
-                    memberCode: memberRecovery.memberCode,
-                    paymentMode: memberRecovery.paymentMode,
-                    paymentModeType: typeof memberRecovery.paymentMode,
-                    paymentModeCash: memberRecovery.paymentMode?.cash,
-                    paymentModeCashType: typeof memberRecovery.paymentMode?.cash,
-                    isCashPayment,
-                    total: memberRecovery.total,
-                    totalType: typeof memberRecovery.total,
-                    hasTotal,
-                    conditionMet: isCashPayment && hasTotal
-                });
-
-                if (isCashPayment && hasTotal) {
-                    const totalAmount = memberRecovery.total || 0;
-                    console.log("[RECOVERY] Creating cash transaction record:", {
-                        groupId: groupDoc._id,
-                        transactionType: "recovery",
-                        amount: totalAmount,
-                        memberCode: memberRecovery.memberCode,
-                        memberName: memberRecovery.memberName
-                    });
-
-                    try {
-                        const cashTransactionResult = await createCashTransactionRecord({
-                            groupId: groupDoc._id,
-                            transactionType: "recovery",
-                            amount: totalAmount,
-                            date: parsedDate,
-                            receipt: memberRecovery.screenshot || null,
-                            description: `Recovery payment - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                            recoveryId: recovery._id,
-                            recoveryMemberId: memberRecovery.memberId,
-                            memberId: memberRecovery.memberId,
-                            memberCode: memberRecovery.memberCode,
-                            memberName: memberRecovery.memberName,
-                            createdBy: req.user?.id || "admin",
-                        });
-
-                    } catch (cashError) {
-                        console.error("[RECOVERY] Error creating cash transaction:", cashError);
-                        // Don't throw - allow recovery to be saved even if cash transaction fails
-                    }
-                }
-
-                // Post ledger entries for each amount type
-                const amounts = memberRecovery.amounts || {};
-                const paymentMode = memberRecovery.paymentMode?.cash ? "Cash" : (memberRecovery.paymentMode?.online ? "Bank" : "Cash");
-                const bankId = memberRecovery.bankId || undefined;
-                const memberId = memberRecovery.memberId || undefined;
-
-                // Post saving
-                if (amounts.saving > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "Saving", "assets");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "Saving",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "assets",
-                        amount: amounts.saving,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `Saving recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post loan recovery
-                if (amounts.loan > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "Loan Recover", "assets");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "Loan Recover",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "assets",
-                        amount: amounts.loan,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `Loan recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post interest income
-                if (amounts.interest > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "Interest Income", "income");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "Interest Income",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "income",
-                        amount: amounts.interest,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `Interest recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post yogdan recover
-                if (amounts.yogdan > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "Yogdan Recover", "liability");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "Yogdan Recover",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "liability",
-                        amount: amounts.yogdan,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `Yogdan recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post member fee SHG
-                if (amounts.memFeesSHG > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "Member Fee", "income");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "Member Fee",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "income",
-                        amount: amounts.memFeesSHG,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `Member Fee SHG - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post member fee Samiti
-                if (amounts.memFeesSamiti > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "Member Fee", "income");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "Member Fee",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "income",
-                        amount: amounts.memFeesSamiti,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `Member Fee Samiti - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post member fee group
-                if (amounts.memFeesGroup > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "Member Fee Group", "income");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "Member Fee Group",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "income",
-                        amount: amounts.memFeesGroup,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `Member Fee Group - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post FD
-                if (amounts.fd > 0) {
-                    const headInfo = await findOrCreateHead(groupDoc._id, "FD", "assets");
-                    await postTransaction({
-                        sourceDoc: recovery,
-                        headName: "FD",
-                        headType: headInfo?.headType || "groupMaster",
-                        headId: headInfo?.headId,
-                        section: "assets",
-                        amount: amounts.fd,
-                        direction: "in",
-                        groupId: groupDoc._id,
-                        memberId: memberId,
-                        date: parsedDate,
-                        notes: `FD deposit - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                        paymentMode,
-                        bankId,
-                        referenceModel: "RecoveryMaster",
-                        referenceId: recovery._id,
-                        createdBy: req.user?.id || "admin",
-                    });
-                }
-
-                // Post charges (dynamic charges from GroupMaster.charges)
-                if (amounts.charges && typeof amounts.charges === 'object') {
-                    const group = await GroupMaster.findById(groupDoc._id).lean();
-                    const groupCharges = group?.charges || [];
-
-                    for (const [chargeName, chargeAmount] of Object.entries(amounts.charges)) {
-                        if (chargeAmount > 0) {
-                            // Find the charge in group.charges to get entryType
-                            const chargeDef = groupCharges.find(c => c.name === chargeName);
-                            const chargeSection = chargeDef?.entryType || "expense";
-
-                            await postTransaction({
-                                sourceDoc: recovery,
-                                headName: chargeName,
-                                headType: "groupMaster",
-                                headId: chargeDef?._id,
-                                section: chargeSection,
-                                amount: chargeAmount,
-                                direction: "in",
-                                groupId: groupDoc._id,
-                                memberId: memberId,
-                                date: parsedDate,
-                                notes: `Charge: ${chargeName} - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
-                                paymentMode,
-                                bankId,
-                                referenceModel: "RecoveryMaster",
-                                referenceId: recovery._id,
-                                createdBy: req.user?.id || "admin",
-                            });
-                        }
-                    }
-                }
-            }
+        // Only process transactions and updates if approved (admin panel)
+        // For pending approvals (group panel), these will be processed on approval
+        if (approvalStatus === 'approved') {
+            await processRecoveryTransactions(recovery, groupDoc, parsedDate, req.user?.id || "admin");
         }
+        // For pending recoveries, skip processing - it will be done on approval
 
-        return apiResponse.success(res, "Recovery session registered successfully", recovery);
+        const message = approvalStatus === 'pending' 
+            ? "Recovery session created successfully and pending admin approval" 
+            : "Recovery session registered successfully";
+        return apiResponse.success(res, message, recovery);
 
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
@@ -3876,6 +3444,503 @@ export const getMemberRecoveryStatus = async (req, res) => {
         });
     } catch (error) {
         console.error("Error fetching member recovery status:", error);
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Helper function to process recovery transactions (extracted from registerRecovery)
+async function processRecoveryTransactions(recovery, groupDoc, parsedDate, createdBy = "admin") {
+    if (!recovery.recoveries || !Array.isArray(recovery.recoveries)) {
+        return;
+    }
+
+    console.log("[RECOVERY] Processing recoveries array, count:", recovery.recoveries.length);
+    for (const memberRecovery of recovery.recoveries) {
+        // Calculate total if not set
+        if (!memberRecovery.total || memberRecovery.total === 0) {
+            const amounts = memberRecovery.amounts || {};
+            const chargesTotal = amounts.charges ?
+                Object.values(amounts.charges).reduce((sum, amount) => sum + (amount || 0), 0) : 0;
+
+            memberRecovery.total = (amounts.saving || 0) +
+                (amounts.loan || 0) +
+                (amounts.interest || 0) +
+                (amounts.yogdan || 0) +
+                (amounts.memFeesSHG || 0) +
+                (amounts.memFeesSamiti || 0) +
+                (amounts.memFeesGroup || 0) +
+                (amounts.penalty || 0) +
+                (amounts.other || 0) +
+                (amounts.fd || 0) +
+                chargesTotal;
+        }
+
+        // Mark yogdan as collected
+        if (memberRecovery.amounts?.yogdan > 0 && memberRecovery.memberId) {
+            let remainingYogdan = memberRecovery.amounts.yogdan;
+            if (remainingYogdan > 0) {
+                const memberLoans = await LoanMaster.find({
+                    groupId: groupDoc._id,
+                    memberId: memberRecovery.memberId.toString(),
+                    transactionType: "Loan",
+                    status: "approved",
+                    yogdanCollected: false,
+                    date: { $lte: parsedDate }
+                }).sort({ date: 1 }).lean();
+
+                for (const loan of memberLoans) {
+                    if (remainingYogdan <= 0) break;
+                    const loanAmount = loan.amount || 0;
+                    const yogdanAmount = loan.yogdanAmount || (loanAmount * 0.01);
+                    if (remainingYogdan >= yogdanAmount) {
+                        await LoanMaster.findByIdAndUpdate(loan._id, {
+                            yogdanCollected: true,
+                            yogdanCollectedDate: parsedDate
+                        });
+                        remainingYogdan -= yogdanAmount;
+                    }
+                }
+            }
+        }
+
+        // Handle loan payment for backward compatibility
+        if (memberRecovery.amounts?.loan > 0 && memberRecovery.memberId) {
+            const member = await Member.findById(memberRecovery.memberId);
+            if (member && member.loanDetails) {
+                const hasLoanMasterEntries = await LoanMaster.findOne({
+                    groupId: groupDoc._id,
+                    memberId: memberRecovery.memberId.toString(),
+                    transactionType: "Loan",
+                    status: "approved"
+                }).lean();
+
+                if (!hasLoanMasterEntries) {
+                    if (!member.loanDetails.loanPaid) {
+                        member.loanDetails.loanPaid = 0;
+                    }
+                    member.loanDetails.loanPaid = (member.loanDetails.loanPaid || 0) + memberRecovery.amounts.loan;
+                    await member.save();
+                }
+            }
+        }
+
+        // Handle membership fees SHG
+        if (memberRecovery.amounts?.memFeesSHG > 0 && memberRecovery.memberId) {
+            const member = await Member.findById(memberRecovery.memberId);
+            if (member) {
+                member.lastMembershipPaidDate = parsedDate;
+                await member.save();
+            }
+
+            const unpaidMemFeesDemands = await MemberRevenueDemand.find({
+                memberId: memberRecovery.memberId,
+                groupId: groupDoc._id,
+                revenueType: "membership_fees_shg",
+                isPaid: false,
+            }).sort({ isAnnualDemand: 1, demandDate: 1 });
+
+            let remainingPayment = parseFloat(memberRecovery.amounts.memFeesSHG) || 0;
+            for (const demand of unpaidMemFeesDemands) {
+                if (remainingPayment <= 0) break;
+                const demandAmount = parseFloat(demand.amount) || 0;
+                const currentPaidAmount = parseFloat(demand.paidAmount) || 0;
+                const remainingDemand = Math.max(0, demandAmount - currentPaidAmount);
+                const paymentForThisDemand = Math.min(remainingPayment, remainingDemand);
+                const newPaidAmount = currentPaidAmount + paymentForThisDemand;
+
+                demand.paidAmount = newPaidAmount;
+                demand.paidDate = parsedDate;
+                demand.recoveryId = recovery._id;
+                if (newPaidAmount >= demandAmount) {
+                    demand.isPaid = true;
+                }
+                await demand.save();
+                remainingPayment -= paymentForThisDemand;
+            }
+        }
+
+        // Handle membership fees Group
+        if (memberRecovery.amounts?.memFeesGroup > 0 && memberRecovery.memberId) {
+            const member = await Member.findById(memberRecovery.memberId);
+            if (member) {
+                member.lastMembershipGroupPaidDate = parsedDate;
+                await member.save();
+            }
+
+            const unpaidMemGroupDemands = await MemberRevenueDemand.find({
+                memberId: memberRecovery.memberId,
+                groupId: groupDoc._id,
+                revenueType: "membership_fees_group",
+                isPaid: false,
+            }).sort({ isAnnualDemand: 1, demandDate: 1 });
+
+            let remainingPayment = parseFloat(memberRecovery.amounts.memFeesGroup) || 0;
+            for (const demand of unpaidMemGroupDemands) {
+                if (remainingPayment <= 0) break;
+                const demandAmount = parseFloat(demand.amount) || 0;
+                const currentPaidAmount = parseFloat(demand.paidAmount) || 0;
+                const remainingDemand = Math.max(0, demandAmount - currentPaidAmount);
+                const paymentForThisDemand = Math.min(remainingPayment, remainingDemand);
+                const newPaidAmount = currentPaidAmount + paymentForThisDemand;
+
+                demand.paidAmount = newPaidAmount;
+                demand.paidDate = parsedDate;
+                demand.recoveryId = recovery._id;
+                if (newPaidAmount >= demandAmount) {
+                    demand.isPaid = true;
+                }
+                await demand.save();
+                remainingPayment -= paymentForThisDemand;
+            }
+        }
+
+        // Create bank transaction record
+        if (memberRecovery.paymentMode?.online && memberRecovery.bankId && memberRecovery.total > 0) {
+            await createBankTransactionRecord({
+                bankId: memberRecovery.bankId,
+                groupId: groupDoc._id,
+                transactionType: "recovery",
+                amount: memberRecovery.total || 0,
+                date: parsedDate,
+                onlineRef: memberRecovery.onlineRef || null,
+                receipt: memberRecovery.screenshot || null,
+                description: `Recovery payment - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                recoveryId: recovery._id,
+                recoveryMemberId: memberRecovery.memberId,
+                memberId: memberRecovery.memberId,
+                memberCode: memberRecovery.memberCode,
+                memberName: memberRecovery.memberName,
+                createdBy: createdBy,
+            });
+        }
+
+        // Create cash transaction record
+        const isCashPayment = memberRecovery.paymentMode?.cash === true ||
+            memberRecovery.paymentMode?.cash === "true" ||
+            (typeof memberRecovery.paymentMode === 'object' && memberRecovery.paymentMode?.cash);
+        if (isCashPayment && memberRecovery.total > 0) {
+            try {
+                await createCashTransactionRecord({
+                    groupId: groupDoc._id,
+                    transactionType: "recovery",
+                    amount: memberRecovery.total || 0,
+                    date: parsedDate,
+                    receipt: memberRecovery.screenshot || null,
+                    description: `Recovery payment - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                    recoveryId: recovery._id,
+                    recoveryMemberId: memberRecovery.memberId,
+                    memberId: memberRecovery.memberId,
+                    memberCode: memberRecovery.memberCode,
+                    memberName: memberRecovery.memberName,
+                    createdBy: createdBy,
+                });
+            } catch (cashError) {
+                console.error("[RECOVERY] Error creating cash transaction:", cashError);
+            }
+        }
+
+        // Post ledger entries
+        const amounts = memberRecovery.amounts || {};
+        const paymentMode = memberRecovery.paymentMode?.cash ? "Cash" : (memberRecovery.paymentMode?.online ? "Bank" : "Cash");
+        const bankId = memberRecovery.bankId || undefined;
+        const memberId = memberRecovery.memberId || undefined;
+
+        // Post saving
+        if (amounts.saving > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Saving", "assets");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Saving",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "assets",
+                amount: amounts.saving,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Saving recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post loan recovery
+        if (amounts.loan > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Loan Recover", "assets");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Loan Recover",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "assets",
+                amount: amounts.loan,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Loan recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post interest income
+        if (amounts.interest > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Interest Income", "income");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Interest Income",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "income",
+                amount: amounts.interest,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Interest recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post yogdan recover
+        if (amounts.yogdan > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Yogdan Recover", "liability");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Yogdan Recover",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "liability",
+                amount: amounts.yogdan,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Yogdan recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post member fee SHG
+        if (amounts.memFeesSHG > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Member Fee", "income");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Member Fee",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "income",
+                amount: amounts.memFeesSHG,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Member Fee SHG - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post member fee Samiti
+        if (amounts.memFeesSamiti > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Member Fee", "income");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Member Fee",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "income",
+                amount: amounts.memFeesSamiti,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Member Fee Samiti - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post member fee group
+        if (amounts.memFeesGroup > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Member Fee Group", "income");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Member Fee Group",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "income",
+                amount: amounts.memFeesGroup,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Member Fee Group - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post FD
+        if (amounts.fd > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "FD", "assets");
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "FD",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "assets",
+                amount: amounts.fd,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `FD deposit - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post charges
+        if (amounts.charges && typeof amounts.charges === 'object') {
+            const group = await GroupMaster.findById(groupDoc._id).lean();
+            const groupCharges = group?.charges || [];
+            for (const [chargeName, chargeAmount] of Object.entries(amounts.charges)) {
+                if (chargeAmount > 0) {
+                    const chargeDef = groupCharges.find(c => c.name === chargeName);
+                    const chargeSection = chargeDef?.entryType || "expense";
+                    await postTransaction({
+                        sourceDoc: recovery,
+                        headName: chargeName,
+                        headType: "groupMaster",
+                        headId: chargeDef?._id,
+                        section: chargeSection,
+                        amount: chargeAmount,
+                        direction: "in",
+                        groupId: groupDoc._id,
+                        memberId: memberId,
+                        date: parsedDate,
+                        notes: `Charge: ${chargeName} - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                        paymentMode,
+                        bankId,
+                        referenceModel: "RecoveryMaster",
+                        referenceId: recovery._id,
+                        createdBy: createdBy,
+                    });
+                }
+            }
+        }
+    }
+}
+
+// Approve Recovery (from group panel)
+export const approveRecovery = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!id) {
+            return apiResponse.error(res, "Recovery ID is required", 400);
+        }
+
+        const recovery = await RecoveryMaster.findById(id);
+        if (!recovery) {
+            return apiResponse.error(res, "Recovery not found", 404);
+        }
+
+        if (recovery.approvalStatus !== "pending") {
+            return apiResponse.error(res, `Recovery is already ${recovery.approvalStatus}`, 400);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify recovery's group belongs to admin's place
+        const accessCheck = await verifyGroupAccess(recovery.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this recovery's group", 403);
+        }
+        const groupDoc = accessCheck.group;
+
+        // Update recovery approval status
+        recovery.approvalStatus = "approved";
+        recovery.approvedBy = req.user?.id || "admin";
+        recovery.approvedAt = new Date();
+        await recovery.save();
+
+        // Process all transactions (bank, cash, ledger entries, etc.)
+        const parsedDate = recovery.date;
+        await processRecoveryTransactions(recovery, groupDoc, parsedDate, req.user?.id || "admin");
+
+        return apiResponse.success(res, "Recovery approved successfully", recovery);
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to approve recovery", 500);
+    }
+};
+
+// Reject Recovery (from group panel)
+export const rejectRecovery = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        if (!id) {
+            return apiResponse.error(res, "Recovery ID is required", 400);
+        }
+
+        const recovery = await RecoveryMaster.findById(id);
+        if (!recovery) {
+            return apiResponse.error(res, "Recovery not found", 404);
+        }
+
+        if (recovery.approvalStatus !== "pending") {
+            return apiResponse.error(res, `Recovery is already ${recovery.approvalStatus}`, 400);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify recovery's group belongs to admin's place
+        const accessCheck = await verifyGroupAccess(recovery.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this recovery's group", 403);
+        }
+
+        recovery.approvalStatus = "rejected";
+        recovery.rejectedBy = req.user?.id || "admin";
+        recovery.rejectedAt = new Date();
+        recovery.rejectionReason = reason || "No reason provided";
+        await recovery.save();
+
+        return apiResponse.success(res, "Recovery rejected successfully", recovery);
+    } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }
 };

@@ -96,6 +96,11 @@ class MMMSDatabase extends Dexie {
             // Application-level state
             app_state: '&key, value, updatedAt',
         });
+
+        // v2: add master_expenses for PreSync expense list (full group-panel fresh data)
+        this.version(2).stores({
+            master_expenses: '&uuid, entityType, groupId, createdAt, updatedAt, syncStatus',
+        });
         
         // Define entity types for type safety
         this.entityTypes = {

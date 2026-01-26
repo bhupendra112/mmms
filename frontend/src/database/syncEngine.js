@@ -55,7 +55,7 @@ const API_ENDPOINTS = {
         delete: (id) => `/api/admin/recovery/${id}`,
     },
     fd: {
-        create: '/api/admin/fd',
+        create: '/api/admin/fd/create',
         update: (id) => `/api/admin/fd/${id}`,
         delete: (id) => `/api/admin/fd/${id}`,
     },
@@ -70,6 +70,11 @@ const API_ENDPOINTS = {
  * Call backend API
  */
 async function callBackendAPI(method, endpoint, payload = null) {
+    // #region agent log
+    if (endpoint?.includes('/recovery/')) {
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:72', message: 'callBackendAPI for recovery', data: { method, endpoint, hasPayload: !!payload, payloadSize: payload ? JSON.stringify(payload).length : 0, requireApproval: payload?.requireApproval, source: payload?.source }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+    }
+    // #endregion
     const token = getAuthToken();
     if (!token) {
         throw new Error('Authentication token not found');
@@ -97,6 +102,12 @@ async function callBackendAPI(method, endpoint, payload = null) {
     }
 
     const response = await fetch(url, options);
+    
+    // #region agent log
+    if (endpoint?.includes('/recovery/')) {
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:104', message: 'Recovery API response status', data: { status: response.status, statusText: response.statusText, ok: response.ok, endpoint, url }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+    }
+    // #endregion
 
     if (!response.ok) {
         if (response.status === 401) {
@@ -109,19 +120,59 @@ async function callBackendAPI(method, endpoint, payload = null) {
         } catch {
             errorData = { message: errorText || `HTTP ${response.status}` };
         }
+        
+        // #region agent log
+        if (endpoint?.includes('/recovery/')) {
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:117', message: 'Recovery API error', data: { status: response.status, errorMessage: errorData.message, errorText }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+        }
+        // #endregion
+        
         throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
     const data = await response.json();
+    
+    // #region agent log
+    if (endpoint?.includes('/recovery/')) {
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:125', message: 'Recovery API success response', data: { success: data?.success, hasData: !!data?.data, recoveryId: data?.data?._id || data?.data?.id, approvalStatus: data?.data?.approvalStatus, message: data?.message, rawDataKeys: data ? Object.keys(data) : [], dataKeys: data?.data ? Object.keys(data.data) : [] }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+    }
+    // #endregion
+    
     return data?.data || data;
 }
 
 /**
  * Sync a single record to backend
  */
+/**
+ * Sanitize member payload for sync: strip offline file metadata (_isFile objects)
+ * and add requireApproval so backend creates member as pending.
+ */
+function sanitizeMemberPayloadForSync(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    const out = { ...payload };
+    const fileFields = [
+        'Member_Photo', 'Voter_Id_File', 'Adhar_Id_File', 'Bank_File',
+        'Ration_Card_File', 'Job_Card_File', 'Adhar_Id_Pati_File',
+        'Voter_Id_Pati_File', 'Bank_Pati_File',
+    ];
+    for (const key of fileFields) {
+        const v = out[key];
+        if (v && typeof v === 'object' && v._isFile === true) delete out[key];
+    }
+    out.requireApproval = true;
+    return out;
+}
+
 async function syncRecord(record, queueItem) {
     const { entityType, operation, payload, uuid } = record;
     
+    // #region agent log
+    if (entityType === 'recovery') {
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:142', message: 'Syncing recovery record', data: { uuid, operation, entityType, hasGroupId: !!payload.groupId, hasRecoveries: !!payload.recoveries, recoveriesCount: payload.recoveries?.length || 0, requireApproval: payload.requireApproval, source: payload.source, date: payload.date }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+    }
+    // #endregion
+
     // Get endpoint configuration
     const endpoints = API_ENDPOINTS[entityType];
     if (!endpoints) {
@@ -137,6 +188,14 @@ async function syncRecord(record, queueItem) {
         case 'create':
             endpoint = endpoints.create;
             method = 'POST';
+            if (entityType === 'member') {
+                requestPayload = sanitizeMemberPayloadForSync(payload);
+            }
+            // #region agent log
+            if (entityType === 'recovery') {
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:163', message: 'Preparing recovery create request', data: { endpoint, method, hasGroupId: !!requestPayload.groupId, hasRecoveries: !!requestPayload.recoveries, recoveriesCount: requestPayload.recoveries?.length || 0, requireApproval: requestPayload.requireApproval, source: requestPayload.source }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+            }
+            // #endregion
             break;
         case 'update':
             // For update, we need the backend ID
@@ -144,8 +203,8 @@ async function syncRecord(record, queueItem) {
             if (!endpoints.update) {
                 throw new Error(`Update not supported for entity type: ${entityType}`);
             }
-            endpoint = typeof endpoints.update === 'function' 
-                ? endpoints.update(backendId) 
+            endpoint = typeof endpoints.update === 'function'
+                ? endpoints.update(backendId)
                 : endpoints.update;
             method = 'PUT';
             // Remove _deleted flag from update payload
@@ -157,8 +216,8 @@ async function syncRecord(record, queueItem) {
             if (!endpoints.delete) {
                 throw new Error(`Delete not supported for entity type: ${entityType}`);
             }
-            endpoint = typeof endpoints.delete === 'function' 
-                ? endpoints.delete(deleteId) 
+            endpoint = typeof endpoints.delete === 'function'
+                ? endpoints.delete(deleteId)
                 : endpoints.delete;
             method = 'DELETE';
             requestPayload = null;
@@ -168,8 +227,8 @@ async function syncRecord(record, queueItem) {
                 throw new Error(`Approve not supported for entity type: ${entityType}`);
             }
             const approveId = payload._id || payload.id || uuid;
-            endpoint = typeof endpoints.approve === 'function' 
-                ? endpoints.approve(approveId) 
+            endpoint = typeof endpoints.approve === 'function'
+                ? endpoints.approve(approveId)
                 : endpoints.approve;
             method = 'PUT';
             requestPayload = null;
@@ -179,8 +238,8 @@ async function syncRecord(record, queueItem) {
                 throw new Error(`Reject not supported for entity type: ${entityType}`);
             }
             const rejectId = payload._id || payload.id || uuid;
-            endpoint = typeof endpoints.reject === 'function' 
-                ? endpoints.reject(rejectId) 
+            endpoint = typeof endpoints.reject === 'function'
+                ? endpoints.reject(rejectId)
                 : endpoints.reject;
             method = 'PUT';
             requestPayload = payload.reason ? { reason: payload.reason } : null;
@@ -190,7 +249,19 @@ async function syncRecord(record, queueItem) {
     }
 
     // Call backend API
+    // #region agent log
+    if (entityType === 'recovery') {
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:216', message: 'Calling backend API for recovery', data: { method, endpoint, hasPayload: !!requestPayload, payloadKeys: requestPayload ? Object.keys(requestPayload) : [] }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+    }
+    // #endregion
+    
     const responseData = await callBackendAPI(method, endpoint, requestPayload);
+    
+    // #region agent log
+    if (entityType === 'recovery') {
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:220', message: 'Backend API response for recovery', data: { hasResponse: !!responseData, success: responseData?.success, hasData: !!responseData?.data, recoveryId: responseData?.data?._id || responseData?.data?.id, approvalStatus: responseData?.data?.approvalStatus }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+    }
+    // #endregion
 
     // Update record with backend response
     if (responseData) {
@@ -205,14 +276,26 @@ async function syncRecord(record, queueItem) {
         record.payload = updatedPayload;
         record.syncStatus = SyncStatuses.SYNCED;
         updateRecordTimestamp(record);
-        
+
         // Update in transactions store
         await db.transactions.put(record);
+        
+        // #region agent log
+        if (entityType === 'recovery') {
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:233', message: 'Recovery record marked as synced', data: { uuid: record.uuid, recoveryId: updatedPayload._id, syncStatus: record.syncStatus }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+        }
+        // #endregion
     } else {
         // No response data, but sync succeeded
         record.syncStatus = SyncStatuses.SYNCED;
         updateRecordTimestamp(record);
         await db.transactions.put(record);
+        
+        // #region agent log
+        if (entityType === 'recovery') {
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:240', message: 'Recovery record synced (no response data)', data: { uuid: record.uuid, syncStatus: record.syncStatus }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+        }
+        // #endregion
     }
 
     // Update sync queue item
@@ -238,6 +321,12 @@ async function syncRecord(record, queueItem) {
  */
 async function processSyncItem(queueItem) {
     const { uuid, entityType, operation } = queueItem;
+    
+    // #region agent log
+    if (entityType === 'recovery') {
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:302', message: 'processSyncItem for recovery', data: { uuid, entityType, operation, queueItemId: queueItem.id, syncStatus: queueItem.syncStatus }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+    }
+    // #endregion
 
     try {
         // Get the transaction record
@@ -245,12 +334,22 @@ async function processSyncItem(queueItem) {
         if (!record) {
             // Transaction record not found, remove from queue
             await db.sync_queue.delete(queueItem.id);
+            // #region agent log
+            if (entityType === 'recovery') {
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:308', message: 'Recovery transaction record not found', data: { uuid }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+            }
+            // #endregion
             return { success: false, error: 'Transaction record not found' };
         }
 
         // Skip if already synced
         if (record.syncStatus === SyncStatuses.SYNCED) {
             await db.sync_queue.delete(queueItem.id);
+            // #region agent log
+            if (entityType === 'recovery') {
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:315', message: 'Recovery already synced, skipping', data: { uuid, syncStatus: record.syncStatus }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+            }
+            // #endregion
             return { success: true, skipped: true };
         }
 
@@ -259,15 +358,39 @@ async function processSyncItem(queueItem) {
         record.syncStatus = 'syncing';
         await db.sync_queue.put(queueItem);
         await db.transactions.put(record);
+        
+        // #region agent log
+        if (entityType === 'recovery') {
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:325', message: 'Recovery marked as syncing', data: { uuid, payload: { groupId: record.payload?.groupId, date: record.payload?.date, requireApproval: record.payload?.requireApproval, source: record.payload?.source, hasRecoveries: !!record.payload?.recoveries, recoveriesCount: record.payload?.recoveries?.length || 0 } }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+        }
+        // #endregion
 
         // Sync to backend
         const result = await syncRecord(record, queueItem);
+        
+        // #region agent log
+        if (entityType === 'recovery') {
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:330', message: 'Recovery sync result', data: { uuid, success: result.success, hasError: !!result.error, error: result.error }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+        }
+        // #endregion
 
         // Remove from queue
         await db.sync_queue.delete(queueItem.id);
+        
+        // #region agent log
+        if (entityType === 'recovery') {
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:338', message: 'Recovery sync completed, removed from queue', data: { uuid, success: result.success }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+        }
+        // #endregion
 
         return result;
     } catch (error) {
+        // #region agent log
+        if (entityType === 'recovery') {
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'syncEngine.js:345', message: 'Recovery sync error', data: { uuid, errorMessage: error.message, errorStack: error.stack }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'RECOVERY_SYNC' }) }).catch(() => { });
+        }
+        // #endregion
+        
         // Handle authentication errors
         if (error.message === 'AUTH_REQUIRED') {
             throw error; // Let sync manager handle auth errors
@@ -403,9 +526,9 @@ export class SyncManager {
                     // Stop syncing on auth errors
                     if (error.message === 'AUTH_REQUIRED') {
                         this.isSyncing = false;
-                        this.notifyListeners({ 
-                            syncing: false, 
-                            authRequired: true 
+                        this.notifyListeners({
+                            syncing: false,
+                            authRequired: true
                         });
                         throw error;
                     }

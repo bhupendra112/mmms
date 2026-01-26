@@ -1,6 +1,6 @@
 import express from "express";
 import { registerMemberSchema, updateMemberSchema } from "../../validation/adminValidation.js";
-import { getMemberDetail, listMembers, listMembersByGroup, registerMember, getAutoMemberCode, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember } from "../../controller/admin/memberController.js";
+import { getMemberDetail, listMembers, listMembersByGroup, registerMember, getAutoMemberCode, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember, getPendingMembers, approveMember, rejectMember } from "../../controller/admin/memberController.js";
 import upload from "../../config/multerConfig.js";
 import authAdmin from "../../middleware/authorization.js";
 
@@ -20,6 +20,18 @@ router.get("/auto-member-code", authAdmin, (req, res) => {
 
 router.get("/detail/:id", authAdmin, (req, res) => {
     return getMemberDetail(req, res);
+});
+
+router.get("/pending", authAdmin, (req, res) => {
+    return getPendingMembers(req, res);
+});
+
+router.put("/approve/:id", authAdmin, (req, res) => {
+    return approveMember(req, res);
+});
+
+router.put("/reject/:id", authAdmin, (req, res) => {
+    return rejectMember(req, res);
 });
 
 // UPDATE MEMBER

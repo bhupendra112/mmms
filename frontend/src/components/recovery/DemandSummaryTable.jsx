@@ -1,5 +1,7 @@
 export default function DemandSummaryTable({ currentMemberSummary }) {
-  if (!currentMemberSummary) return null;
+  if (!currentMemberSummary) {
+    return null;
+  }
 
   // Map category keys to display names
   const categoryNames = {

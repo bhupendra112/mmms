@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { Users, DollarSign, FileText, TrendingUp } from "lucide-react";
 import { useGroup } from "../../contexts/GroupContext";
+import { useOffline } from "../../contexts/OfflineContext";
 import { getMembersByGroup } from "../../services/memberServiceOffline";
 import { getLoans } from "../../services/loanServiceOffline";
 import { getRecoveries } from "../../services/recoveryServiceOffline";
 
 export default function GroupDashboard() {
     const { currentGroup, isGroupLoading } = useGroup();
+    const { lastRefreshedAt } = useOffline();
     const [stats, setStats] = useState([
         {
             title: "Total Members",
@@ -46,7 +48,7 @@ export default function GroupDashboard() {
         } else if (!isGroupLoading) {
             setLoading(false);
         }
-    }, [currentGroup, isGroupLoading]);
+    }, [currentGroup, isGroupLoading, lastRefreshedAt]);
 
     const loadDashboardStats = async () => {
         try {

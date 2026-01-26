@@ -85,3 +85,18 @@ export const deleteMember = async (memberId) => {
   return res.data;
 };
 
+export const getPendingMembers = async () => {
+  const res = await httpMember.get("/pending");
+  return res.data;
+};
+
+export const approveMember = async (memberId) => {
+  const res = await httpMember.put(`/approve/${memberId}`);
+  return res.data;
+};
+
+export const rejectMember = async (memberId, reason) => {
+  const res = await httpMember.put(`/reject/${memberId}`, { reason: reason || "" });
+  return res.data;
+};
+

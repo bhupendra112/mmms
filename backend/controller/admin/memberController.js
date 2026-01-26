@@ -14,21 +14,20 @@ export const registerMember = async (req, res) => {
 
         const payload = req.body || {};
 
+        // Strip offline file metadata (_isFile objects) from sync payload - backend expects strings or undefined
+        const fileFields = [
+            'Member_Photo', 'Voter_Id_File', 'Adhar_Id_File', 'Bank_File',
+            'Ration_Card_File', 'Job_Card_File', 'Adhar_Id_Pati_File',
+            'Voter_Id_Pati_File', 'Bank_Pati_File',
+        ];
+        fileFields.forEach((key) => {
+            const v = payload[key];
+            if (v && typeof v === 'object' && v._isFile === true) delete payload[key];
+        });
+
         // Handle file uploads - multer adds files to req.files
         // When using upload.fields(), req.files is an object with field names as keys
         if (req.files) {
-            const fileFields = [
-                'Member_Photo',
-                'Voter_Id_File',
-                'Adhar_Id_File',
-                'Bank_File',
-                'Ration_Card_File',
-                'Job_Card_File',
-                'Adhar_Id_Pati_File',
-                'Voter_Id_Pati_File',
-                'Bank_Pati_File'
-            ];
-
             // req.files is an object: { fieldName: [file1, file2, ...] }
             Object.keys(req.files).forEach(fieldName => {
                 if (fileFields.includes(fieldName)) {
@@ -218,12 +217,18 @@ export const registerMember = async (req, res) => {
             }
         }
 
-        // Create new Member
+        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        const approvalStatus = requireApproval ? 'pending' : 'approved';
+
         const memberData = {
             ...payload,
             group: groupDoc._id,
             Group_Name: payload.Group_Name || groupDoc.group_name,
+            approvalStatus,
         };
+        delete memberData.requireApproval;
+        delete memberData.source;
+        delete memberData.groupId;
 
         // Log before creating (only in development)
         if (process.env.NODE_ENV !== 'production') {
@@ -488,7 +493,10 @@ export const listMembersByGroup = async (req, res) => {
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
 
-        const members = await Member.find({ group: groupId })
+        const members = await Member.find({
+            group: groupId,
+            $or: [{ approvalStatus: 'approved' }, { approvalStatus: { $exists: false } }],
+        })
             .sort({ createdAt: -1 })
             .lean();
         return apiResponse.success(res, "Members fetched successfully", members);
@@ -530,7 +538,8 @@ export const getAutoMemberCode = async (req, res) => {
 export const listMembers = async (req, res) => {
     try {
         const { group_id } = req.query;
-        const filter = group_id ? { group: group_id } : {};
+        const approvalFilter = { $or: [{ approvalStatus: 'approved' }, { approvalStatus: { $exists: false } }] };
+        const filter = group_id ? { group: group_id, ...approvalFilter } : approvalFilter;
         const members = await Member.find(filter).sort({ createdAt: -1 }).lean();
         return apiResponse.success(res, "Members fetched successfully", members);
     } catch (error) {
@@ -559,6 +568,101 @@ export const getMemberDetail = async (req, res) => {
         return apiResponse.success(res, "Member detail fetched successfully", member);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
+    }
+};
+
+/**
+ * GET /api/admin/member/pending
+ * Returns members with approvalStatus === 'pending' for admin approval.
+ */
+export const getPendingMembers = async (req, res) => {
+    try {
+        const adminPlace = req.user?.place || req.admin?.place;
+        const filter = { approvalStatus: 'pending' };
+        const members = await Member.find(filter)
+            .populate('group', 'group_name group_code _id')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const withAccess = [];
+        for (const m of members) {
+            const groupId = m.group?._id || m.group;
+            if (!groupId) continue;
+            const accessCheck = await verifyGroupAccess(groupId.toString(), adminPlace);
+            if (accessCheck.valid) withAccess.push(m);
+        }
+
+        return apiResponse.success(res, "Pending members fetched", withAccess);
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to fetch pending members", 500);
+    }
+};
+
+/**
+ * PUT /api/admin/member/approve/:id
+ * Approve a pending member.
+ */
+export const approveMember = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) return apiResponse.error(res, "Member id is required", 400);
+
+        const member = await Member.findById(id);
+        if (!member) return apiResponse.error(res, "Member not found", 404);
+        if (member.approvalStatus !== 'pending') {
+            return apiResponse.error(res, "Member is not pending approval", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const groupId = member.group?._id || member.group;
+        if (groupId) {
+            const accessCheck = await verifyGroupAccess(groupId.toString(), adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Access denied", 403);
+            }
+        }
+
+        member.approvalStatus = 'approved';
+        await member.save();
+
+        return apiResponse.success(res, "Member approved successfully", member);
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to approve member", 500);
+    }
+};
+
+/**
+ * PUT /api/admin/member/reject/:id
+ * Reject a pending member (sets approvalStatus to 'rejected').
+ */
+export const rejectMember = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body || {};
+        if (!id) return apiResponse.error(res, "Member id is required", 400);
+
+        const member = await Member.findById(id);
+        if (!member) return apiResponse.error(res, "Member not found", 404);
+        if (member.approvalStatus !== 'pending') {
+            return apiResponse.error(res, "Member is not pending approval", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const groupId = member.group?._id || member.group;
+        if (groupId) {
+            const accessCheck = await verifyGroupAccess(groupId.toString(), adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Access denied", 403);
+            }
+        }
+
+        member.approvalStatus = 'rejected';
+        if (reason) member.rejectionReason = reason;
+        await member.save();
+
+        return apiResponse.success(res, "Member rejected", member);
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to reject member", 500);
     }
 };
 

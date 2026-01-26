@@ -18,6 +18,9 @@ import { initApprovalDB, getAllApprovals, approveRequest, rejectRequest, updateA
 import { getGroups } from "../../services/groupService";
 import { getPendingConversions, approveConversion, rejectConversion } from "../../services/cashToBankService";
 import { getLoans, approveLoan, rejectLoan } from "../../services/loanService";
+import { getPendingMembers, approveMember, rejectMember } from "../../services/memberService";
+import { getAllFDs, approveFD, rejectFD } from "../../services/fdService";
+import { getRecoveries, approveRecovery, rejectRecovery } from "../../services/recoveryService";
 
 export default function ApprovalManagement() {
     const [approvals, setApprovals] = useState([]);
@@ -140,6 +143,89 @@ export default function ApprovalManagement() {
                 // Continue with other approvals even if backend fails
             }
 
+            // Load pending members from backend (synced from group, require admin approval)
+            try {
+                const membersRes = await getPendingMembers();
+                if (membersRes?.success && Array.isArray(membersRes.data)) {
+                    const memberApprovals = membersRes.data.map((m) => ({
+                        id: m._id || m.id,
+                        type: "member",
+                        status: m.approvalStatus || "pending",
+                        groupId: m.group?._id || m.group || "",
+                        groupName: m.group?.group_name || "",
+                        data: m,
+                        submittedAt: m.createdAt ? new Date(m.createdAt).getTime() : Date.now(),
+                        approvedAt: null,
+                        approvedBy: null,
+                        rejectionReason: m.rejectionReason || null,
+                        synced: true,
+                        _isBackendApproval: true,
+                    }));
+                    allApprovals = [...allApprovals, ...memberApprovals];
+                }
+            } catch (error) {
+                console.error("Error loading pending members:", error);
+            }
+
+            // Load FD approvals from backend
+            try {
+                const fdsRes = await getAllFDs();
+                if (fdsRes?.success && Array.isArray(fdsRes.data)) {
+                    const fdApprovals = fdsRes.data.map((fd) => ({
+                        id: fd._id || fd.id,
+                        type: "fd",
+                        status: fd.approvalStatus || "approved", // Default to approved for backward compatibility
+                        groupId: fd.groupId?._id || fd.groupId || "",
+                        groupName: fd.groupName || fd.groupId?.group_name || "",
+                        data: fd,
+                        submittedAt: fd.createdAt ? new Date(fd.createdAt).getTime() : Date.now(),
+                        approvedAt: fd.approvedAt ? new Date(fd.approvedAt).getTime() : null,
+                        approvedBy: fd.approvedBy || null,
+                        rejectionReason: fd.rejectionReason || null,
+                        synced: true,
+                        _isBackendApproval: true,
+                    }));
+
+                    // Merge with existing approvals
+                    allApprovals = [...allApprovals, ...fdApprovals];
+                }
+            } catch (error) {
+                console.error("Error loading FDs:", error);
+                // Continue with other approvals even if backend fails
+            }
+
+            // Load Recovery approvals from backend
+            try {
+                const recoveriesRes = await getRecoveries();
+                if (recoveriesRes?.success && Array.isArray(recoveriesRes.data)) {
+                    const recoveryApprovals = recoveriesRes.data
+                        .filter((recovery) => recovery.approvalStatus === "pending") // Only show pending recoveries
+                        .map((recovery) => ({
+                            id: recovery._id || recovery.id,
+                            type: "recovery",
+                            status: recovery.approvalStatus || "approved",
+                            groupId: recovery.groupId?._id || recovery.groupId || "",
+                            groupName: recovery.groupName || recovery.groupId?.group_name || "",
+                            data: recovery,
+                            submittedAt: recovery.createdAt ? new Date(recovery.createdAt).getTime() : Date.now(),
+                            approvedAt: recovery.approvedAt ? new Date(recovery.approvedAt).getTime() : null,
+                            approvedBy: recovery.approvedBy || null,
+                            rejectionReason: recovery.rejectionReason || null,
+                            synced: true,
+                            _isBackendApproval: true,
+                        }));
+
+                    // Merge with existing approvals
+                    allApprovals = [...allApprovals, ...recoveryApprovals];
+                }
+            } catch (error) {
+                console.error("Error loading recoveries:", error);
+                // Continue with other approvals even if backend fails
+            }
+
+            // Exclude local (approvalDB) member approvals only; keep backend pending members
+            allApprovals = allApprovals.filter((a) => a.type !== "member" || a._isBackendApproval);
+
             // Filter by group if selected
             if (selectedGroupId) {
                 allApprovals = allApprovals.filter((a) => {
@@ -193,6 +279,27 @@ export default function ApprovalManagement() {
                         } else {
                             throw new Error(res?.message || "Failed to approve loan");
                         }
+                    } else if (approval.type === "member") {
+                        const res = await approveMember(approval.id);
+                        if (res?.success) {
+                            alert("Member approved successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to approve member");
+                        }
+                    } else if (approval.type === "fd") {
+                        const res = await approveFD(approval.id);
+                        if (res?.success) {
+                            alert("FD approved successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to approve FD");
+                        }
+                    } else if (approval.type === "recovery") {
+                        const res = await approveRecovery(approval.id);
+                        if (res?.success) {
+                            alert("Recovery approved successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to approve recovery");
+                        }
                     } else {
                         throw new Error("Unknown approval type");
                     }
@@ -235,6 +342,27 @@ export default function ApprovalManagement() {
                             alert("Loan rejected successfully!");
                         } else {
                             throw new Error(res?.message || "Failed to reject loan");
+                        }
+                    } else if (approval.type === "member") {
+                        const res = await rejectMember(approval.id, rejectionReason);
+                        if (res?.success) {
+                            alert("Member rejected.");
+                        } else {
+                            throw new Error(res?.message || "Failed to reject member");
+                        }
+                    } else if (approval.type === "fd") {
+                        const res = await rejectFD(approval.id, rejectionReason);
+                        if (res?.success) {
+                            alert("FD rejected successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to reject FD");
+                        }
+                    } else if (approval.type === "recovery") {
+                        const res = await rejectRecovery(approval.id, rejectionReason);
+                        if (res?.success) {
+                            alert("Recovery rejected successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to reject recovery");
                         }
                     } else {
                         throw new Error("Unknown approval type");
@@ -317,6 +445,10 @@ export default function ApprovalManagement() {
                 return <DollarSign className="text-green-600" size={20} />;
             case "loan":
                 return <FileText className="text-purple-600" size={20} />;
+            case "fd":
+                return <DollarSign className="text-indigo-600" size={20} />;
+            case "recovery":
+                return <DollarSign className="text-green-600" size={20} />;
             case "cash_to_bank":
                 return <ArrowLeftRight className="text-orange-600" size={20} />;
             default:
@@ -332,6 +464,10 @@ export default function ApprovalManagement() {
                 return "Demand & Recovery";
             case "loan":
                 return "Loan Application";
+            case "fd":
+                return "Fixed Deposit";
+            case "recovery":
+                return "Demand Recovery";
             case "cash_to_bank":
                 // Check if we have conversionType in the approval data
                 const conversionType = approval?.conversionType || approval?.data?.conversionType;
@@ -515,6 +651,9 @@ export default function ApprovalManagement() {
                                     {approval.type === "loan" && approval.data?.amount && (
                                         <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.amount)}</p>
                                     )}
+                                    {approval.type === "fd" && approval.data?.amount && (
+                                        <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.amount)} | Period: {approval.data?.time_period ? `${(approval.data.time_period / 12).toFixed(1)} years` : '-'}</p>
+                                    )}
                                     {approval.type === "cash_to_bank" && approval.data?.totalCashAmount && (
                                         <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.totalCashAmount)}</p>
                                     )}
@@ -580,6 +719,16 @@ export default function ApprovalManagement() {
                                                 )}
                                                 {approval.type === "loan" && approval.data?.amount && (
                                                     <p className="text-xs text-gray-500 mt-1">Amount: {formatAmount(approval.data.amount)}</p>
+                                                )}
+                                                {approval.type === "fd" && approval.data?.amount && (
+                                                    <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                                                        <p>Amount: {formatAmount(approval.data.amount)}</p>
+                                                        <p>Time Period: {approval.data?.time_period ? `${(approval.data.time_period / 12).toFixed(1)} years` : '-'}</p>
+                                                        <p>FD Rate: {approval.data?.fd_rate_snapshot ? `${approval.data.fd_rate_snapshot}%` : '-'}</p>
+                                                        {approval.data?.maturityAmount && (
+                                                            <p>Maturity Amount: {formatAmount(approval.data.maturityAmount)}</p>
+                                                        )}
+                                                    </div>
                                                 )}
                                                 {approval.type === "cash_to_bank" && approval.data?.totalCashAmount && (
                                                     <div className="text-xs text-gray-500 mt-1 space-y-0.5">

@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { User, IdCard, Building2, DollarSign, GraduationCap, MapPin, Users } from "lucide-react";
 import { Input, Select, TextArea, FormSection, FileInput } from "../components/forms/FormComponents";
-import { createApprovalRequest } from "../services/approvalDB";
 import { useGroup } from "../contexts/GroupContext";
 import { getGroups, getGroupDetail } from "../services/groupService";
 import { registerMember as registerMemberApi, getAutoMemberCode } from "../services/memberService";
+import { registerMember as registerMemberOffline, getAutoMemberCode as getAutoMemberCodeOffline } from "../services/memberServiceOffline";
 
 export default function MemberRegistration() {
   const { currentGroup, isGroupPanel, isGroupLoading } = useGroup();
@@ -303,13 +303,15 @@ export default function MemberRegistration() {
   };
 
   const handleAutoGenerateMemberCode = async () => {
-    const groupId = form.group_id;
+    const groupId = currentGroup?.id || form.group_id;
     if (!groupId) {
       return;
     }
     setAutoCodeLoading(true);
     try {
-      const res = await getAutoMemberCode(groupId);
+      const res = isGroupPanel
+        ? await getAutoMemberCodeOffline(groupId)
+        : await getAutoMemberCode(groupId);
       const code = res?.data?.memberCode;
       if (code) {
         setForm((prev) => ({ ...prev, Member_Id: code }));
@@ -347,15 +349,20 @@ export default function MemberRegistration() {
 
       // Create FormData for file uploads
       const formData = new FormData();
+      const formToUse = { ...form };
+      if (currentGroup) {
+        formToUse.group_id = currentGroup.id;
+        formToUse.Group_Name = currentGroup.name || formToUse.Group_Name;
+      }
 
       // Add all form fields to FormData
-      Object.keys(form).forEach(key => {
+      Object.keys(formToUse).forEach(key => {
         // Skip file fields - they'll be added separately
         if (key.endsWith('_File')) {
           return;
         }
 
-        const value = form[key];
+        const value = formToUse[key];
 
         // Skip null/undefined values
         if (value === null || value === undefined || value === '') {
@@ -391,21 +398,10 @@ export default function MemberRegistration() {
         }
       });
 
-      // If in group context, create approval request
-      // Note: For approval requests, we might need to convert FormData to a regular object
-      // or handle it differently in the approval service
       if (currentGroup) {
-        // Convert FormData to object for approval request (files will be excluded)
-        const approvalData = {};
-        for (const [key, value] of formData.entries()) {
-          if (!(value instanceof File)) {
-            approvalData[key] = value;
-          }
-        }
-        await createApprovalRequest("member", approvalData, currentGroup.id, currentGroup.name);
-        alert("Member registration submitted for approval!");
+        await registerMemberOffline(formData);
+        alert("Member saved locally. Sync to backend when online (Group Ledger → Sync to backend).");
       } else {
-        // In admin context, directly register member to DB with FormData
         await registerMemberApi(formData);
         alert("Member Registered Successfully!");
       }
@@ -589,7 +585,7 @@ export default function MemberRegistration() {
               <button
                 type="button"
                 onClick={handleAutoGenerateMemberCode}
-                disabled={!form.group_id || autoCodeLoading}
+                disabled={!(currentGroup?.id || form.group_id) || autoCodeLoading}
                 className="shrink-0 px-4 py-2.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600 transition-colors"
               >
                 {autoCodeLoading ? "..." : "Auto generate"}

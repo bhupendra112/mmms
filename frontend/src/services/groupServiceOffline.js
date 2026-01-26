@@ -165,23 +165,27 @@ export const createBank = async (data) => {
 };
 
 /**
- * Get group banks - computed from group detail
+ * Get group banks - from master_banks (PreSync) when available, else group detail
  */
 export const getGroupBanks = async (groupId) => {
+    const g = groupId == null ? '' : (typeof groupId === 'object' && groupId?._id != null ? String(groupId._id) : String(groupId));
+    if (db.master_banks) {
+        const all = await db.master_banks.toArray();
+        const filtered = all.filter((r) => {
+            const pg = r.payload?.groupId ?? r.payload?.group_id ?? r.payload?.group;
+            const pgStr = pg == null ? '' : (typeof pg === 'object' && pg._id != null ? String(pg._id) : String(pg));
+            return pgStr === g;
+        });
+        if (filtered.length > 0) {
+            return { success: true, data: filtered.map((r) => r.payload) };
+        }
+    }
     const group = await getGroupDetail(groupId);
-    
     if (group.success && group.data) {
         const banks = group.data.banks || group.data.bankmaster || [];
-        return {
-            success: true,
-            data: Array.isArray(banks) ? banks : [banks].filter(Boolean),
-        };
+        return { success: true, data: Array.isArray(banks) ? banks : [banks].filter(Boolean) };
     }
-    
-    return {
-        success: true,
-        data: [],
-    };
+    return { success: true, data: [] };
 };
 
 /**

@@ -77,10 +77,13 @@ export const createFD = async (req, res) => {
         const interestAmount = (principal * fdRate * timePeriodYears) / 100;
         const maturityAmount = principal + interestAmount;
 
-        // Validate balance based on payment mode
-        // Note: For cash FD, member gives cash to group, so group's cash balance will increase (no validation needed)
-        // For bank FD, group pays from bank, so we need to check bank balance
-        if (payload.paymentMode?.online === true && payload.bankId) {
+        // Check if approval is required (from group panel)
+        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        const approvalStatus = requireApproval ? 'pending' : 'approved';
+
+        // Only validate balance if already approved (admin panel) or if it's a bank FD
+        // For pending approvals from group panel, validation will happen on approval
+        if (approvalStatus === 'approved' && payload.paymentMode?.online === true && payload.bankId) {
             // Check bank balance
             const bank = await BankMaster.findById(payload.bankId);
             if (!bank) {
@@ -112,23 +115,16 @@ export const createFD = async (req, res) => {
             onlineRef: payload.onlineRef || null,
             bankId: payload.bankId || null,
             status: "active",
-            createdBy: req.user?.id || "admin",
+            approvalStatus: approvalStatus,
+            createdBy: req.user?.id || payload.createdBy || "admin",
         });
 
-        // Create bank transaction record if online payment with bank
-        // NOTE: FD creation with bank is a CREDIT transaction - member gives money to group via bank, so bank balance increases
-        if (payload.paymentMode?.online && payload.bankId) {
-            console.log("[FD_CONTROLLER] Creating bank transaction for FD creation (CREDIT - will ADD to bank balance):", {
-                bankId: payload.bankId,
-                groupId: group._id.toString(),
-                amount: principal,
-                transactionType: "fd"
-            });
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:116', message: 'Creating bank transaction for FD (should be CREDIT)', data: { bankId: payload.bankId, groupId: group._id.toString(), amount: principal, transactionType: 'fd', paymentMode: 'online' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
-            // #endregion
-
+        // Only create transactions and ledger entries if approved (admin panel)
+        // For pending approvals (group panel), these will be created on approval
+        if (approvalStatus === 'approved') {
+            // Create bank transaction record if online payment with bank
+            // NOTE: FD creation with bank is a CREDIT transaction - member gives money to group via bank, so bank balance increases
+            if (payload.paymentMode?.online && payload.bankId) {
             const bankTxResult = await createBankTransactionRecord({
                 bankId: payload.bankId,
                 groupId: group._id,
@@ -146,34 +142,11 @@ export const createFD = async (req, res) => {
                 createdBy: req.user?.id || "admin",
             });
 
-            console.log("[FD_CONTROLLER] Bank transaction result:", bankTxResult ? "SUCCESS" : "FAILED");
-            if (bankTxResult) {
-                console.log("[FD_CONTROLLER] Bank transaction details:", {
-                    id: bankTxResult._id?.toString(),
-                    status: bankTxResult.status,
-                    transactionType: bankTxResult.transactionType,
-                    amount: bankTxResult.amount
-                });
-            }
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:140', message: 'Bank transaction created for FD', data: { success: !!bankTxResult, bankTransactionId: bankTxResult?._id?.toString(), status: bankTxResult?.status, transactionType: bankTxResult?.transactionType }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
-            // #endregion
         }
 
         // Create cash transaction record if payment mode is Cash
         // NOTE: FD creation with cash is a CREDIT transaction - member gives cash to group, so cash balance increases
         if (payload.paymentMode?.cash) {
-            console.log("[FD_CONTROLLER] Creating cash transaction for FD creation (CREDIT - will ADD cash):", {
-                groupId: group._id.toString(),
-                amount: principal,
-                transactionType: "fd"
-            });
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:137', message: 'Creating cash transaction for FD (should be CREDIT)', data: { groupId: group._id.toString(), amount: principal, transactionType: 'fd', paymentMode: 'cash' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
-            // #endregion
-
             const cashTxResult = await createCashTransactionRecord({
                 groupId: group._id,
                 transactionType: "fd",
@@ -189,35 +162,34 @@ export const createFD = async (req, res) => {
                 createdBy: req.user?.id || "admin",
             });
 
-            console.log("[FD_CONTROLLER] Cash transaction result:", cashTxResult ? "SUCCESS" : "FAILED");
+            }
 
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'fdController.js:156', message: 'Cash transaction created for FD', data: { success: !!cashTxResult, cashTransactionId: cashTxResult?._id?.toString() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
-            // #endregion
+            // Post ledger entry for FD creation
+            const headInfo = await findOrCreateHead(group._id, "FD", "assets");
+            await postTransaction({
+                sourceDoc: fd,
+                headName: "FD",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "assets",
+                amount: principal,
+                direction: "in",
+                groupId: group._id,
+                memberId: payload.memberId,
+                date: fdDate,
+                notes: `FD creation - Amount: ₹${principal}, Period: ${timePeriodYears} years - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                paymentMode: payload.paymentMode?.online ? "Bank" : "Cash",
+                bankId: payload.bankId || undefined,
+                referenceModel: "FDMaster",
+                referenceId: fd._id,
+                createdBy: req.user?.id || "admin",
+            });
         }
 
-        // Post ledger entry for FD creation
-        const headInfo = await findOrCreateHead(group._id, "FD", "assets");
-        await postTransaction({
-            sourceDoc: fd,
-            headName: "FD",
-            headType: headInfo?.headType || "groupMaster",
-            headId: headInfo?.headId,
-            section: "assets",
-            amount: principal,
-            direction: "in",
-            groupId: group._id,
-            memberId: payload.memberId,
-            date: fdDate,
-            notes: `FD creation - Amount: ₹${principal}, Period: ${timePeriodYears} years - Member: ${member.Member_Nm} (${member.Member_Id})`,
-            paymentMode: payload.paymentMode?.online ? "Bank" : "Cash",
-            bankId: payload.bankId || undefined,
-            referenceModel: "FDMaster",
-            referenceId: fd._id,
-            createdBy: req.user?.id || "admin",
-        });
-
-        return apiResponse.success(res, "FD created successfully", fd);
+        const message = approvalStatus === 'pending' 
+            ? "FD created successfully and pending admin approval" 
+            : "FD created successfully";
+        return apiResponse.success(res, message, fd);
 
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
@@ -324,6 +296,151 @@ export const updateFDStatus = async (req, res) => {
         await fd.save();
 
         return apiResponse.success(res, "FD status updated successfully", fd);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Approve FD (from group panel)
+export const approveFD = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!id) {
+            return apiResponse.error(res, "FD ID is required", 400);
+        }
+
+        const fd = await FDMaster.findById(id);
+        if (!fd) {
+            return apiResponse.error(res, "FD not found", 404);
+        }
+
+        if (fd.approvalStatus !== "pending") {
+            return apiResponse.error(res, `FD is already ${fd.approvalStatus}`, 400);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify FD's group belongs to admin's place
+        const accessCheck = await verifyGroupAccess(fd.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this FD's group", 403);
+        }
+        const group = accessCheck.group;
+
+        // Validate balance before approving (only for bank FDs)
+        const principal = parseFloat(fd.amount || 0);
+        if (fd.paymentMode?.online && fd.bankId) {
+            const balanceInfo = await BankMaster.calculateAvailableBalance(fd.bankId);
+            const availableBalance = balanceInfo.availableBalance || 0;
+            if (availableBalance < principal) {
+                return apiResponse.error(res, `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${principal.toFixed(2)}`, 400);
+            }
+        }
+
+        // Update FD approval status
+        fd.approvalStatus = "approved";
+        fd.approvedBy = req.user?.id || "admin";
+        fd.approvedAt = new Date();
+        await fd.save();
+
+        // Create bank transaction record if online payment with bank
+        if (fd.paymentMode?.online && fd.bankId) {
+            await createBankTransactionRecord({
+                bankId: fd.bankId,
+                groupId: fd.groupId,
+                transactionType: "fd",
+                amount: principal,
+                date: fd.date,
+                onlineRef: fd.onlineRef || null,
+                description: `FD creation - Amount: ₹${principal}, Period: ${fd.time_period} months`,
+                fdId: fd._id,
+                memberId: fd.memberId,
+                memberCode: fd.memberCode,
+                memberName: fd.memberName,
+                createdBy: req.user?.id || "admin",
+            });
+        }
+
+        // Create cash transaction record if payment mode is Cash
+        if (fd.paymentMode?.cash) {
+            await createCashTransactionRecord({
+                groupId: fd.groupId,
+                transactionType: "fd",
+                amount: principal,
+                date: fd.date,
+                description: `FD creation - Amount: ₹${principal}, Period: ${fd.time_period} months`,
+                fdId: fd._id,
+                memberId: fd.memberId,
+                memberCode: fd.memberCode,
+                memberName: fd.memberName,
+                createdBy: req.user?.id || "admin",
+            });
+        }
+
+        // Post ledger entry for FD creation
+        const headInfo = await findOrCreateHead(fd.groupId, "FD", "assets");
+        await postTransaction({
+            sourceDoc: fd,
+            headName: "FD",
+            headType: headInfo?.headType || "groupMaster",
+            headId: headInfo?.headId,
+            section: "assets",
+            amount: principal,
+            direction: "in",
+            groupId: fd.groupId,
+            memberId: fd.memberId,
+            date: fd.date,
+            notes: `FD creation - Amount: ₹${principal}, Period: ${fd.time_period} months - Member: ${fd.memberName} (${fd.memberCode})`,
+            paymentMode: fd.paymentMode?.online ? "Bank" : "Cash",
+            bankId: fd.bankId || undefined,
+            referenceModel: "FDMaster",
+            referenceId: fd._id,
+            createdBy: req.user?.id || "admin",
+        });
+
+        return apiResponse.success(res, "FD approved successfully", fd);
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to approve FD", 500);
+    }
+};
+
+// Reject FD (from group panel)
+export const rejectFD = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        if (!id) {
+            return apiResponse.error(res, "FD ID is required", 400);
+        }
+
+        const fd = await FDMaster.findById(id);
+        if (!fd) {
+            return apiResponse.error(res, "FD not found", 404);
+        }
+
+        if (fd.approvalStatus !== "pending") {
+            return apiResponse.error(res, `FD is already ${fd.approvalStatus}`, 400);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify FD's group belongs to admin's place
+        const accessCheck = await verifyGroupAccess(fd.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this FD's group", 403);
+        }
+
+        fd.approvalStatus = "rejected";
+        fd.rejectedBy = req.user?.id || "admin";
+        fd.rejectedAt = new Date();
+        fd.rejectionReason = reason || "No reason provided";
+        await fd.save();
+
+        return apiResponse.success(res, "FD rejected successfully", fd);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

@@ -1,22 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Download, FileText } from "lucide-react";
+import { Download, FileText, RefreshCw } from "lucide-react";
 import { useGroup } from "../contexts/GroupContext";
-import { getMembersByGroup, exportMemberLedger } from "../services/memberService";
-import { getPendingApprovals } from "../services/approvalDB";
+import { useOffline } from "../contexts/OfflineContext";
+import { getMembersByGroup } from "../services/memberServiceOffline";
+import { exportMemberLedger } from "../services/memberService";
 import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
 
 const Members = () => {
   const { currentGroup, isGroupLoading } = useGroup();
+  const { lastRefreshedAt } = useOffline();
   const [search, setSearch] = useState("");
   const [members, setMembers] = useState([]);
-  const [pendingMembers, setPendingMembers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedMembers, setSelectedMembers] = useState(new Set());
   const [dateRange, setDateRange] = useState({ fromDate: "", toDate: "" });
 
-  const handleExportMember = async (memberId, format = 'excel') => {
+  const handleExportMember = async (memberId, format = "excel") => {
     try {
       setExportLoading(true);
       const filters = {
@@ -85,8 +86,7 @@ const Members = () => {
     return handleBulkExport("excel");
   };
 
-  useEffect(() => {
-    if (isGroupLoading) return;
+  const loadMembers = useCallback(() => {
     if (!currentGroup?.id) return;
     setLoading(true);
     getMembersByGroup(currentGroup.id)
@@ -96,40 +96,23 @@ const Members = () => {
         setMembers([]);
       })
       .finally(() => setLoading(false));
-  }, [currentGroup?.id, isGroupLoading]);
+  }, [currentGroup?.id]);
 
   useEffect(() => {
     if (isGroupLoading) return;
     if (!currentGroup?.id) return;
-    getPendingApprovals(currentGroup.id)
-      .then((approvals) => {
-        const pending = (approvals || [])
-          .filter((a) => a.type === "member" && a.status === "pending")
-          .map((a) => ({
-            _id: a.id,
-            Member_Id: a.data?.Member_Id || "PENDING",
-            Member_Nm: a.data?.Member_Nm || "-",
-            Village: a.data?.Village || "-",
-            __pending: true,
-          }));
-        setPendingMembers(pending);
-      })
-      .catch((e) => {
-        console.error("Failed to load pending approvals:", e);
-        setPendingMembers([]);
-      });
-  }, [currentGroup?.id, isGroupLoading]);
+    loadMembers();
+  }, [currentGroup?.id, isGroupLoading, loadMembers, lastRefreshedAt]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const combined = [...pendingMembers, ...members];
-    if (!q) return combined;
-    return combined.filter((m) => {
+    if (!q) return members;
+    return members.filter((m) => {
       const name = String(m.Member_Nm || "").toLowerCase();
       const code = String(m.Member_Id || "").toLowerCase();
       return name.includes(q) || code.includes(q);
     });
-  }, [members, pendingMembers, search]);
+  }, [members, search]);
 
   return (
     <div className="p-3 sm:p-4 md:p-6">
@@ -137,6 +120,16 @@ const Members = () => {
         <h1 className="text-2xl sm:text-3xl font-bold">Member List</h1>
 
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={loadMembers}
+            disabled={loading || !currentGroup?.id}
+            className="inline-flex items-center justify-center gap-1.5 bg-gray-600 text-white px-4 py-2 rounded shadow text-sm sm:text-base disabled:opacity-50"
+            title="Refresh list (e.g. after admin approval)"
+          >
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
           <Link
             to="/group/member-registration"
             className="bg-green-600 text-white px-4 py-2 rounded shadow text-center text-sm sm:text-base"
@@ -217,60 +210,58 @@ const Members = () => {
 
       {/* Mobile Card View */}
       <div className="block sm:hidden space-y-4">
-        {filtered.map((m) => (
-          <div key={m._id} className="bg-white border rounded-lg p-4 shadow-sm">
-            <div className="flex justify-between items-start mb-3">
-              <div className="flex-1">
-                <h3 className="font-semibold text-gray-800">{m.Member_Nm}</h3>
-                <p className="text-sm text-gray-600">Code: {m.Member_Id}</p>
-                {m.Village && <p className="text-sm text-gray-600">Village: {m.Village}</p>}
+        {filtered.map((m) => {
+          const mid = m._uuid || m._id || m.Member_Id;
+          const isLocal = m._isLocal === true;
+          return (
+            <div key={mid} className="bg-white border rounded-lg p-4 shadow-sm">
+              <div className="flex justify-between items-start mb-3">
+                <div className="flex-1">
+                  <h3 className="font-semibold text-gray-800">{m.Member_Nm}</h3>
+                  <p className="text-sm text-gray-600">Code: {m.Member_Id}</p>
+                  {m.Village && <p className="text-sm text-gray-600">Village: {m.Village}</p>}
+                </div>
+                <div>
+                  {isLocal ? (
+                    <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-full text-xs">
+                      Pending sync
+                    </span>
+                  ) : (
+                    <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+                      Active
+                    </span>
+                  )}
+                </div>
               </div>
-              <div>
-                {m.__pending ? (
-                  <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs">
-                    Pending
-                  </span>
-                ) : (
-                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
-                    Active
-                  </span>
-                )}
+              <div className="flex flex-wrap gap-2 pt-3 border-t">
+                <Link
+                  to={`/group/members/${mid}`}
+                  className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm flex-1 text-center"
+                >
+                  View
+                </Link>
+                <button
+                  onClick={() => handleExportMember(mid, "excel")}
+                  disabled={exportLoading || isLocal}
+                  className="bg-green-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 flex-1"
+                  title={isLocal ? "Sync first to export" : "Export Excel"}
+                >
+                  <Download size={14} className="inline mr-1" />
+                  Excel
+                </button>
+                <button
+                  onClick={() => handleExportMember(mid, "pdf")}
+                  disabled={exportLoading || isLocal}
+                  className="bg-red-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 flex-1"
+                  title={isLocal ? "Sync first to export" : "Export PDF"}
+                >
+                  <FileText size={14} className="inline mr-1" />
+                  PDF
+                </button>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 pt-3 border-t">
-              {m.__pending ? (
-                <span className="text-gray-500 text-sm">Waiting for approval</span>
-              ) : (
-                <>
-                  <Link
-                    to={`/group/members/${m._id}`}
-                    className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm flex-1 text-center"
-                  >
-                    View
-                  </Link>
-                  <button
-                    onClick={() => handleExportMember(m._id, 'excel')}
-                    disabled={exportLoading}
-                    className="bg-green-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 flex-1"
-                    title="Export Excel"
-                  >
-                    <Download size={14} className="inline mr-1" />
-                    Excel
-                  </button>
-                  <button
-                    onClick={() => handleExportMember(m._id, 'pdf')}
-                    disabled={exportLoading}
-                    className="bg-red-600 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 flex-1"
-                    title="Export PDF"
-                  >
-                    <FileText size={14} className="inline mr-1" />
-                    PDF
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {!loading && filtered.length === 0 && (
           <div className="bg-white border rounded-lg p-8 text-center text-gray-600">
             No members found.
@@ -292,55 +283,54 @@ const Members = () => {
           </thead>
 
           <tbody>
-            {filtered.map((m) => (
-              <tr key={m._id} className="border hover:bg-gray-50">
-                <td className="p-3 border text-sm sm:text-base">{m.Member_Id}</td>
-                <td className="p-3 border text-sm sm:text-base">{m.Member_Nm}</td>
-                <td className="p-3 border text-sm sm:text-base">{m.Village || "-"}</td>
-                <td className="p-3 border">
-                  {m.__pending ? (
-                    <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs sm:text-sm">
-                      Pending Approval
-                    </span>
-                  ) : (
-                    <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs sm:text-sm">
-                      Active
-                    </span>
-                  )}
-                </td>
-
-                <td className="p-3 border text-center">
-                  {m.__pending ? (
-                    <span className="text-gray-500 text-sm">Waiting</span>
-                  ) : (
+            {filtered.map((m) => {
+              const mid = m._uuid || m._id || m.Member_Id;
+              const isLocal = m._isLocal === true;
+              return (
+                <tr key={mid} className="border hover:bg-gray-50">
+                  <td className="p-3 border text-sm sm:text-base">{m.Member_Id}</td>
+                  <td className="p-3 border text-sm sm:text-base">{m.Member_Nm}</td>
+                  <td className="p-3 border text-sm sm:text-base">{m.Village || "-"}</td>
+                  <td className="p-3 border">
+                    {isLocal ? (
+                      <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-full text-xs sm:text-sm">
+                        Pending sync
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs sm:text-sm">
+                        Active
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-3 border text-center">
                     <div className="flex items-center justify-center gap-1 sm:gap-2">
                       <Link
-                        to={`/group/members/${m._id}`}
+                        to={`/group/members/${mid}`}
                         className="bg-blue-600 text-white px-2 sm:px-3 py-1 rounded text-xs sm:text-sm"
                       >
                         View
                       </Link>
                       <button
-                        onClick={() => handleExportMember(m._id, 'excel')}
-                        disabled={exportLoading}
+                        onClick={() => handleExportMember(mid, "excel")}
+                        disabled={exportLoading || isLocal}
                         className="bg-green-600 text-white px-2 py-1 rounded text-xs sm:text-sm disabled:opacity-50"
-                        title="Export Ledger (Excel)"
+                        title={isLocal ? "Sync first to export" : "Export Ledger (Excel)"}
                       >
                         <Download size={14} />
                       </button>
                       <button
-                        onClick={() => handleExportMember(m._id, 'pdf')}
-                        disabled={exportLoading}
+                        onClick={() => handleExportMember(mid, "pdf")}
+                        disabled={exportLoading || isLocal}
                         className="bg-red-600 text-white px-2 py-1 rounded text-xs sm:text-sm disabled:opacity-50"
-                        title="Export Ledger (PDF)"
+                        title={isLocal ? "Sync first to export" : "Export Ledger (PDF)"}
                       >
                         <FileText size={14} />
                       </button>
                     </div>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              );
+            })}
             {!loading && filtered.length === 0 && (
               <tr>
                 <td className="p-4 text-center text-gray-600" colSpan={5}>

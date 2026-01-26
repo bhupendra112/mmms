@@ -13,11 +13,13 @@ import {
 import { Link } from "react-router-dom";
 import { exportLoanToExcel, exportLoanToPDF } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
-import { getAllApprovals, getUnsyncedApprovals } from "../../services/approvalDB";
+import { useOffline } from "../../contexts/OfflineContext";
+import { getAllApprovals, getUnsyncedApprovals, syncPendingLoanApprovals } from "../../services/approvalDB";
 import { getLoans } from "../../services/loanServiceOffline";
 
 export default function LoanManagement() {
     const { currentGroup, isOnline } = useGroup();
+    const { lastRefreshedAt } = useOffline();
 
     const [loans, setLoans] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
@@ -33,7 +35,7 @@ export default function LoanManagement() {
         loadLoans();
         if (currentGroup) loadPendingCount();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentGroup?.id]);
+    }, [currentGroup?.id, lastRefreshedAt]);
 
     useEffect(() => {
         if (isOnline) syncPendingApprovals();
@@ -97,8 +99,9 @@ export default function LoanManagement() {
 
     const syncPendingApprovals = async () => {
         try {
+            // Sync pending loan approvals to repository (so they get added to sync_queue)
+            await syncPendingLoanApprovals();
             await getUnsyncedApprovals();
-            // NOTE: actual sync to server should be done in your service layer
         } catch (e) {
             console.error("Error syncing approvals:", e);
         }

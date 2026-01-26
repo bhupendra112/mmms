@@ -16,6 +16,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { Input, Select } from "../../components/forms/FormComponents";
 import { useGroup } from "../../contexts/GroupContext";
+import { useOffline } from "../../contexts/OfflineContext";
 import { createApprovalRequest } from "../../services/approvalDB";
 import { registerLoan } from "../../services/loanServiceOffline";
 import { getGroups, getGroupBanks } from "../../services/groupServiceOffline";
@@ -24,6 +25,7 @@ import { getCashAmount } from "../../services/cashAmount";
 
 export default function LoanTaking() {
     const { currentGroup, isOnline, isGroupPanel, isGroupLoading } = useGroup();
+    const { lastRefreshedAt } = useOffline();
     const isAdminMode = !isGroupPanel;
     const [searchParams] = useSearchParams();
     const preselectGroupId = searchParams.get("groupId");
@@ -116,7 +118,7 @@ export default function LoanTaking() {
                 console.error("Error loading members:", e);
                 setAllMembers([]);
             });
-    }, [activeGroup?.id]);
+    }, [activeGroup?.id, lastRefreshedAt]);
 
     // Load group banks when active group changes
     useEffect(() => {
@@ -135,7 +137,7 @@ export default function LoanTaking() {
                 console.error("Error loading banks:", e);
                 setGroupBanks([]);
             });
-    }, [activeGroup?.id]);
+    }, [activeGroup?.id, lastRefreshedAt]);
 
     // Load cash balance when active group changes
     useEffect(() => {
@@ -154,7 +156,7 @@ export default function LoanTaking() {
                 console.error("Error loading cash balance:", e);
                 setGroupCashBalance(0);
             });
-    }, [activeGroup?.id]);
+    }, [activeGroup?.id, lastRefreshedAt]);
 
     // Note: Bank selection is available for both Cash and Bank modes (required for Bank, optional for Cash)
 

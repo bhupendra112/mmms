@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useLocation } from "react-router-dom";
 import { DollarSign } from "lucide-react";
 import { exportToExcel, exportToPDF, exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
 import * as XLSX from "xlsx";
@@ -11,6 +11,10 @@ import {
   exportMemberLedger,
   getMemberFinancialLedger,
 } from "../services/memberService";
+import {
+  getMemberDetail as getMemberDetailOffline,
+  getMemberFinancialLedger as getMemberFinancialLedgerOffline,
+} from "../services/memberServiceOffline";
 import { getLoans } from "../services/loanService";
 import { getRecoveries } from "../services/recoveryService";
 import { getFDsByMember } from "../services/fdService";
@@ -32,6 +36,8 @@ import FinancialLedger from "../components/member/FinancialLedger";
 
 export default function MemberDashboard() {
   const { id } = useParams();
+  const { pathname } = useLocation();
+  const isGroupRoute = pathname.startsWith("/group");
 
   const [loading, setLoading] = useState(false);
   const [memberDoc, setMemberDoc] = useState(null);
@@ -69,7 +75,8 @@ export default function MemberDashboard() {
     setLoading(true);
     setLoadError("");
 
-    getMemberDetail(id)
+    const fetchDetail = isGroupRoute ? getMemberDetailOffline : getMemberDetail;
+    fetchDetail(id)
       .then((res) => {
         setMemberDoc(res?.data || null);
 
@@ -85,7 +92,7 @@ export default function MemberDashboard() {
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, isGroupRoute]);
 
   // reload ledger when filters change
   useEffect(() => {
@@ -104,13 +111,13 @@ export default function MemberDashboard() {
       if (from) filters.fromDate = from;
       if (to) filters.toDate = to;
 
-      const response = await getMemberFinancialLedger(memberId, filters);
+      const fetchLedger = isGroupRoute ? getMemberFinancialLedgerOffline : getMemberFinancialLedger;
+      const response = await fetchLedger(memberId, filters);
 
-      if (response?.success && response?.data?.ledger) {
-        setLedgerData(response.data.ledger || []);
-      } else {
-        setLedgerData([]);
-      }
+      const ledger = response?.success
+        ? (Array.isArray(response.data) ? response.data : response?.data?.ledger || [])
+        : [];
+      setLedgerData(ledger);
     } catch (error) {
       console.error("[MEMBER_DASHBOARD] Error loading financial ledger:", error);
       setLedgerError(String(error || "Failed to load financial ledger"));
@@ -121,12 +128,11 @@ export default function MemberDashboard() {
   };
 
   const loadMemberTransactions = async (memberData) => {
-    if (!memberData?.group) return;
+    const groupId = memberData?.group_id || memberData?.group?._id || memberData?.group;
+    if (!groupId) return;
 
     try {
       setTransactionsLoading(true);
-
-      const groupId = memberData.group?._id || memberData.group;
       const memberId = memberData._id || id;
       const memberCode = memberData.Member_Id;
 
@@ -601,7 +607,8 @@ export default function MemberDashboard() {
               onClose={() => setShowCreateFD(false)}
               onSuccess={() => {
                 if (!id) return;
-                getMemberDetail(id)
+                const fetchDetail = isGroupRoute ? getMemberDetailOffline : getMemberDetail;
+                fetchDetail(id)
                   .then((res) => {
                     setMemberDoc(res?.data || null);
                     if (res?.data) loadMemberTransactions(res.data);

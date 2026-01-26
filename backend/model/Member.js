@@ -101,7 +101,10 @@ const MemberSchema = new mongoose.Schema({
     saving_per_member_snapshot: { type: Number }, // Snapshot of saving_per_member from group
     // Membership payment tracking
     lastMembershipPaidDate: { type: Date }, // Last date when membership_fees was paid
-    lastMembershipGroupPaidDate: { type: Date }, // Last date when Mship_Group was paid
+    lastMembershipGroupPaidDate: { type: Date }, // Last date when Mship_Group was paid,
+
+    approvalStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
+    rejectionReason: { type: String },
 }, {
     timestamps: true,
 });

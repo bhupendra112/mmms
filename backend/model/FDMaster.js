@@ -33,6 +33,18 @@ const FDMasterSchema = new mongoose.Schema({
         default: "active"
     },
 
+    // Approval status (for group panel requests)
+    approvalStatus: {
+        type: String,
+        enum: ["pending", "approved", "rejected"],
+        default: "approved" // Admin panel creates are auto-approved
+    },
+    approvedBy: { type: String }, // Admin who approved (if from group panel)
+    approvedAt: { type: Date },
+    rejectedBy: { type: String },
+    rejectedAt: { type: Date },
+    rejectionReason: { type: String },
+
     // Payment reference (when FD is paid out)
     paymentId: {
         type: mongoose.Schema.Types.ObjectId,

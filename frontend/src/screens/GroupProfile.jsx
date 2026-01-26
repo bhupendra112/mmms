@@ -8,7 +8,7 @@ import { getRecoveries } from "../services/recoveryServiceOffline";
 
 const GroupProfile = () => {
   const { currentGroup, isGroupLoading } = useGroup();
-  const { isOnline, isSyncing, syncPending, triggerSync } = useOffline();
+  const { isOnline, isSyncing, syncPending, triggerSync, lastRefreshedAt } = useOffline();
   const [syncMessage, setSyncMessage] = useState(null);
   const [groupStats, setGroupStats] = useState({
     totalMembers: 0,
@@ -25,7 +25,7 @@ const GroupProfile = () => {
     } else if (!isGroupLoading) {
       setGroupStats(prev => ({ ...prev, loading: false }));
     }
-  }, [currentGroup, isGroupLoading]);
+  }, [currentGroup, isGroupLoading, lastRefreshedAt]);
 
   const loadGroupStats = async () => {
     try {

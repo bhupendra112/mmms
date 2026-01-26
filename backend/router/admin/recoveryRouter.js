@@ -1,5 +1,5 @@
 import express from "express";
-import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, getGroupRecoveryDetails, exportRecoveryPDF, getMemberRecoveryStatus } from "../../controller/admin/recoveryController.js";
+import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, getGroupRecoveryDetails, exportRecoveryPDF, getMemberRecoveryStatus, approveRecovery, rejectRecovery } from "../../controller/admin/recoveryController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const Router = express.Router();
@@ -42,6 +42,12 @@ Router.get("/export-pdf", authAdmin, exportRecoveryPDF);
 
 // Get member recovery status for a specific date
 Router.get("/status/:memberId", authAdmin, getMemberRecoveryStatus);
+
+// Approve Recovery (from group panel)
+Router.put("/approve/:id", authAdmin, approveRecovery);
+
+// Reject Recovery (from group panel)
+Router.put("/reject/:id", authAdmin, rejectRecovery);
 
 export default Router;
 
