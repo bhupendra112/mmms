@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { Input, Select } from "../../components/forms/FormComponents";
+import { LoanPurposeInput } from "../../components/forms/LoanPurposeInput";
 import { useGroup } from "../../contexts/GroupContext";
 import { useOffline } from "../../contexts/OfflineContext";
 import { createApprovalRequest } from "../../services/approvalDB";
@@ -680,15 +681,15 @@ export default function LoanTaking() {
                                         </div>
                                     )}
 
-                                    {/* Purpose */}
+                                    {/* Purpose - searchable suggestions for both admin and group panel */}
                                     {paymentMode && (
                                         <div className="mb-6">
-                                            <Input
+                                            <LoanPurposeInput
                                                 label="Purpose *"
                                                 name="purpose"
                                                 value={purpose}
-                                                handleChange={(e) => setPurpose(e.target.value)}
-                                                placeholder="Enter purpose of loan"
+                                                onChange={(e) => setPurpose(e.target.value)}
+                                                placeholder="Search or type purpose of loan"
                                                 required
                                             />
                                         </div>

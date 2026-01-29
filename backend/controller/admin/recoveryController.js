@@ -15,11 +15,11 @@ import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 export const registerRecovery = async (req, res) => {
     try {
         const payload = req.body || {};
-        
+
         // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:15', message: 'registerRecovery called - payload received', data: { hasGroupId: !!payload.groupId, hasRecoveries: !!payload.recoveries, recoveriesCount: payload.recoveries?.length || 0, requireApproval: payload.requireApproval, source: payload.source, date: payload.date, payloadKeys: Object.keys(payload) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => {});
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:15', message: 'registerRecovery called - payload received', data: { hasGroupId: !!payload.groupId, hasRecoveries: !!payload.recoveries, recoveriesCount: payload.recoveries?.length || 0, requireApproval: payload.requireApproval, source: payload.source, date: payload.date, payloadKeys: Object.keys(payload) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => { });
         // #endregion
-        
+
         // #region agent log
         console.log('[RECOVERY_DEBUG] registerRecovery called', {
             hasGroupId: !!payload.groupId,
@@ -117,7 +117,7 @@ export const registerRecovery = async (req, res) => {
 
         // Check if approval is required (from group panel) - do this early to skip validations
         const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
-        
+
         // Validate meeting day - recovery can only be done on scheduled meeting days
         // Skip this validation for group panel recoveries that require approval - let admin decide during approval
         const meetingDay1 = groupDoc.meeting_date_1_day;
@@ -207,11 +207,11 @@ export const registerRecovery = async (req, res) => {
 
         // Approval status determined earlier (requireApproval already checked above)
         const approvalStatus = requireApproval ? 'pending' : 'approved';
-        
+
         // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:201', message: 'Approval check in backend', data: { requireApproval, hasRequireApproval: payload.requireApproval === true, source: payload.source, sourceMatches: payload.source === 'group_sync', approvalStatus, groupId: groupDoc._id.toString(), recoveriesCount: payload.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => {});
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:201', message: 'Approval check in backend', data: { requireApproval, hasRequireApproval: payload.requireApproval === true, source: payload.source, sourceMatches: payload.source === 'group_sync', approvalStatus, groupId: groupDoc._id.toString(), recoveriesCount: payload.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => { });
         // #endregion
-        
+
         // #region agent log
         console.log('[RECOVERY_DEBUG] Approval check', {
             requireApproval,
@@ -235,7 +235,7 @@ export const registerRecovery = async (req, res) => {
             approvalStatus: approvalStatus,
             createdBy: req.user?.id || payload.createdBy || "admin",
         };
-        
+
         // #region agent log
         console.log('[RECOVERY_DEBUG] Creating recovery in database', {
             groupId: recoveryData.groupId.toString(),
@@ -246,13 +246,13 @@ export const registerRecovery = async (req, res) => {
             timestamp: Date.now()
         });
         // #endregion
-        
+
         const recovery = await RecoveryMaster.create(recoveryData);
-        
+
         // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:239', message: 'Recovery created in database', data: { recoveryId: recovery._id.toString(), approvalStatus: recovery.approvalStatus, groupId: recovery.groupId.toString(), date: recovery.date, recoveriesCount: recovery.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => {});
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:239', message: 'Recovery created in database', data: { recoveryId: recovery._id.toString(), approvalStatus: recovery.approvalStatus, groupId: recovery.groupId.toString(), date: recovery.date, recoveriesCount: recovery.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => { });
         // #endregion
-        
+
         // #region agent log
         console.log('[RECOVERY_DEBUG] Recovery created successfully', {
             recoveryId: recovery._id.toString(),
@@ -271,8 +271,8 @@ export const registerRecovery = async (req, res) => {
         }
         // For pending recoveries, skip processing - it will be done on approval
 
-        const message = approvalStatus === 'pending' 
-            ? "Recovery session created successfully and pending admin approval" 
+        const message = approvalStatus === 'pending'
+            ? "Recovery session created successfully and pending admin approval"
             : "Recovery session registered successfully";
         return apiResponse.success(res, message, recovery);
 
@@ -2405,10 +2405,19 @@ export const getPreviousRecoveryData = async (req, res) => {
 
 // API endpoint to get demand details for a member (without requiring a recovery session)
 export const getDemandDetails = async (req, res) => {
+    // #region agent log
+    const _debugEndpoint = 'http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22';
+    fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:entry', message: 'getDemandDetails called', data: { query: req.query }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'A' }) }).catch(() => { });
+    // #endregion
+    console.log("[DEBUG getDemandDetails] entry", { groupId: req.query.groupId, memberId: req.query.memberId, date: req.query.date });
     try {
         const { groupId, memberId, date } = req.query;
 
         if (!groupId || !memberId) {
+            // #region agent log
+            fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:validation', message: 'validation failed missing params', data: { groupId: !!groupId, memberId: !!memberId }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'B' }) }).catch(() => { });
+            // #endregion
+            console.log("[DEBUG getDemandDetails] validation failed - missing groupId or memberId");
             return apiResponse.error(res, "groupId and memberId are required", 400);
         }
 
@@ -2419,6 +2428,10 @@ export const getDemandDetails = async (req, res) => {
         // Verify group exists and belongs to admin's place
         const accessCheck = await verifyGroupAccess(groupId, adminPlace);
         if (!accessCheck.valid) {
+            // #region agent log
+            fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:accessCheck', message: 'access check failed', data: { error: accessCheck.error }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'C' }) }).catch(() => { });
+            // #endregion
+            console.log("[DEBUG getDemandDetails] access check failed", accessCheck.error);
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
         const groupDoc = accessCheck.group;
@@ -2435,6 +2448,10 @@ export const getDemandDetails = async (req, res) => {
             }
         }
         parsedDate.setHours(0, 0, 0, 0);
+        // #region agent log
+        fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:parsedDate', message: 'parsedDate', data: { parsedDate: parsedDate?.toISOString?.() }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'D' }) }).catch(() => { });
+        // #endregion
+        console.log("[DEBUG getDemandDetails] parsedDate", parsedDate?.toISOString?.());
 
         // Meeting sequence is always 1 (no same-day meetings allowed)
         const meetingSequence = 1;
@@ -2453,9 +2470,18 @@ export const getDemandDetails = async (req, res) => {
             groupDoc,
             meetingSequence
         );
+        // #region agent log
+        fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:result', message: 'demandDetails result', data: { interest: demandDetails?.interest, hasInterest: !!demandDetails?.interest }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E' }) }).catch(() => { });
+        // #endregion
+        console.log("[DEBUG getDemandDetails] result interest", demandDetails?.interest);
+        console.log("[DEBUG getDemandDetails] full demandDetails", JSON.stringify(demandDetails, null, 2));
 
         return apiResponse.success(res, "Demand details calculated successfully", demandDetails);
     } catch (error) {
+        // #region agent log
+        fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:catch', message: 'getDemandDetails error', data: { message: error?.message }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'F' }) }).catch(() => { });
+        // #endregion
+        console.log("[DEBUG getDemandDetails] error", error?.message, error);
         return apiResponse.error(res, error.message, 500);
     }
 };

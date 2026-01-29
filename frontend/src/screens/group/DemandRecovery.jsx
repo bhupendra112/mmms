@@ -3,17 +3,9 @@ import { DollarSign, RefreshCw, CloudOff } from "lucide-react";
 import { exportRecoveryToExcel } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { useOffline } from "../../contexts/OfflineContext";
-import { createApprovalRequest } from "../../services/approvalDB";
-import {
-  updateMemberRecovery,
-  getRecoveryByDate,
-  updateRecoveryPhoto,
-  getPreviousRecoveryData,
-  getDemandDetails,
-  getMemberLoanTotals,
-  exportRecoveryPDF,
-  getMemberRecoveryStatus,
-} from "../../services/recoveryServiceOffline";
+import { createApprovalRequest, getPendingApprovals } from "../../services/approvalDB";
+import * as recoveryOffline from "../../services/recoveryServiceOffline";
+import * as recoveryOnline from "../../services/recoveryService";
 import { getLoans } from "../../services/loanServiceOffline";
 import { getGroups, getGroupBanks } from "../../services/groupServiceOffline";
 import { getMembersByGroup } from "../../services/memberServiceOffline";
@@ -35,6 +27,8 @@ export default function DemandRecovery() {
   const { currentGroup, isGroupPanel, isGroupLoading } = useGroup();
   const { isOnline, triggerRefresh, lastRefreshedAt } = useOffline();
   const isAdminMode = !isGroupPanel;
+  // Admin always uses direct backend; group panel uses offline-first service
+  const recovery = isAdminMode ? recoveryOnline : recoveryOffline;
 
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
@@ -265,7 +259,7 @@ export default function DemandRecovery() {
     try {
       setLoading(true);
       const today = new Date().toLocaleDateString("en-GB");
-      const response = await getRecoveryByDate(activeGroup.id, today);
+      const response = await recovery.getRecoveryByDate(activeGroup.id, today);
 
       if (response?.success && response?.data?.recoveries) {
         const memberRecoveries = response.data.recoveries.map((rec) => ({
@@ -302,7 +296,7 @@ export default function DemandRecovery() {
 
     const today = new Date().toLocaleDateString("en-GB");
 
-    getMemberRecoveryStatus(member.id, activeGroup.id, today)
+    recovery.getMemberRecoveryStatus(member.id, activeGroup.id, today)
       .then((res) => {
         if (res?.success) {
           setMemberRecoveryStatus((prev) => ({ ...prev, [member.id]: res.data }));
@@ -316,7 +310,7 @@ export default function DemandRecovery() {
         }));
       });
 
-    getPreviousRecoveryData(activeGroup.id, member.id, today)
+    recovery.getPreviousRecoveryData(activeGroup.id, member.id, today)
       .then((res) => {
         if (res?.success) {
           setPreviousRecoveryData((prev) => ({ ...prev, [member.id]: res.data }));
@@ -324,11 +318,13 @@ export default function DemandRecovery() {
       })
       .catch((err) => console.error("Error loading previous recovery data:", err));
 
-    getDemandDetails(activeGroup.id, member.id, today)
+    recovery.getDemandDetails(activeGroup.id, member.id, today)
       .then((res) => {
+        console.log("[DEBUG DemandRecovery] getDemandDetails response", { memberId: member.id, success: res?.success, hasData: !!res?.data });
         if (res?.success && res?.data) {
           // FIX: Store res.data.data (the actual demandDetails) instead of res.data (the wrapper)
           const demandDetails = res.data.data || res.data;
+          console.log("[DEBUG DemandRecovery] demandDetails for member", member.id, "interest", demandDetails?.interest);
           setDemandSummaries((prev) => ({ ...prev, [member.id]: demandDetails }));
         }
       })
@@ -336,7 +332,7 @@ export default function DemandRecovery() {
         console.error("Error loading demand details:", err);
       });
 
-    getMemberLoanTotals(activeGroup.id, member.id)
+    recovery.getMemberLoanTotals(activeGroup.id, member.id)
       .then((res) => {
         if (res?.success && res?.data) {
           setMemberLoanTotals((prev) => ({
@@ -362,9 +358,13 @@ export default function DemandRecovery() {
       .catch((err) => console.error("Error loading loan totals:", err));
   }, [activeGroup?.id, currentMemberIndex, allMembers]);
 
-  // Recovery status
+  // Recovery status: same as admin - once recovered for this day, cannot recover again (from API status + today's recoveries list)
   const currentMemberRecoveryStatus = currentMember ? memberRecoveryStatus[currentMember.id] : null;
-  const isAlreadyRecovered = currentMemberRecoveryStatus?.recoveredToday || false;
+  const hasRecoveryInSession = currentMember && recoveries.some(
+    (r) => (r.memberId === currentMember.id || r.memberId === currentMember.id?.toString()) &&
+      (r.attendance === "present" || (r.attendance === "absent" && r.recoveryByOther))
+  );
+  const isAlreadyRecovered = currentMemberRecoveryStatus?.recoveredToday || hasRecoveryInSession || false;
 
   // Admin group selection
   const handleSelectGroup = (group) => {
@@ -737,7 +737,7 @@ export default function DemandRecovery() {
         setLoading(true);
         const today = new Date().toLocaleDateString("en-GB");
 
-        await updateMemberRecovery(activeGroup.id, today, {
+        await recovery.updateMemberRecovery(activeGroup.id, today, {
           memberId: currentMember.id,
           memberCode: currentMember.code,
           memberName: currentMember.name,
@@ -848,7 +848,7 @@ export default function DemandRecovery() {
         screenshot: screenshot || null,
       };
 
-      await updateMemberRecovery(activeGroup.id, today, memberRecovery);
+      await recovery.updateMemberRecovery(activeGroup.id, today, memberRecovery);
       await loadRecoveries();
 
       if (currentMemberIndex < allMembers.length - 1) {
@@ -870,7 +870,7 @@ export default function DemandRecovery() {
     if (!showFullLoanRecovery || !activeGroup?.id || !currentMember?.id) return;
 
     setLoadingLoanTotals(true);
-    getMemberLoanTotals(activeGroup.id, currentMember.id)
+    recovery.getMemberLoanTotals(activeGroup.id, currentMember.id)
       .then((res) => {
         if (res?.success && res?.data) {
           setLoanTotals({
@@ -964,7 +964,7 @@ export default function DemandRecovery() {
         screenshot: fullLoanRecoveryScreenshot || null,
       };
 
-      await updateMemberRecovery(activeGroup.id, today, memberRecovery);
+      await recovery.updateMemberRecovery(activeGroup.id, today, memberRecovery);
       await loadRecoveries();
 
       setShowFullLoanRecovery(false);
@@ -976,11 +976,13 @@ export default function DemandRecovery() {
       alert(`Full loan recovery of ₹${remainingLoanAmount.toLocaleString()} saved successfully!`);
 
       // refresh demand details
-      getDemandDetails(activeGroup.id, currentMember.id, today)
+      recovery.getDemandDetails(activeGroup.id, currentMember.id, today)
         .then((res) => {
+          console.log("[DEBUG DemandRecovery] getDemandDetails refresh after full loan", { memberId: currentMember.id, success: res?.success, hasData: !!res?.data });
           if (res?.success && res?.data) {
             // FIX: Store res.data.data (the actual demandDetails) instead of res.data (the wrapper)
             const demandDetails = res.data.data || res.data;
+            console.log("[DEBUG DemandRecovery] refreshed demandDetails interest", demandDetails?.interest);
             setDemandSummaries((prev) => ({ ...prev, [currentMember.id]: demandDetails }));
           }
         })
@@ -1053,7 +1055,7 @@ export default function DemandRecovery() {
         }
       }
 
-      await updateRecoveryPhoto(
+      await recovery.updateRecoveryPhoto(
         activeGroup.id,
         today,
         groupPhoto,
@@ -1073,6 +1075,16 @@ export default function DemandRecovery() {
       );
 
       if (currentGroup) {
+        // Prevent duplicate recovery approval for same day (same as admin: one approval per session)
+        const pending = await getPendingApprovals(activeGroup.id);
+        const existingRecoveryForToday = pending.some(
+          (a) => a.type === "recovery" && a.data?.date === today
+        );
+        if (existingRecoveryForToday) {
+          alert("Recovery for this date has already been submitted for approval.");
+          setLoading(false);
+          return;
+        }
         await createApprovalRequest(
           "recovery",
           {
@@ -1347,7 +1359,7 @@ export default function DemandRecovery() {
               onExportPDF={async () => {
                 try {
                   const today = new Date().toLocaleDateString("en-GB");
-                  const blob = await exportRecoveryPDF(activeGroup.id, today);
+                  const blob = await recovery.exportRecoveryPDF(activeGroup.id, today);
                   const url = window.URL.createObjectURL(blob);
                   const a = document.createElement("a");
                   a.href = url;

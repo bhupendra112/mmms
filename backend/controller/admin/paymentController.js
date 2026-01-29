@@ -51,7 +51,19 @@ export const getMaturedFDs = async (req, res) => {
     }
 };
 
-// Get member's available savings balance
+// Interest on savings: 1% per year (or group's saving_rate). Prorated for current year to date.
+const computeInterestOnSavings = (totalSavings, savingRatePercent) => {
+    if (!totalSavings || totalSavings <= 0) return 0;
+    const rate = typeof savingRatePercent === "number" && !Number.isNaN(savingRatePercent) ? savingRatePercent : 1;
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const daysElapsed = Math.max(0, (now - startOfYear) / (24 * 60 * 60 * 1000));
+    const daysInYear = 365;
+    const interest = (totalSavings * (rate / 100) * daysElapsed) / daysInYear;
+    return Math.round(interest * 100) / 100;
+};
+
+// Get member's available savings balance (gate saving data wise; includes interest at 1% p.a. for payment module)
 export const getMemberSavings = async (req, res) => {
     try {
         const { memberId } = req.params;
@@ -68,7 +80,7 @@ export const getMemberSavings = async (req, res) => {
         // Get opening savings
         const openingSaving = member.openingSaving || 0;
 
-        // Calculate total savings from recoveries
+        // Calculate total savings from recoveries (gate saving data)
         const groupId = member.group || member.Group_Name;
         let totalRecoverySavings = 0;
 
@@ -89,7 +101,7 @@ export const getMemberSavings = async (req, res) => {
             });
         }
 
-        // Calculate total available savings
+        // Total savings (principal)
         const totalSavings = openingSaving + totalRecoverySavings;
 
         // Get total withdrawals (payments of type saving_withdrawal)
@@ -103,6 +115,16 @@ export const getMemberSavings = async (req, res) => {
 
         const availableSavings = Math.max(0, totalSavings - totalWithdrawn);
 
+        // Interest on savings: 1% per year (or group saving_rate) for payment module display
+        let savingRate = 1;
+        if (groupId) {
+            const group = await GroupMaster.findById(groupId).select("saving_rate").lean();
+            if (group && typeof group.saving_rate === "number" && !Number.isNaN(group.saving_rate)) {
+                savingRate = group.saving_rate;
+            }
+        }
+        const interestOnSavings = computeInterestOnSavings(totalSavings, savingRate);
+
         return apiResponse.success(res, "Member savings fetched successfully", {
             memberId: member._id,
             memberCode: member.Member_Id,
@@ -112,6 +134,8 @@ export const getMemberSavings = async (req, res) => {
             totalSavings,
             totalWithdrawn,
             availableSavings,
+            interestOnSavings,
+            savingRate,
         });
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
@@ -413,11 +437,11 @@ export const createPayment = async (req, res) => {
     }
 };
 
-// Helper function to get member savings data
+// Helper function to get member savings data (gate saving data; includes interest for payment module)
 const getMemberSavingsData = async (memberId) => {
     const member = await Member.findById(memberId);
     if (!member) {
-        return { availableSavings: 0 };
+        return { availableSavings: 0, interestOnSavings: 0, savingRate: 1 };
     }
 
     const openingSaving = member.openingSaving || 0;
@@ -451,10 +475,21 @@ const getMemberSavingsData = async (memberId) => {
 
     const totalWithdrawn = withdrawals.reduce((sum, payment) => sum + (payment.amount || 0), 0);
 
+    let savingRate = 1;
+    if (groupId) {
+        const group = await GroupMaster.findById(groupId).select("saving_rate").lean();
+        if (group && typeof group.saving_rate === "number" && !Number.isNaN(group.saving_rate)) {
+            savingRate = group.saving_rate;
+        }
+    }
+    const interestOnSavings = computeInterestOnSavings(totalSavings, savingRate);
+
     return {
         availableSavings: Math.max(0, totalSavings - totalWithdrawn),
         totalSavings,
         totalWithdrawn,
+        interestOnSavings,
+        savingRate,
     };
 };
 

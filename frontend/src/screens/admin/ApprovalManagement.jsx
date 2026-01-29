@@ -226,6 +226,25 @@ export default function ApprovalManagement() {
                     // Merge with existing approvals
                     allApprovals = [...allApprovals, ...recoveryApprovals];
 
+                    // Deduplicate recovery approvals: same session can appear as local (approvalDB) + backend (getRecoveries). Keep one per (groupId, date), prefer backend.
+                    const recoveryByKey = new Map();
+                    allApprovals.forEach((a) => {
+                        if (a.type !== "recovery") return;
+                        const gid = (a.groupId?._id ?? a.groupId ?? "").toString();
+                        const dateStr = a.data?.date ? (typeof a.data.date === "string" ? a.data.date : new Date(a.data.date).toISOString().slice(0, 10)) : "";
+                        const key = `${gid}|${dateStr}`;
+                        const existing = recoveryByKey.get(key);
+                        if (!existing || (a._isBackendApproval && !existing._isBackendApproval)) {
+                            recoveryByKey.set(key, a);
+                        }
+                    });
+                    allApprovals = allApprovals.filter((a) => {
+                        if (a.type !== "recovery") return true;
+                        const gid = (a.groupId?._id ?? a.groupId ?? "").toString();
+                        const dateStr = a.data?.date ? (typeof a.data.date === "string" ? a.data.date : new Date(a.data.date).toISOString().slice(0, 10)) : "";
+                        return recoveryByKey.get(`${gid}|${dateStr}`) === a;
+                    });
+
                     // #region agent log
                     fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'ApprovalManagement.jsx:221', message: 'Recovery approvals processed', data: { recoveryApprovalsCount: recoveryApprovals.length, totalApprovalsCount: allApprovals.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H3' }) }).catch(() => { });
                     // #endregion

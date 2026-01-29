@@ -21,6 +21,7 @@
         "jsonwebtoken": "^9.0.2",
         "mongoose": "^9.0.0",
         "multer": "^2.0.2",
+        "sharp": "^0.33.5",
         "nodemon": "^3.1.11",
         "pdfkit": "^0.17.2",
         "router": "^2.2.0"

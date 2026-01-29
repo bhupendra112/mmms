@@ -98,8 +98,11 @@ export const getDemandDetails = async (groupId, memberId, date, testMode = false
   if (testMode) {
     params.testMode = 'true';
   }
+  console.log("[DEBUG getDemandDetails] request params", { groupId, memberId, date });
   const res = await httpRecovery.get("/demand-details", { params });
-  console.log("demand details : ", res.data)
+  console.log("[DEBUG getDemandDetails] response raw", res.data);
+  const data = res.data?.data ?? res.data;
+  console.log("[DEBUG getDemandDetails] interest", data);
   return res.data;
 };
 

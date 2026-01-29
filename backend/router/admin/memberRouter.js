@@ -3,6 +3,7 @@ import { registerMemberSchema, updateMemberSchema } from "../../validation/admin
 import { getMemberDetail, listMembers, listMembersByGroup, registerMember, getAutoMemberCode, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember, getPendingMembers, approveMember, rejectMember } from "../../controller/admin/memberController.js";
 import upload from "../../config/multerConfig.js";
 import authAdmin from "../../middleware/authorization.js";
+import compressImages from "../../middleware/compressImages.js";
 
 const router = express.Router();
 
@@ -91,7 +92,7 @@ router.post("/register-member", authAdmin, (req, res, next) => {
                 message: 'File upload error'
             });
         }
-        
+
         // Handle file validation errors
         if (req.fileValidationError) {
             return res.status(400).json({
@@ -99,8 +100,8 @@ router.post("/register-member", authAdmin, (req, res, next) => {
                 message: req.fileValidationError
             });
         }
-        
-        next();
+
+        compressImages(req, res, next);
     });
 }, async (req, res) => {
     // Wrap in try-catch to handle any errors in the route handler

@@ -1,8 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
-    Bell,
-    User,
     Menu,
     Search,
     X,
@@ -14,36 +12,48 @@ import {
     PlusCircle,
     DollarSign,
     CheckCircle,
-    LogOut,
     CreditCard,
     Receipt,
     FileText,
     ArrowLeftRight,
 } from "lucide-react";
 import { useAdmin } from "../../contexts/AdminContext";
-
-// Logout Button Component
-function LogoutButton() {
-    const { logout } = useAdmin();
-
-    return (
-        <button
-            onClick={() => {
-                if (window.confirm("Are you sure you want to logout?")) {
-                    logout();
-                }
-            }}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors text-gray-300 hover:bg-gray-800 hover:text-red-400"
-        >
-            <LogOut size={18} />
-            <span>Logout</span>
-        </button>
-    );
-}
+import NotificationDropdown from "../common/NotificationDropdown";
+import UserDropdown from "../common/UserDropdown";
+import { getAdminPendingApprovals } from "../../services/approvalNotificationService";
 
 export default function AdminNavbar() {
+    const { logout } = useAdmin();
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [notificationCount, setNotificationCount] = useState(0);
+    const [notificationItems, setNotificationItems] = useState([]);
+    const [notificationLoading, setNotificationLoading] = useState(false);
     const location = useLocation();
+
+    const loadNotifications = useCallback(async () => {
+        setNotificationLoading(true);
+        try {
+            const { count, items } = await getAdminPendingApprovals();
+            setNotificationCount(count);
+            setNotificationItems(items);
+        } catch (e) {
+            console.error("Error loading admin notifications:", e);
+            setNotificationCount(0);
+            setNotificationItems([]);
+        } finally {
+            setNotificationLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadNotifications();
+    }, [loadNotifications]);
+
+    useEffect(() => {
+        const handleFocus = () => loadNotifications();
+        window.addEventListener("focus", handleFocus);
+        return () => window.removeEventListener("focus", handleFocus);
+    }, [loadNotifications]);
 
     // Close sidebar on ESC key
     useEffect(() => {
@@ -203,7 +213,6 @@ export default function AdminNavbar() {
                         <Settings size={18} />
                         <span>Settings</span>
                     </Link>
-                    <LogoutButton />
                 </div>
             </aside>
 
@@ -244,15 +253,17 @@ export default function AdminNavbar() {
 
                         {/* Right Icons */}
                         <div className="flex items-center gap-3 md:gap-4">
-                            <div className="relative cursor-pointer p-2 hover:bg-gray-100 rounded-md transition-colors">
-                                <Bell size={20} className="text-gray-700" />
-                                <span className="absolute top-0 right-0 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-                                    3
-                                </span>
-                            </div>
-                            <div className="cursor-pointer p-2 hover:bg-gray-100 rounded-md transition-colors">
-                                <User size={20} className="text-gray-700" />
-                            </div>
+                            <NotificationDropdown
+                                count={notificationCount}
+                                items={notificationItems}
+                                viewAllPath="/admin/approvals"
+                                emptyMessage="No pending approvals"
+                                loading={notificationLoading}
+                            />
+                            <UserDropdown
+                                onLogout={logout}
+                                confirmMessage="Are you sure you want to logout?"
+                            />
                         </div>
                     </div>
                 </nav>

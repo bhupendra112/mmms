@@ -1,10 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useDispatch } from "react-redux";
 import { logoutGroup } from "../../store/groupAuthSlice";
 import {
-    Bell,
-    User,
     Menu,
     Search,
     X,
@@ -13,17 +11,54 @@ import {
     DollarSign,
     Settings,
     FileText,
-    LogOut,
     CreditCard,
     ArrowLeftRight,
     Receipt,
 } from "lucide-react";
+import { useGroup } from "../../contexts/GroupContext";
+import NotificationDropdown from "../common/NotificationDropdown";
+import UserDropdown from "../common/UserDropdown";
+import { getGroupApprovalOutcomes } from "../../services/approvalNotificationService";
 
 export default function GroupNavbar() {
+    const { currentGroup } = useGroup();
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [notificationCount, setNotificationCount] = useState(0);
+    const [notificationItems, setNotificationItems] = useState([]);
+    const [notificationLoading, setNotificationLoading] = useState(false);
     const location = useLocation();
     const dispatch = useDispatch();
     const navigate = useNavigate();
+
+    const loadNotifications = useCallback(async () => {
+        if (!currentGroup?.id) {
+            setNotificationCount(0);
+            setNotificationItems([]);
+            return;
+        }
+        setNotificationLoading(true);
+        try {
+            const { count, items } = await getGroupApprovalOutcomes(currentGroup.id);
+            setNotificationCount(count);
+            setNotificationItems(items);
+        } catch (e) {
+            console.error("Error loading group notifications:", e);
+            setNotificationCount(0);
+            setNotificationItems([]);
+        } finally {
+            setNotificationLoading(false);
+        }
+    }, [currentGroup?.id]);
+
+    useEffect(() => {
+        loadNotifications();
+    }, [loadNotifications]);
+
+    useEffect(() => {
+        const handleFocus = () => loadNotifications();
+        window.addEventListener("focus", handleFocus);
+        return () => window.removeEventListener("focus", handleFocus);
+    }, [loadNotifications]);
 
     // Close sidebar on ESC key
     useEffect(() => {
@@ -102,8 +137,8 @@ export default function GroupNavbar() {
                                                 to={path}
                                                 onClick={closeMobileSidebar}
                                                 className={`flex items-center gap-2 md:gap-3 px-2 md:px-3 py-2 rounded-md text-xs md:text-sm transition-colors ${active
-                                                        ? "bg-green-600 text-white"
-                                                        : "text-gray-300 hover:bg-gray-800"
+                                                    ? "bg-green-600 text-white"
+                                                    : "text-gray-300 hover:bg-gray-800"
                                                     }`}
                                             >
                                                 <Icon size={16} className="shrink-0" />
@@ -125,13 +160,6 @@ export default function GroupNavbar() {
                         <Settings size={18} />
                         <span>Settings</span>
                     </Link>
-                    <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-red-600 transition-colors text-gray-300"
-                    >
-                        <LogOut size={18} />
-                        <span>Logout</span>
-                    </button>
                 </div>
             </aside>
 
@@ -172,15 +200,15 @@ export default function GroupNavbar() {
 
                         {/* Right Icons */}
                         <div className="flex items-center gap-3 md:gap-4">
-                            <div className="relative cursor-pointer p-2 hover:bg-gray-100 rounded-md transition-colors">
-                                <Bell size={20} className="text-gray-700" />
-                                <span className="absolute top-0 right-0 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-                                    3
-                                </span>
-                            </div>
-                            <div className="cursor-pointer p-2 hover:bg-gray-100 rounded-md transition-colors">
-                                <User size={20} className="text-gray-700" />
-                            </div>
+                            <NotificationDropdown
+                                count={notificationCount}
+                                items={notificationItems}
+                                viewAllPath="/group/loans"
+                                emptyMessage="No approval updates"
+                                loading={notificationLoading}
+                                badgeColor="bg-green-600"
+                            />
+                            <UserDropdown onLogout={handleLogout} />
                         </div>
                     </div>
                 </nav>

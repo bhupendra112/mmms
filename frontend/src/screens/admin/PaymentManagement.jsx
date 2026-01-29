@@ -193,17 +193,21 @@ export default function PaymentManagement() {
       const res = await getMembersByGroup(selectedGroupId);
       const members = Array.isArray(res?.data) ? res.data : [];
 
-      // Get savings for each member
+      // Get savings for each member (backend returns gate saving data + interest at 1% p.a.)
       const membersWithSavingsData = await Promise.all(
         members.map(async (member) => {
           try {
             const savingsRes = await getMemberSavings(member._id);
             if (savingsRes?.success && savingsRes.data?.availableSavings > 0) {
+              const d = savingsRes.data;
               return {
                 id: member._id,
                 code: member.Member_Id,
                 name: member.Member_Nm,
-                availableSavings: savingsRes.data.availableSavings,
+                availableSavings: d.availableSavings,
+                interestOnSavings: d.interestOnSavings ?? 0,
+                savingRate: d.savingRate ?? 1,
+                totalSavings: d.totalSavings,
               };
             }
             return null;
@@ -481,8 +485,8 @@ export default function PaymentManagement() {
           <button
             onClick={() => setActiveTab("fd_maturity")}
             className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "fd_maturity"
-                ? "border-blue-500 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              ? "border-blue-500 text-blue-600"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
               }`}
           >
             FD Maturity Payments
@@ -490,8 +494,8 @@ export default function PaymentManagement() {
           <button
             onClick={() => setActiveTab("saving_withdrawal")}
             className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "saving_withdrawal"
-                ? "border-blue-500 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              ? "border-blue-500 text-blue-600"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
               }`}
           >
             Savings Withdrawals
@@ -502,8 +506,8 @@ export default function PaymentManagement() {
               loadPaymentHistory();
             }}
             className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "history"
-                ? "border-blue-500 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              ? "border-blue-500 text-blue-600"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
               }`}
           >
             Payment History
@@ -562,8 +566,8 @@ export default function PaymentManagement() {
                       <div
                         key={fd.id}
                         className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedFD?.id === fd.id
-                            ? "border-blue-500 bg-blue-50"
-                            : "border-gray-200 hover:border-gray-300"
+                          ? "border-blue-500 bg-blue-50"
+                          : "border-gray-200 hover:border-gray-300"
                           }`}
                         onClick={() => {
                           setSelectedFD(fd);
@@ -743,8 +747,8 @@ export default function PaymentManagement() {
                       <div
                         key={member.id}
                         className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedMember?.id === member.id
-                            ? "border-blue-500 bg-blue-50"
-                            : "border-gray-200 hover:border-gray-300"
+                          ? "border-blue-500 bg-blue-50"
+                          : "border-gray-200 hover:border-gray-300"
                           }`}
                         onClick={() => {
                           setSelectedMember(member);
@@ -755,8 +759,16 @@ export default function PaymentManagement() {
                           <div>
                             <p className="font-semibold">{member.name} ({member.code})</p>
                             <p className="text-sm text-gray-600">
-                              Available Savings: <strong>{formatCurrency(member.availableSavings)}</strong>
+                              Savings: <strong>{formatCurrency(member.availableSavings)}</strong>
+                              {(member.interestOnSavings != null && member.interestOnSavings > 0) && (
+                                <> | Interest ({member.savingRate ?? 1}% p.a.): <strong>{formatCurrency(member.interestOnSavings)}</strong></>
+                              )}
                             </p>
+                            {(member.interestOnSavings != null && member.interestOnSavings > 0) && (
+                              <p className="text-xs text-gray-500">
+                                Total with interest: {formatCurrency(member.availableSavings + (member.interestOnSavings || 0))}
+                              </p>
+                            )}
                           </div>
                           {selectedMember?.id === member.id && (
                             <CheckCircle className="text-blue-500" size={20} />
@@ -839,7 +851,10 @@ export default function PaymentManagement() {
                   <div className="col-span-2">
                     <p className="text-sm text-gray-600 mb-4">
                       Member: <strong>{selectedMember.name}</strong> |
-                      Available: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
+                      Savings: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
+                      {(selectedMember.interestOnSavings != null && selectedMember.interestOnSavings > 0) && (
+                        <> | Interest ({(selectedMember.savingRate ?? 1)}% p.a.): <strong>{formatCurrency(selectedMember.interestOnSavings)}</strong></>
+                      )}
                     </p>
                   </div>
                   <Select

@@ -1,3 +1,5 @@
+import { LoanPurposeInput } from "../forms/LoanPurposeInput";
+
 const LoanStep3Purpose = ({ form, setForm }) => {
   return (
     <div>
@@ -5,12 +7,12 @@ const LoanStep3Purpose = ({ form, setForm }) => {
         Step 3: Select Purpose for Taking Loan
       </h2>
 
-      <input
-        type="text"
-        className="w-full border p-3 rounded-lg"
-        placeholder="Enter loan purpose"
+      <LoanPurposeInput
+        label="Purpose"
+        name="purpose"
         value={form.purpose}
         onChange={(e) => setForm({ ...form, purpose: e.target.value })}
+        placeholder="Search or type purpose of loan"
       />
     </div>
   );

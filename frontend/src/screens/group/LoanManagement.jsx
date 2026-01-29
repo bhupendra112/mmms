@@ -15,7 +15,8 @@ import { exportLoanToExcel, exportLoanToPDF } from "../../utils/exportUtils";
 import { useGroup } from "../../contexts/GroupContext";
 import { useOffline } from "../../contexts/OfflineContext";
 import { getAllApprovals, getUnsyncedApprovals, syncPendingLoanApprovals } from "../../services/approvalDB";
-import { getLoans } from "../../services/loanServiceOffline";
+import { getLoans as getLoansOffline } from "../../services/loanServiceOffline";
+import { getLoans as getLoansOnline } from "../../services/loanService";
 
 export default function LoanManagement() {
     const { currentGroup, isOnline } = useGroup();
@@ -24,6 +25,7 @@ export default function LoanManagement() {
     const [loans, setLoans] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
     const [filterType, setFilterType] = useState("all");
+    const [statusFilter, setStatusFilter] = useState("all"); // all|pending|approved|rejected (same as admin)
     const [pendingCount, setPendingCount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -35,7 +37,7 @@ export default function LoanManagement() {
         loadLoans();
         if (currentGroup) loadPendingCount();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentGroup?.id, lastRefreshedAt]);
+    }, [currentGroup?.id, lastRefreshedAt, isOnline]);
 
     useEffect(() => {
         if (isOnline) syncPendingApprovals();
@@ -52,7 +54,18 @@ export default function LoanManagement() {
             setLoading(true);
             setError("");
 
-            const response = await getLoans(currentGroup.id);
+            // When online, fetch from backend so status (approved/rejected) is correct; when offline use local repository
+            let response;
+            if (isOnline) {
+                try {
+                    response = await getLoansOnline(currentGroup.id);
+                } catch (apiErr) {
+                    console.warn("Backend getLoans failed, using offline data:", apiErr?.message);
+                    response = await getLoansOffline(currentGroup.id);
+                }
+            } else {
+                response = await getLoansOffline(currentGroup.id);
+            }
 
             if (response?.success && response?.data) {
                 const transformed = Array.isArray(response.data)
@@ -69,6 +82,7 @@ export default function LoanManagement() {
                             loan.date ||
                             loan.createdAt ||
                             new Date().toISOString().split("T")[0],
+                        status: loan.status || loan.approvalStatus || "pending",
                     }))
                     : [];
                 setLoans(transformed);
@@ -111,6 +125,9 @@ export default function LoanManagement() {
         const searchLower = searchTerm.trim().toLowerCase();
 
         return (loans || []).filter((loan) => {
+            const statusOk = statusFilter === "all" || (loan.status || "pending") === statusFilter;
+            if (!statusOk) return false;
+
             const memberName = (loan.memberName || "").toLowerCase();
             const memberCode = (loan.memberCode || "").toLowerCase();
             const purpose = (loan.purpose || "").toLowerCase();
@@ -130,7 +147,7 @@ export default function LoanManagement() {
 
             return matchSearch && matchFilter;
         });
-    }, [loans, searchTerm, filterType]);
+    }, [loans, searchTerm, filterType, statusFilter]);
 
     const totalAmount = useMemo(() => {
         return filteredLoans.reduce((sum, loan) => sum + Number(loan.amount || 0), 0);
@@ -182,6 +199,18 @@ export default function LoanManagement() {
                         className="w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                     />
                 </div>
+
+                {/* Status filter (same as admin panel) */}
+                <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+                >
+                    <option value="all">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                </select>
 
                 {/* Filter */}
                 <select
@@ -334,13 +363,25 @@ export default function LoanManagement() {
                         <div className="divide-y">
                             {filteredLoans.map((loan) => {
                                 const isGroupExpense = !loan.memberName && !loan.memberCode;
+                                const status = loan.status || "pending";
+                                const statusCls =
+                                    status === "pending"
+                                        ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                                        : status === "approved"
+                                            ? "bg-green-50 text-green-700 border-green-200"
+                                            : "bg-red-50 text-red-700 border-red-200";
                                 return (
                                     <div key={loan.id} className="p-4">
                                         <div className="flex items-start justify-between gap-3">
                                             <div className="min-w-0">
-                                                <p className="text-sm font-semibold text-gray-800">
-                                                    {loan.purpose || "—"}
-                                                </p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${statusCls}`}>
+                                                        {status}
+                                                    </span>
+                                                    <p className="text-sm font-semibold text-gray-800">
+                                                        {loan.purpose || "—"}
+                                                    </p>
+                                                </div>
                                                 <p className="text-xs text-gray-600 mt-1">
                                                     Date: <span className="font-medium">{loan.date}</span>
                                                 </p>
@@ -378,8 +419,8 @@ export default function LoanManagement() {
                                                             <p className="text-gray-500">Assets</p>
                                                             <span
                                                                 className={`inline-flex items-center px-2 py-1 rounded-full text-[11px] font-semibold border ${loan.hasAssets
-                                                                        ? "bg-green-50 text-green-700 border-green-200"
-                                                                        : "bg-red-50 text-red-700 border-red-200"
+                                                                    ? "bg-green-50 text-green-700 border-green-200"
+                                                                    : "bg-red-50 text-red-700 border-red-200"
                                                                     }`}
                                                             >
                                                                 {loan.hasAssets ? "Yes" : "No"}
@@ -427,6 +468,7 @@ export default function LoanManagement() {
                         <table className="w-full border-collapse min-w-[980px]">
                             <thead>
                                 <tr className="bg-gray-50">
+                                    <th className="border-b p-3 text-left font-semibold text-gray-700 text-sm">Status</th>
                                     <th className="border-b p-3 text-left font-semibold text-gray-700 text-sm">Date</th>
                                     <th className="border-b p-3 text-left font-semibold text-gray-700 text-sm">Member Code</th>
                                     <th className="border-b p-3 text-left font-semibold text-gray-700 text-sm">Member Name</th>
@@ -441,61 +483,74 @@ export default function LoanManagement() {
 
                             <tbody>
                                 {filteredLoans.length > 0 ? (
-                                    filteredLoans.map((loan) => (
-                                        <tr key={loan.id} className="hover:bg-gray-50">
-                                            <td className="border-b p-3 text-gray-800 text-sm whitespace-nowrap">
-                                                {loan.date}
-                                            </td>
-                                            <td className="border-b p-3 text-gray-800 text-sm">
-                                                {loan.memberCode ? (
-                                                    loan.memberCode
-                                                ) : (
-                                                    <span className="text-gray-400 italic">Group Expense</span>
-                                                )}
-                                            </td>
-                                            <td className="border-b p-3 text-gray-800 text-sm">
-                                                {loan.memberName ? (
-                                                    loan.memberName
-                                                ) : (
-                                                    <span className="text-gray-400 italic">Group Expense</span>
-                                                )}
-                                            </td>
-                                            <td className="border-b p-3 text-center">
-                                                <span
-                                                    className={`px-2 py-1 rounded-full text-xs font-semibold border ${loan.hasAssets
+                                    filteredLoans.map((loan) => {
+                                        const status = loan.status || "pending";
+                                        const statusCls =
+                                            status === "pending"
+                                                ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                                                : status === "approved"
+                                                    ? "bg-green-50 text-green-700 border-green-200"
+                                                    : "bg-red-50 text-red-700 border-red-200";
+                                        return (
+                                            <tr key={loan.id} className="hover:bg-gray-50">
+                                                <td className="border-b p-3">
+                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold border ${statusCls}`}>
+                                                        {status}
+                                                    </span>
+                                                </td>
+                                                <td className="border-b p-3 text-gray-800 text-sm whitespace-nowrap">
+                                                    {loan.date}
+                                                </td>
+                                                <td className="border-b p-3 text-gray-800 text-sm">
+                                                    {loan.memberCode ? (
+                                                        loan.memberCode
+                                                    ) : (
+                                                        <span className="text-gray-400 italic">Group Expense</span>
+                                                    )}
+                                                </td>
+                                                <td className="border-b p-3 text-gray-800 text-sm">
+                                                    {loan.memberName ? (
+                                                        loan.memberName
+                                                    ) : (
+                                                        <span className="text-gray-400 italic">Group Expense</span>
+                                                    )}
+                                                </td>
+                                                <td className="border-b p-3 text-center">
+                                                    <span
+                                                        className={`px-2 py-1 rounded-full text-xs font-semibold border ${loan.hasAssets
                                                             ? "bg-green-50 text-green-700 border-green-200"
                                                             : "bg-red-50 text-red-700 border-red-200"
-                                                        }`}
-                                                >
-                                                    {loan.hasAssets ? "Yes" : "No"}
-                                                </span>
-                                            </td>
-                                            <td className="border-b p-3 text-gray-800 text-sm">{loan.transactionType}</td>
-                                            <td className="border-b p-3 text-gray-800 text-sm">{loan.paymentMode}</td>
-                                            <td className="border-b p-3 text-gray-800 text-sm max-w-[320px] truncate">
-                                                {loan.purpose || "—"}
-                                            </td>
-                                            <td className="border-b p-3 text-right font-semibold text-gray-900 text-sm whitespace-nowrap">
-                                                ₹{Number(loan.amount || 0).toLocaleString()}
-                                            </td>
-                                            <td className="border-b p-3 text-center">
-                                                <button
-                                                    type="button"
-                                                    className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-blue-600"
-                                                    title="View"
-                                                    onClick={() => {
-                                                        // keep as placeholder; wire to your modal/route
-                                                        console.log("View loan:", loan.id);
-                                                    }}
-                                                >
-                                                    <Eye size={18} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))
+                                                            }`}
+                                                    >
+                                                        {loan.hasAssets ? "Yes" : "No"}
+                                                    </span>
+                                                </td>
+                                                <td className="border-b p-3 text-gray-800 text-sm">{loan.transactionType}</td>
+                                                <td className="border-b p-3 text-gray-800 text-sm">{loan.paymentMode}</td>
+                                                <td className="border-b p-3 text-gray-800 text-sm max-w-[320px] truncate">
+                                                    {loan.purpose || "—"}
+                                                </td>
+                                                <td className="border-b p-3 text-right font-semibold text-gray-900 text-sm whitespace-nowrap">
+                                                    ₹{Number(loan.amount || 0).toLocaleString()}
+                                                </td>
+                                                <td className="border-b p-3 text-center">
+                                                    <button
+                                                        type="button"
+                                                        className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-blue-600"
+                                                        title="View"
+                                                        onClick={() => {
+                                                            console.log("View loan:", loan.id);
+                                                        }}
+                                                    >
+                                                        <Eye size={18} />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
                                 ) : (
                                     <tr>
-                                        <td colSpan={9} className="p-10 text-center text-gray-500 text-sm">
+                                        <td colSpan={10} className="p-10 text-center text-gray-500 text-sm">
                                             No loans found
                                         </td>
                                     </tr>
@@ -505,7 +560,7 @@ export default function LoanManagement() {
                             {filteredLoans.length > 0 && (
                                 <tfoot>
                                     <tr className="bg-gray-50 font-semibold">
-                                        <td colSpan={7} className="border-t p-3 text-right text-gray-800 text-sm">
+                                        <td colSpan={8} className="border-t p-3 text-right text-gray-800 text-sm">
                                             Total:
                                         </td>
                                         <td className="border-t p-3 text-right text-gray-900 text-sm whitespace-nowrap">

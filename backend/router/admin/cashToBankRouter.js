@@ -10,6 +10,7 @@ import {
 } from "../../controller/admin/cashToBankController.js";
 import authAdmin from "../../middleware/authorization.js";
 import upload from "../../config/multerConfig.js";
+import compressImages from "../../middleware/compressImages.js";
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ const router = express.Router();
 router.use(authAdmin);
 
 // Create conversion request (with file upload)
-router.post("/create", upload.single("paymentImage"), createConversion);
+router.post("/create", upload.single("paymentImage"), compressImages, createConversion);
 
 // List conversions with filters
 router.get("/list", listConversions);
