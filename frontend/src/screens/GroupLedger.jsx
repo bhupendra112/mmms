@@ -25,7 +25,7 @@ const GroupLedger = () => {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H7' }) }).catch(() => {}); };
+    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H7' }) }).catch(() => { }); };
     if (currentGroup?.id) {
       log('GroupLedger.jsx:useEffect', 'Load triggered', { currentGroupId: currentGroup?.id, lastRefreshedAt });
       loadLedgerData();
@@ -36,7 +36,7 @@ const GroupLedger = () => {
   }, [currentGroup, isGroupLoading, lastRefreshedAt]);
 
   const handleGetFreshData = async () => {
-    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H6' }) }).catch(() => {}); };
+    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H6' }) }).catch(() => { }); };
     log('GroupLedger.jsx:handleGetFreshData', 'Get fresh data clicked', { isOnline, currentGroupId: currentGroup?.id });
     if (!isOnline) {
       setRefreshMessage({ type: "error", text: "You are offline. Connect to the internet to fetch fresh data." });
@@ -61,7 +61,7 @@ const GroupLedger = () => {
   };
 
   const loadMembers = async () => {
-    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H7' }) }).catch(() => {}); };
+    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H7' }) }).catch(() => { }); };
     try {
       log('GroupLedger.jsx:loadMembers', 'Load members start', { groupId: currentGroup?.id });
       const response = await getMembersByGroup(currentGroup.id);
@@ -75,7 +75,7 @@ const GroupLedger = () => {
   };
 
   const loadLedgerData = async () => {
-    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H7' }) }).catch(() => {}); };
+    const log = (loc, msg, data) => { fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: loc, message: msg, data: data || {}, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'H7' }) }).catch(() => { }); };
     try {
       setLoading(true);
       setError("");
@@ -87,7 +87,7 @@ const GroupLedger = () => {
       if (response.success && response.data) {
         // Transform recovery data to ledger format
         const transformedData = [];
-        
+
         // Process each recovery
         if (Array.isArray(response.data)) {
           response.data.forEach((recovery) => {
@@ -102,13 +102,13 @@ const GroupLedger = () => {
                 const yogdan = parseFloat(amounts.yogdan || 0);
                 const other = parseFloat(amounts.other || 0);
                 const total = saving + loan + fd + interest + yogdan + other;
-                
+
                 // Format date
                 const recoveryDate = recovery.date || memberRecovery.date;
-                const formattedDate = recoveryDate 
+                const formattedDate = recoveryDate
                   ? new Date(recoveryDate).toLocaleDateString("en-GB")
                   : "N/A";
-                
+
                 transformedData.push({
                   date: recoveryDate, // Keep original for sorting/filtering
                   formattedDate: formattedDate, // Formatted for display
@@ -123,16 +123,16 @@ const GroupLedger = () => {
                   mode: memberRecovery.paymentMode?.cash && memberRecovery.paymentMode?.online
                     ? "Cash & Online"
                     : memberRecovery.paymentMode?.cash
-                    ? "Cash"
-                    : memberRecovery.paymentMode?.online
-                    ? "Online"
-                    : "N/A",
+                      ? "Cash"
+                      : memberRecovery.paymentMode?.online
+                        ? "Online"
+                        : "N/A",
                 });
               });
             }
           });
         }
-        
+
         // Sort by date (newest first)
         transformedData.sort((a, b) => {
           const dateA = a.date ? new Date(a.date) : new Date(0);
@@ -176,8 +176,8 @@ const GroupLedger = () => {
 
   if (isGroupLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-100 p-4">
-        <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex flex-col min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-gray-100 p-3 sm:p-4">
+        <div className="flex items-center justify-center min-h-[280px]">
           <div className="text-gray-600">Loading ledger data...</div>
         </div>
       </div>
@@ -185,7 +185,7 @@ const GroupLedger = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
+    <div className="flex flex-col min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-gray-100 p-3 sm:p-4">
       {/* Group Header */}
       <GroupProfile />
 
@@ -215,11 +215,10 @@ const GroupLedger = () => {
 
       {refreshMessage && (
         <div
-          className={`mb-4 px-4 py-3 rounded-lg text-sm ${
-            refreshMessage.type === "success"
+          className={`mb-4 px-4 py-3 rounded-lg text-sm ${refreshMessage.type === "success"
               ? "bg-green-50 text-green-800 border border-green-200"
               : "bg-red-50 text-red-800 border border-red-200"
-          }`}
+            }`}
         >
           {refreshMessage.text}
         </div>
@@ -233,20 +232,22 @@ const GroupLedger = () => {
 
       {/* Filters */}
       <div className="mb-4">
-        <LedgerFilters 
-          filters={filters} 
-          setFilters={setFilters} 
+        <LedgerFilters
+          filters={filters}
+          setFilters={setFilters}
           members={members}
           ledgerData={ledgerData}
         />
       </div>
 
-      {/* Ledger Table */}
+      {/* Ledger Table - scrollable container */}
       {filteredLedgerData.length > 0 ? (
-        <LedgerTable ledger={filteredLedgerData} />
+        <div className="min-h-0 flex-1 w-full overflow-x-auto overflow-y-visible">
+          <LedgerTable ledger={filteredLedgerData} />
+        </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-md p-8 text-center">
-          <p className="text-gray-600">No ledger entries found</p>
+        <div className="bg-white rounded-lg shadow-md p-6 sm:p-8 text-center">
+          <p className="text-gray-600 text-sm sm:text-base">No ledger entries found</p>
         </div>
       )}
     </div>

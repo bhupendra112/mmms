@@ -188,7 +188,37 @@ export const getRecoveryByDate = async (groupId, date, testMode = false) => {
 
     if (recovery) {
         // Extract member recoveries from the recovery record
-        const memberRecoveries = recovery.memberRecoveries || recovery.recoveries || [];
+        let memberRecoveries = recovery.memberRecoveries || recovery.recoveries || [];
+        // Enrich each member recovery with demandDetails (actual paid) so UI shows recovery detail not demand detail (same as admin)
+        memberRecoveries = memberRecoveries.map((mr) => {
+            if (mr.demandDetails) return mr; // keep backend/synced demandDetails
+            const amounts = mr.amounts || {};
+            const saving = parseFloat(amounts.saving ?? 0) || 0;
+            const loan = parseFloat(amounts.loan ?? 0) || 0;
+            const interest = parseFloat(amounts.interest ?? 0) || 0;
+            const yogdan = parseFloat(amounts.yogdan ?? 0) || 0;
+            const fd = parseFloat(amounts.fd ?? 0) || 0;
+            const memFeesSHG = parseFloat(amounts.memFeesSHG ?? 0) || 0;
+            const memFeesSamiti = parseFloat(amounts.memFeesSamiti ?? 0) || 0;
+            const memFeesGroup = parseFloat(amounts.memFeesGroup ?? 0) || 0;
+            const charges = amounts.charges || {};
+            const chargesActual = typeof charges === 'object' && !Array.isArray(charges)
+                ? charges
+                : {};
+            const chargesTotal = Object.values(chargesActual).reduce((sum, amt) => sum + (parseFloat(amt ?? 0) || 0), 0);
+            const demandDetails = {
+                saving: { prevDemand: 0, currDemand: saving, totalDemand: saving, actualPaid: saving, unpaidDemand: 0, openingBalance: 0, closingBalance: saving },
+                loan: { prevDemand: 0, currDemand: loan, totalDemand: loan, actualPaid: loan, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
+                interest: { prevDemand: 0, currDemand: interest, totalDemand: interest, actualPaid: interest, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
+                yogdan: { prevDemand: 0, currDemand: yogdan, totalDemand: yogdan, actualPaid: yogdan, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
+                fd: { actualPaid: fd, openingBalance: 0, closingBalance: fd },
+                memFeesSHG: { prevDemand: 0, currDemand: memFeesSHG, totalDemand: memFeesSHG, actualPaid: memFeesSHG, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
+                memFeesSamiti: { prevDemand: 0, currDemand: memFeesSamiti, totalDemand: memFeesSamiti, actualPaid: memFeesSamiti, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
+                memFeesGroup: { prevDemand: 0, currDemand: memFeesGroup, totalDemand: memFeesGroup, actualPaid: memFeesGroup, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
+                charges: { chargesDue: chargesActual, chargesTotalDemand: chargesTotal, actualPaid: chargesActual, actualPaidTotal: chargesTotal, unpaidDemandTotal: 0, unpaidDemand: {} },
+            };
+            return { ...mr, demandDetails };
+        });
         return {
             success: true,
             data: {

@@ -9,7 +9,6 @@ import {
     LayoutGrid,
     Users,
     DollarSign,
-    Settings,
     FileText,
     CreditCard,
     ArrowLeftRight,
@@ -150,16 +149,6 @@ export default function GroupNavbar() {
                             </ul>
                         </div>
                     ))}
-                </div>
-
-                <div className="border-t border-gray-800 p-4 space-y-2">
-                    <Link
-                        to="/group/settings"
-                        className="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-gray-800 transition-colors"
-                    >
-                        <Settings size={18} />
-                        <span>Settings</span>
-                    </Link>
                 </div>
             </aside>
 
