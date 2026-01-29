@@ -50,3 +50,12 @@ export const deleteExpense = async (id) => {
   return res.data;
 };
 
+export const approveExpense = async (id) => {
+  const res = await httpExpense.put(`/approve/${id}`);
+  return res.data;
+};
+
+export const rejectExpense = async (id, reason) => {
+  const res = await httpExpense.put(`/reject/${id}`, { reason });
+  return res.data;
+};

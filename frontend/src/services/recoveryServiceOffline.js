@@ -75,11 +75,19 @@ export const updateMemberRecovery = async (groupId, date, memberRecovery, testMo
             ...existing,
             recoveries: filtered,
             memberRecoveries: filtered, // Support both field names
-            // Add requireApproval flag for group panel requests if not already set
-            ...(isGroupPanel && !existing.requireApproval ? { requireApproval: true,             source: 'group_sync' } : {}),
+            // Always add requireApproval flag for group panel requests
+            ...(isGroupPanel ? { requireApproval: true, source: 'group_sync' } : {}),
         };
         
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryServiceOffline.js:74', message: 'Updating existing recovery', data: { isGroupPanel, hasRequireApproval: !!updatePayload.requireApproval, requireApproval: updatePayload.requireApproval, source: updatePayload.source, groupId, date: dateStr, recoveriesCount: filtered.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H1' }) }).catch(() => {});
+        // #endregion
+        
         const updated = await recoveryRepository.update(existing._uuid || existing._id, updatePayload);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryServiceOffline.js:82', message: 'Recovery updated in repository', data: { uuid: updated.uuid, syncStatus: updated.syncStatus, hasRequireApproval: !!updated.payload?.requireApproval, requireApproval: updated.payload?.requireApproval, source: updated.payload?.source }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H1' }) }).catch(() => {});
+        // #endregion
         return {
             success: true,
             data: {
@@ -105,7 +113,15 @@ export const updateMemberRecovery = async (groupId, date, memberRecovery, testMo
             payload.testMode = true;
         }
         
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryServiceOffline.js:96', message: 'Creating new recovery', data: { isGroupPanel, hasRequireApproval: !!payload.requireApproval, requireApproval: payload.requireApproval, source: payload.source, groupId, date: dateStr, recoveriesCount: 1 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H1' }) }).catch(() => {});
+        // #endregion
+        
         const record = await recoveryRepository.create(payload);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryServiceOffline.js:108', message: 'Recovery created in repository', data: { uuid: record.uuid, syncStatus: record.syncStatus, hasRequireApproval: !!record.payload?.requireApproval, requireApproval: record.payload?.requireApproval, source: record.payload?.source }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H1' }) }).catch(() => {});
+        // #endregion
         
         return {
             success: true,

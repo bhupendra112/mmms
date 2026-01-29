@@ -126,6 +126,10 @@ export const createExpense = async (req, res) => {
             }
         }
 
+        // Check if approval is required (from group panel)
+        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        const approvalStatus = requireApproval ? 'pending' : 'approved';
+
         // Create expense
         const expense = await ExpenseMaster.create({
             ...payload,
@@ -134,98 +138,107 @@ export const createExpense = async (req, res) => {
             groupName: payload.groupName || groupDoc.group_name,
             groupCode: payload.groupCode || groupDoc.group_code,
             entryType: entryType,
+            approvalStatus: approvalStatus,
             createdBy: req.user?.id || "admin",
         });
 
-        // Create bank transaction record if payment mode is Bank
-        // NOTE: Expense is a DEBIT transaction - group pays money, so bank balance decreases
-        if (payload.paymentMode === "Bank" && payload.bankId) {
-            console.log("[EXPENSE_CONTROLLER] Creating bank transaction for expense (DEBIT - will REMOVE from bank balance):", {
-                bankId: payload.bankId,
-                groupId: groupDoc._id.toString(),
-                amount: payload.amount || 0,
-                transactionType: "expense"
-            });
+        // Only process transactions if approved (admin panel)
+        // For pending approvals (group panel), these will be processed on approval
+        if (approvalStatus === 'approved') {
+            // Create bank transaction record if payment mode is Bank
+            // NOTE: Expense is a DEBIT transaction - group pays money, so bank balance decreases
+            if (payload.paymentMode === "Bank" && payload.bankId) {
+                console.log("[EXPENSE_CONTROLLER] Creating bank transaction for expense (DEBIT - will REMOVE from bank balance):", {
+                    bankId: payload.bankId,
+                    groupId: groupDoc._id.toString(),
+                    amount: payload.amount || 0,
+                    transactionType: "expense"
+                });
 
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:109', message: 'Creating bank transaction for expense (should be DEBIT)', data: { bankId: payload.bankId, groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Bank' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-            // #endregion
+                // #region agent log
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:109', message: 'Creating bank transaction for expense (should be DEBIT)', data: { bankId: payload.bankId, groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Bank' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
+                // #endregion
 
-            const bankTxResult = await createBankTransactionRecord({
-                bankId: payload.bankId,
+                const bankTxResult = await createBankTransactionRecord({
+                    bankId: payload.bankId,
+                    groupId: groupDoc._id,
+                    transactionType: "expense",
+                    amount: payload.amount || 0,
+                    date: dateValue,
+                    description: `Expense - ${payload.expenseType}: ${payload.purpose || ""}`,
+                    expenseId: expense._id,
+                    createdBy: req.user?.id || "admin",
+                });
+
+                console.log("[EXPENSE_CONTROLLER] Bank transaction result:", bankTxResult ? "SUCCESS" : "FAILED");
+
+                // #region agent log
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:125', message: 'Bank transaction created for expense', data: { success: !!bankTxResult, bankTransactionId: bankTxResult?._id?.toString(), status: bankTxResult?.status }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
+                // #endregion
+            }
+
+            // Create cash transaction record if payment mode is Cash
+            // NOTE: Expense is a DEBIT transaction - group pays money, so cash balance decreases
+            if (payload.paymentMode === "Cash") {
+                console.log("[EXPENSE_CONTROLLER] Creating cash transaction for expense (DEBIT - will REMOVE from cash balance):", {
+                    groupId: groupDoc._id.toString(),
+                    amount: payload.amount || 0,
+                    transactionType: "expense"
+                });
+
+                // #region agent log
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:133', message: 'Creating cash transaction for expense (should be DEBIT)', data: { groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Cash' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
+                // #endregion
+
+                const cashTxResult = await createCashTransactionRecord({
+                    groupId: groupDoc._id,
+                    transactionType: "expense",
+                    amount: payload.amount || 0,
+                    date: dateValue,
+                    description: `Expense - ${payload.expenseType}: ${payload.purpose || ""}`,
+                    expenseId: expense._id,
+                    createdBy: req.user?.id || "admin",
+                });
+
+                console.log("[EXPENSE_CONTROLLER] Cash transaction result:", cashTxResult ? "SUCCESS" : "FAILED");
+
+                // #region agent log
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:149', message: 'Cash transaction created for expense', data: { success: !!cashTxResult, cashTransactionId: cashTxResult?._id?.toString() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
+                // #endregion
+            }
+
+            // Post ledger entry for expense
+            // Determine direction based on entryType: income entries are "in", others are "out"
+            const direction = entryType === "income" ? "in" : "out";
+
+            // Use expenseType as headName, or find/create head
+            const headInfo = await findOrCreateExpenseHead(groupDoc._id, payload.expenseType, entryType);
+
+            await postTransaction({
+                sourceDoc: expense,
+                headName: payload.expenseType,
+                headType: headInfo?.headType || "expenseMaster",
+                headId: headInfo?.headId || expense._id, // Use expense._id as headId if not found
+                section: entryType,
+                amount: expenseAmount,
+                direction: direction,
                 groupId: groupDoc._id,
-                transactionType: "expense",
-                amount: payload.amount || 0,
+                memberId: undefined, // Expenses are group-level, not member-specific
                 date: dateValue,
-                description: `Expense - ${payload.expenseType}: ${payload.purpose || ""}`,
-                expenseId: expense._id,
+                notes: `Expense - ${payload.expenseType}: ${payload.purpose || ""}`,
+                paymentMode: payload.paymentMode || "Cash",
+                bankId: payload.bankId || undefined,
+                referenceModel: "ExpenseMaster",
+                referenceId: expense._id,
                 createdBy: req.user?.id || "admin",
             });
-
-            console.log("[EXPENSE_CONTROLLER] Bank transaction result:", bankTxResult ? "SUCCESS" : "FAILED");
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:125', message: 'Bank transaction created for expense', data: { success: !!bankTxResult, bankTransactionId: bankTxResult?._id?.toString(), status: bankTxResult?.status }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-            // #endregion
         }
+        // For pending expenses, skip processing - it will be done on approval
 
-        // Create cash transaction record if payment mode is Cash
-        // NOTE: Expense is a DEBIT transaction - group pays money, so cash balance decreases
-        if (payload.paymentMode === "Cash") {
-            console.log("[EXPENSE_CONTROLLER] Creating cash transaction for expense (DEBIT - will REMOVE from cash balance):", {
-                groupId: groupDoc._id.toString(),
-                amount: payload.amount || 0,
-                transactionType: "expense"
-            });
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:133', message: 'Creating cash transaction for expense (should be DEBIT)', data: { groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Cash' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-            // #endregion
-
-            const cashTxResult = await createCashTransactionRecord({
-                groupId: groupDoc._id,
-                transactionType: "expense",
-                amount: payload.amount || 0,
-                date: dateValue,
-                description: `Expense - ${payload.expenseType}: ${payload.purpose || ""}`,
-                expenseId: expense._id,
-                createdBy: req.user?.id || "admin",
-            });
-
-            console.log("[EXPENSE_CONTROLLER] Cash transaction result:", cashTxResult ? "SUCCESS" : "FAILED");
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:149', message: 'Cash transaction created for expense', data: { success: !!cashTxResult, cashTransactionId: cashTxResult?._id?.toString() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-            // #endregion
-        }
-
-        // Post ledger entry for expense
-        // Determine direction based on entryType: income entries are "in", others are "out"
-        const direction = entryType === "income" ? "in" : "out";
-
-        // Use expenseType as headName, or find/create head
-        const headInfo = await findOrCreateExpenseHead(groupDoc._id, payload.expenseType, entryType);
-
-        await postTransaction({
-            sourceDoc: expense,
-            headName: payload.expenseType,
-            headType: headInfo?.headType || "expenseMaster",
-            headId: headInfo?.headId || expense._id, // Use expense._id as headId if not found
-            section: entryType,
-            amount: expenseAmount,
-            direction: direction,
-            groupId: groupDoc._id,
-            memberId: undefined, // Expenses are group-level, not member-specific
-            date: dateValue,
-            notes: `Expense - ${payload.expenseType}: ${payload.purpose || ""}`,
-            paymentMode: payload.paymentMode || "Cash",
-            bankId: payload.bankId || undefined,
-            referenceModel: "ExpenseMaster",
-            referenceId: expense._id,
-            createdBy: req.user?.id || "admin",
-        });
-
-        return apiResponse.success(res, "Expense created successfully", expense);
+        const message = approvalStatus === 'pending' 
+            ? "Expense created successfully and pending admin approval" 
+            : "Expense created successfully";
+        return apiResponse.success(res, message, expense);
 
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
@@ -460,6 +473,140 @@ export const deleteExpense = async (req, res) => {
 
         return apiResponse.success(res, "Expense deleted successfully", null);
 
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// Approve Expense (from group panel)
+export const approveExpense = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!id) {
+            return apiResponse.error(res, "Expense ID is required", 400);
+        }
+
+        const expense = await ExpenseMaster.findById(id);
+        if (!expense) {
+            return apiResponse.error(res, "Expense not found", 404);
+        }
+
+        if (expense.approvalStatus !== "pending") {
+            return apiResponse.error(res, `Expense is already ${expense.approvalStatus}`, 400);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify expense's group belongs to admin's place
+        const accessCheck = await verifyGroupAccess(expense.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this expense's group", 403);
+        }
+        const groupDoc = accessCheck.group;
+
+        // Update expense approval status
+        expense.approvalStatus = "approved";
+        expense.approvedBy = req.user?.id || "admin";
+        expense.approvedAt = new Date();
+        await expense.save();
+
+        // Process all transactions (bank, cash, ledger entries)
+        const expenseAmount = expense.amount || 0;
+        const dateValue = expense.date;
+
+        // Create bank transaction record if payment mode is Bank
+        if (expense.paymentMode === "Bank" && expense.bankId) {
+            await createBankTransactionRecord({
+                bankId: expense.bankId,
+                groupId: groupDoc._id,
+                transactionType: "expense",
+                amount: expenseAmount,
+                date: dateValue,
+                description: `Expense - ${expense.expenseType}: ${expense.purpose || ""}`,
+                expenseId: expense._id,
+                createdBy: req.user?.id || "admin",
+            });
+        }
+
+        // Create cash transaction record if payment mode is Cash
+        if (expense.paymentMode === "Cash") {
+            await createCashTransactionRecord({
+                groupId: groupDoc._id,
+                transactionType: "expense",
+                amount: expenseAmount,
+                date: dateValue,
+                description: `Expense - ${expense.expenseType}: ${expense.purpose || ""}`,
+                expenseId: expense._id,
+                createdBy: req.user?.id || "admin",
+            });
+        }
+
+        // Post ledger entry for expense
+        const direction = expense.entryType === "income" ? "in" : "out";
+        const headInfo = await findOrCreateExpenseHead(groupDoc._id, expense.expenseType, expense.entryType);
+
+        await postTransaction({
+            sourceDoc: expense,
+            headName: expense.expenseType,
+            headType: headInfo?.headType || "expenseMaster",
+            headId: headInfo?.headId || expense._id,
+            section: expense.entryType,
+            amount: expenseAmount,
+            direction: direction,
+            groupId: groupDoc._id,
+            memberId: undefined,
+            date: dateValue,
+            notes: `Expense - ${expense.expenseType}: ${expense.purpose || ""}`,
+            paymentMode: expense.paymentMode || "Cash",
+            bankId: expense.bankId || undefined,
+            referenceModel: "ExpenseMaster",
+            referenceId: expense._id,
+            createdBy: req.user?.id || "admin",
+        });
+
+        return apiResponse.success(res, "Expense approved successfully", expense);
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to approve expense", 500);
+    }
+};
+
+// Reject Expense (from group panel)
+export const rejectExpense = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        if (!id) {
+            return apiResponse.error(res, "Expense ID is required", 400);
+        }
+
+        const expense = await ExpenseMaster.findById(id);
+        if (!expense) {
+            return apiResponse.error(res, "Expense not found", 404);
+        }
+
+        if (expense.approvalStatus !== "pending") {
+            return apiResponse.error(res, `Expense is already ${expense.approvalStatus}`, 400);
+        }
+
+        // Get admin's place from token
+        const adminPlace = req.user?.place || req.admin?.place;
+
+        // Verify expense's group belongs to admin's place
+        const accessCheck = await verifyGroupAccess(expense.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this expense's group", 403);
+        }
+
+        expense.approvalStatus = "rejected";
+        expense.rejectedBy = req.user?.id || "admin";
+        expense.rejectedAt = new Date();
+        expense.rejectionReason = reason || "No reason provided";
+        await expense.save();
+
+        return apiResponse.success(res, "Expense rejected successfully", expense);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

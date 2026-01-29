@@ -13,6 +13,7 @@ import {
     Save,
     X,
     ArrowLeftRight,
+    Receipt,
 } from "lucide-react";
 import { initApprovalDB, getAllApprovals, approveRequest, rejectRequest, updateApprovalData } from "../../services/approvalDB";
 import { getGroups } from "../../services/groupService";
@@ -21,6 +22,8 @@ import { getLoans, approveLoan, rejectLoan } from "../../services/loanService";
 import { getPendingMembers, approveMember, rejectMember } from "../../services/memberService";
 import { getAllFDs, approveFD, rejectFD } from "../../services/fdService";
 import { getRecoveries, approveRecovery, rejectRecovery } from "../../services/recoveryService";
+import { getExpenses, approveExpense, rejectExpense } from "../../services/expenseService";
+import { getPayments, approvePayment, rejectPayment } from "../../services/paymentService";
 
 export default function ApprovalManagement() {
     const [approvals, setApprovals] = useState([]);
@@ -197,6 +200,11 @@ export default function ApprovalManagement() {
             // Load Recovery approvals from backend
             try {
                 const recoveriesRes = await getRecoveries();
+
+                // #region agent log
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'ApprovalManagement.jsx:201', message: 'Loading recoveries for approval', data: { success: recoveriesRes?.success, isArray: Array.isArray(recoveriesRes?.data), totalCount: recoveriesRes?.data?.length || 0, pendingCount: recoveriesRes?.data?.filter((r) => r.approvalStatus === 'pending')?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H3' }) }).catch(() => { });
+                // #endregion
+
                 if (recoveriesRes?.success && Array.isArray(recoveriesRes.data)) {
                     const recoveryApprovals = recoveriesRes.data
                         .filter((recovery) => recovery.approvalStatus === "pending") // Only show pending recoveries
@@ -217,9 +225,74 @@ export default function ApprovalManagement() {
 
                     // Merge with existing approvals
                     allApprovals = [...allApprovals, ...recoveryApprovals];
+
+                    // #region agent log
+                    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'ApprovalManagement.jsx:221', message: 'Recovery approvals processed', data: { recoveryApprovalsCount: recoveryApprovals.length, totalApprovalsCount: allApprovals.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H3' }) }).catch(() => { });
+                    // #endregion
                 }
             } catch (error) {
                 console.error("Error loading recoveries:", error);
+                // #region agent log
+                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'ApprovalManagement.jsx:224', message: 'Error loading recoveries', data: { error: error.message, stack: error.stack }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H3' }) }).catch(() => { });
+                // #endregion
+                // Continue with other approvals even if backend fails
+            }
+
+            // Load Expense approvals from backend
+            try {
+                const expensesRes = await getExpenses();
+                if (expensesRes?.success && Array.isArray(expensesRes.data)) {
+                    const expenseApprovals = expensesRes.data
+                        .filter((expense) => expense.approvalStatus === "pending") // Only show pending expenses
+                        .map((expense) => ({
+                            id: expense._id || expense.id,
+                            type: "expense",
+                            status: expense.approvalStatus || "approved",
+                            groupId: expense.groupId?._id || expense.groupId || "",
+                            groupName: expense.groupName || expense.groupId?.group_name || "",
+                            data: expense,
+                            submittedAt: expense.createdAt ? new Date(expense.createdAt).getTime() : Date.now(),
+                            approvedAt: expense.approvedAt ? new Date(expense.approvedAt).getTime() : null,
+                            approvedBy: expense.approvedBy || null,
+                            rejectionReason: expense.rejectionReason || null,
+                            synced: true,
+                            _isBackendApproval: true,
+                        }));
+
+                    // Merge with existing approvals
+                    allApprovals = [...allApprovals, ...expenseApprovals];
+                }
+            } catch (error) {
+                console.error("Error loading expenses:", error);
+                // Continue with other approvals even if backend fails
+            }
+
+            // Load Payment approvals from backend
+            try {
+                const paymentsRes = await getPayments({ status: "pending" });
+                if (paymentsRes?.success && Array.isArray(paymentsRes.data)) {
+                    const paymentApprovals = paymentsRes.data
+                        .filter((payment) => payment.status === "pending") // Only show pending payments
+                        .map((payment) => ({
+                            id: payment._id || payment.id,
+                            type: "payment",
+                            status: payment.status || "pending",
+                            groupId: payment.groupId?._id || payment.groupId || "",
+                            groupName: payment.groupName || payment.groupId?.group_name || "",
+                            data: payment,
+                            submittedAt: payment.createdAt ? new Date(payment.createdAt).getTime() : Date.now(),
+                            approvedAt: payment.approvedAt ? new Date(payment.approvedAt).getTime() : null,
+                            approvedBy: payment.approvedBy || null,
+                            rejectionReason: payment.rejectionReason || null,
+                            synced: true,
+                            _isBackendApproval: true,
+                        }));
+
+                    // Merge with existing approvals
+                    allApprovals = [...allApprovals, ...paymentApprovals];
+                }
+            } catch (error) {
+                console.error("Error loading payments:", error);
                 // Continue with other approvals even if backend fails
             }
 
@@ -265,8 +338,8 @@ export default function ApprovalManagement() {
                         const res = await approveConversion(approval.id);
                         if (res?.success) {
                             const conversionType = approval.conversionType || approval.data?.conversionType;
-                            const message = conversionType === "bank_to_bank" 
-                                ? "Bank to Bank transfer approved successfully!" 
+                            const message = conversionType === "bank_to_bank"
+                                ? "Bank to Bank transfer approved successfully!"
                                 : "Cash to Bank conversion approved successfully!";
                             alert(message);
                         } else {
@@ -300,6 +373,20 @@ export default function ApprovalManagement() {
                         } else {
                             throw new Error(res?.message || "Failed to approve recovery");
                         }
+                    } else if (approval.type === "expense") {
+                        const res = await approveExpense(approval.id);
+                        if (res?.success) {
+                            alert("Expense approved successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to approve expense");
+                        }
+                    } else if (approval.type === "payment") {
+                        const res = await approvePayment(approval.id);
+                        if (res?.success) {
+                            alert("Payment approved successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to approve payment");
+                        }
                     } else {
                         throw new Error("Unknown approval type");
                     }
@@ -329,8 +416,8 @@ export default function ApprovalManagement() {
                         const res = await rejectConversion(approval.id, rejectionReason);
                         if (res?.success) {
                             const conversionType = approval.conversionType || approval.data?.conversionType;
-                            const message = conversionType === "bank_to_bank" 
-                                ? "Bank to Bank transfer rejected successfully!" 
+                            const message = conversionType === "bank_to_bank"
+                                ? "Bank to Bank transfer rejected successfully!"
                                 : "Cash to Bank conversion rejected successfully!";
                             alert(message);
                         } else {
@@ -363,6 +450,20 @@ export default function ApprovalManagement() {
                             alert("Recovery rejected successfully!");
                         } else {
                             throw new Error(res?.message || "Failed to reject recovery");
+                        }
+                    } else if (approval.type === "expense") {
+                        const res = await rejectExpense(approval.id, rejectionReason);
+                        if (res?.success) {
+                            alert("Expense rejected successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to reject expense");
+                        }
+                    } else if (approval.type === "payment") {
+                        const res = await rejectPayment(approval.id, rejectionReason);
+                        if (res?.success) {
+                            alert("Payment rejected successfully!");
+                        } else {
+                            throw new Error(res?.message || "Failed to reject payment");
                         }
                     } else {
                         throw new Error("Unknown approval type");
@@ -447,6 +548,10 @@ export default function ApprovalManagement() {
                 return <FileText className="text-purple-600" size={20} />;
             case "fd":
                 return <DollarSign className="text-indigo-600" size={20} />;
+            case "expense":
+                return <Receipt className="text-red-600" size={20} />;
+            case "payment":
+                return <DollarSign className="text-teal-600" size={20} />;
             case "cash_to_bank":
                 return <ArrowLeftRight className="text-orange-600" size={20} />;
             default:
@@ -464,6 +569,16 @@ export default function ApprovalManagement() {
                 return "Loan Application";
             case "fd":
                 return "Fixed Deposit";
+            case "expense":
+                return "Expense";
+            case "payment":
+                const paymentType = approval?.data?.paymentType;
+                if (paymentType === 'fd_maturity') {
+                    return "FD Maturity Payment";
+                } else if (paymentType === 'saving_withdrawal') {
+                    return "Savings Withdrawal";
+                }
+                return "Payment";
             case "cash_to_bank":
                 // Check if we have conversionType in the approval data
                 const conversionType = approval?.conversionType || approval?.data?.conversionType;
@@ -650,6 +765,12 @@ export default function ApprovalManagement() {
                                     {approval.type === "fd" && approval.data?.amount && (
                                         <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.amount)} | Period: {approval.data?.time_period ? `${(approval.data.time_period / 12).toFixed(1)} years` : '-'}</p>
                                     )}
+                                    {approval.type === "expense" && approval.data?.amount && (
+                                        <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.amount)} | Type: {approval.data.expenseType || 'N/A'}</p>
+                                    )}
+                                    {approval.type === "payment" && approval.data?.amount && (
+                                        <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.amount)} | Type: {approval.data.paymentType === 'fd_maturity' ? 'FD Maturity' : approval.data.paymentType === 'saving_withdrawal' ? 'Savings Withdrawal' : approval.data.paymentType || 'N/A'}</p>
+                                    )}
                                     {approval.type === "cash_to_bank" && approval.data?.totalCashAmount && (
                                         <p className="text-xs text-gray-500 mb-1">Amount: {formatAmount(approval.data.totalCashAmount)}</p>
                                     )}
@@ -723,6 +844,26 @@ export default function ApprovalManagement() {
                                                         <p>FD Rate: {approval.data?.fd_rate_snapshot ? `${approval.data.fd_rate_snapshot}%` : '-'}</p>
                                                         {approval.data?.maturityAmount && (
                                                             <p>Maturity Amount: {formatAmount(approval.data.maturityAmount)}</p>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {approval.type === "expense" && approval.data?.amount && (
+                                                    <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                                                        <p>Amount: {formatAmount(approval.data.amount)}</p>
+                                                        <p>Type: {approval.data.expenseType || 'N/A'}</p>
+                                                        <p>Payment Mode: {approval.data.paymentMode || 'N/A'}</p>
+                                                        {approval.data.purpose && (
+                                                            <p>Purpose: {approval.data.purpose}</p>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {approval.type === "payment" && approval.data?.amount && (
+                                                    <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                                                        <p>Amount: {formatAmount(approval.data.amount)}</p>
+                                                        <p>Type: {approval.data.paymentType === 'fd_maturity' ? 'FD Maturity' : approval.data.paymentType === 'saving_withdrawal' ? 'Savings Withdrawal' : approval.data.paymentType || 'N/A'}</p>
+                                                        <p>Payment Mode: {approval.data.paymentMode || 'N/A'}</p>
+                                                        {approval.data.memberName && (
+                                                            <p>Member: {approval.data.memberName} ({approval.data.memberCode})</p>
                                                         )}
                                                     </div>
                                                 )}
@@ -1276,8 +1417,100 @@ export default function ApprovalManagement() {
                                     </div>
                                 )}
 
+                                {/* Expense Dashboard */}
+                                {selectedApproval.type === "expense" && selectedApproval.data && (
+                                    <div className="space-y-4">
+                                        {(() => {
+                                            const data = selectedApproval.data;
+                                            return (
+                                                <>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                                                        <div className="p-3 sm:p-4 bg-red-50 rounded-lg border-l-4 border-red-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Amount</p>
+                                                            <p className="text-xl sm:text-2xl font-bold text-gray-800">{formatAmount(data.amount)}</p>
+                                                        </div>
+                                                        <div className="p-3 sm:p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Payment Mode</p>
+                                                            <p className="text-base sm:text-lg font-bold text-gray-800">{data.paymentMode || "N/A"}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-3 sm:p-4 bg-gray-50 rounded-lg space-y-2">
+                                                        <p className="text-xs sm:text-sm font-semibold text-gray-700">Expense Details</p>
+                                                        <p className="text-gray-600">
+                                                            <span className="font-medium">Type:</span> {data.expenseType || "N/A"}
+                                                        </p>
+                                                        <p className="text-gray-600">
+                                                            <span className="font-medium">Entry Type:</span> {data.entryType || "expense"}
+                                                        </p>
+                                                        <p className="text-gray-600">
+                                                            <span className="font-medium">Date:</span> {data.date ? new Date(data.date).toLocaleDateString("en-GB") : "N/A"}
+                                                        </p>
+                                                        {data.purpose && (
+                                                            <p className="text-gray-600">
+                                                                <span className="font-medium">Purpose:</span> {data.purpose}
+                                                            </p>
+                                                        )}
+                                                        {data.bankId && (
+                                                            <p className="text-gray-600">
+                                                                <span className="font-medium">Bank ID:</span> {data.bankId?._id || data.bankId}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </>
+                                            );
+                                        })()}
+                                    </div>
+                                )}
+
+                                {/* Payment Dashboard */}
+                                {selectedApproval.type === "payment" && selectedApproval.data && (
+                                    <div className="space-y-4">
+                                        {(() => {
+                                            const data = selectedApproval.data;
+                                            return (
+                                                <>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                                                        <div className="p-3 sm:p-4 bg-teal-50 rounded-lg border-l-4 border-teal-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Amount</p>
+                                                            <p className="text-xl sm:text-2xl font-bold text-gray-800">{formatAmount(data.amount)}</p>
+                                                        </div>
+                                                        <div className="p-3 sm:p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                            <p className="text-xs sm:text-sm text-gray-600">Payment Mode</p>
+                                                            <p className="text-base sm:text-lg font-bold text-gray-800">{data.paymentMode || "N/A"}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-3 sm:p-4 bg-gray-50 rounded-lg space-y-2">
+                                                        <p className="text-xs sm:text-sm font-semibold text-gray-700">Payment Details</p>
+                                                        <p className="text-gray-600">
+                                                            <span className="font-medium">Type:</span> {data.paymentType === 'fd_maturity' ? 'FD Maturity' : data.paymentType === 'saving_withdrawal' ? 'Savings Withdrawal' : data.paymentType || "N/A"}
+                                                        </p>
+                                                        {data.memberName && (
+                                                            <p className="text-gray-600">
+                                                                <span className="font-medium">Member:</span> {data.memberName} ({data.memberCode})
+                                                            </p>
+                                                        )}
+                                                        <p className="text-gray-600">
+                                                            <span className="font-medium">Date:</span> {data.paymentDate ? new Date(data.paymentDate).toLocaleDateString("en-GB") : "N/A"}
+                                                        </p>
+                                                        {data.bankName && (
+                                                            <p className="text-gray-600">
+                                                                <span className="font-medium">Bank:</span> {data.bankName} {data.accountNo ? `(${data.accountNo})` : ''}
+                                                            </p>
+                                                        )}
+                                                        {data.remarks && (
+                                                            <p className="text-gray-600">
+                                                                <span className="font-medium">Remarks:</span> {data.remarks}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </>
+                                            );
+                                        })()}
+                                    </div>
+                                )}
+
                                 {/* Fallback for other types */}
-                                {!["recovery", "loan", "member", "cash_to_bank"].includes(selectedApproval.type) && (
+                                {!["recovery", "loan", "member", "cash_to_bank", "expense", "payment"].includes(selectedApproval.type) && (
                                     <div className="border-t pt-4">
                                         <p className="text-xs sm:text-sm font-semibold text-gray-600 mb-2">Request Data</p>
                                         <pre className="bg-gray-50 p-3 sm:p-4 rounded-lg overflow-x-auto text-xs sm:text-sm max-w-full">

@@ -19,8 +19,17 @@ import { EntityTypes, Operations } from '../database/db';
  * @returns {Promise<Object>} Created expense record
  */
 export const createExpense = async (data) => {
+    // Check if we're in group panel context
+    const isGroupPanel = typeof window !== 'undefined' && window.location?.pathname?.includes('/group');
+    
+    // Add requireApproval flag for group panel requests
+    const payload = {
+        ...data,
+        ...(isGroupPanel ? { requireApproval: true, source: 'group_sync' } : {}),
+    };
+    
     // Save to IndexedDB
-    const record = await expenseRepository.create(data);
+    const record = await expenseRepository.create(payload);
     
     // Return the payload with UUID
     return {

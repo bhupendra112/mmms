@@ -9,15 +9,57 @@
  */
 
 import { paymentRepository, fdRepository, recoveryRepository } from '../database/repository';
-import { EntityTypes, Operations } from '../database/db';
+import db, { EntityTypes, Operations } from '../database/db';
+import { getAuthToken } from '../utils/getAuthToken';
+
+function getApiOrigin() {
+    const raw = String(import.meta.env.VITE_BASE_URL || '');
+    try {
+        return new URL(raw).origin;
+    } catch {
+        const match = raw.match(/^(https?:\/\/[^/]+)/i);
+        return match ? match[1] : (import.meta.env.PROD ? 'https://api.mmms.online' : 'http://localhost:8080');
+    }
+}
 
 /**
  * Create a new payment
  * Saves to IndexedDB immediately and queues for sync
+ * For group panel: sets requireApproval flag and pending status
  */
 export const createPayment = async (data) => {
-    const record = await paymentRepository.create(data);
-    
+    // Check if we're in group panel context
+    const isGroupPanel = typeof window !== 'undefined' && window.location?.pathname?.includes('/group');
+
+    // Prepare payload with group panel flags
+    const payload = {
+        ...data,
+        // Set status to pending for group panel (requires approval)
+        status: isGroupPanel ? 'pending' : (data.status || 'pending'),
+        // Add requireApproval flag for group panel requests
+        ...(isGroupPanel ? { requireApproval: true, source: 'group_sync' } : {}),
+        // Ensure paymentDate is set
+        paymentDate: data.paymentDate || new Date().toISOString(),
+    };
+
+    console.log('[PAYMENT_SERVICE] Creating payment:', {
+        isGroupPanel,
+        hasRequireApproval: !!payload.requireApproval,
+        source: payload.source,
+        status: payload.status,
+        paymentType: payload.paymentType,
+        amount: payload.amount,
+    });
+
+    // Save to IndexedDB (will be synced to backend when online)
+    const record = await paymentRepository.create(payload);
+
+    console.log('[PAYMENT_SERVICE] Payment record created:', {
+        uuid: record.uuid,
+        syncStatus: record.syncStatus,
+        payload: record.payload,
+    });
+
     return {
         success: true,
         data: {
@@ -39,17 +81,17 @@ export const getMaturedFDs = async (params = {}) => {
     const filters = {};
     if (groupId) filters.groupId = groupId;
     if (memberId) filters.memberId = memberId;
-    
+
     const fds = await fdRepository.getMerged(filters);
     const today = new Date();
-    
+
     // Filter matured FDs
     const matured = fds.filter(fd => {
         if (!fd.maturityDate) return false;
         const maturityDate = new Date(fd.maturityDate);
         return maturityDate <= today && !fd.isPaid;
     });
-    
+
     return {
         success: true,
         data: matured,
@@ -58,37 +100,91 @@ export const getMaturedFDs = async (params = {}) => {
 
 /**
  * Get member savings - computed from local IndexedDB
+ * Calculates: openingSaving + recovery savings - approved/completed withdrawals
  */
 export const getMemberSavings = async (memberId) => {
-    // Compute from recoveries and payments
-    const recoveries = await recoveryRepository.getMerged({ memberId });
+    // Get member to access openingSaving
+    const { memberRepository } = await import('../database/repository');
+    const members = await memberRepository.getMerged({});
+    const member = members.find(m => {
+        const mId = m._id || m.id || m.Member_Id;
+        return String(mId) === String(memberId);
+    });
+
+    if (!member) {
+        return {
+            success: true,
+            data: {
+                totalSaving: 0,
+                totalWithdrawn: 0,
+                availableSavings: 0,
+                availableBalance: 0,
+            },
+        };
+    }
+
+    // Get member's group ID
+    const groupId = member.group || member.groupId || member.Group_Name;
+    if (!groupId) {
+        return {
+            success: true,
+            data: {
+                totalSaving: member.openingSaving || 0,
+                totalWithdrawn: 0,
+                availableSavings: member.openingSaving || 0,
+                availableBalance: member.openingSaving || 0,
+            },
+        };
+    }
+
+    // Get all recoveries for the group (recoveries are stored by groupId, not memberId)
+    const recoveries = await recoveryRepository.getMerged({ groupId });
+
+    // Get all payments for the member
     const payments = await paymentRepository.getMerged({ memberId });
-    
-    let totalSaving = 0;
+
+    // Start with opening savings
+    const openingSaving = parseFloat(member.openingSaving || 0);
+    let totalRecoverySavings = 0;
     let totalWithdrawn = 0;
-    
+
+    // Calculate savings from recoveries
     recoveries.forEach(recovery => {
         const memberRecoveries = recovery.memberRecoveries || recovery.recoveries || [];
-        const memberRecovery = memberRecoveries.find(mr => 
-            mr.memberId === memberId || mr.memberCode === memberId
-        );
-        if (memberRecovery) {
-            totalSaving += parseFloat(memberRecovery.saving || 0);
+        const memberRecovery = memberRecoveries.find(mr => {
+            const mrId = mr.memberId || mr.id;
+            const mrCode = mr.memberCode || mr.Member_Id;
+            return String(mrId) === String(memberId) || String(mrCode) === String(memberId);
+        });
+
+        if (memberRecovery && memberRecovery.amounts) {
+            // Only count savings from present members or absent with recovery by other
+            const isPresent = memberRecovery.attendance === 'present' ||
+                (memberRecovery.attendance === 'absent' && memberRecovery.recoveryByOther);
+            if (isPresent) {
+                totalRecoverySavings += parseFloat(memberRecovery.amounts?.saving || 0);
+            }
         }
     });
-    
+
+    // Calculate withdrawals (only count approved/completed payments)
     payments.forEach(payment => {
-        if (payment.paymentType === 'saving_withdrawal') {
+        if (payment.paymentType === 'saving_withdrawal' &&
+            (payment.status === 'approved' || payment.status === 'completed')) {
             totalWithdrawn += parseFloat(payment.amount || 0);
         }
     });
-    
+
+    const totalSaving = openingSaving + totalRecoverySavings;
+    const availableSavings = Math.max(0, totalSaving - totalWithdrawn);
+
     return {
         success: true,
         data: {
             totalSaving,
             totalWithdrawn,
-            availableBalance: totalSaving - totalWithdrawn,
+            availableSavings,
+            availableBalance: availableSavings, // Alias for compatibility
         },
     };
 };
@@ -101,9 +197,9 @@ export const getPayments = async (params = {}) => {
     const filters = {};
     if (params.groupId) filters.groupId = params.groupId;
     if (params.memberId) filters.memberId = params.memberId;
-    
+
     const payments = await paymentRepository.getMerged(filters);
-    
+
     // Filter by date range if provided
     let filtered = payments;
     if (params.fromDate || params.toDate) {
@@ -115,7 +211,7 @@ export const getPayments = async (params = {}) => {
             return true;
         });
     }
-    
+
     return {
         success: true,
         data: filtered,
@@ -123,19 +219,72 @@ export const getPayments = async (params = {}) => {
 };
 
 /**
+ * Refresh payment data from backend for a group.
+ * Updates local transaction records with latest backend state (e.g. status after admin approval)
+ * so the group panel Payment Management shows correct details after approval.
+ * Call when tab becomes visible or when returning to Payment Management while online.
+ */
+export const refreshPaymentsFromBackend = async (groupId) => {
+    if (!groupId || typeof navigator !== 'undefined' && !navigator.onLine) {
+        return { success: true, updated: 0 };
+    }
+    const token = getAuthToken();
+    if (!token) return { success: false, updated: 0, error: 'No auth token' };
+    const baseURL = getApiOrigin();
+    const url = `${baseURL}/api/admin/payment/list?groupId=${encodeURIComponent(String(groupId))}`;
+    let response;
+    try {
+        response = await fetch(url, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+    } catch (err) {
+        return { success: false, updated: 0, error: err.message };
+    }
+    if (!response.ok) return { success: false, updated: 0, error: `HTTP ${response.status}` };
+    const raw = await response.json().catch(() => ({}));
+    const list = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
+    const normId = (v) => (v == null ? '' : (typeof v === 'object' && v?.toString ? v.toString() : String(v)));
+    const groupIdNorm = normId(groupId);
+    const paymentRecords = await db.transactions
+        .where('entityType')
+        .equals(EntityTypes.PAYMENT)
+        .filter((r) => {
+            const g = r.payload?.groupId;
+            const gid = g != null && typeof g === 'object' && (g._id != null || g.id != null) ? (g._id ?? g.id) : g;
+            return normId(gid) === groupIdNorm;
+        })
+        .toArray();
+    let updated = 0;
+    for (const payment of list) {
+        const backendId = normId(payment._id || payment.id);
+        if (!backendId) continue;
+        const record = paymentRecords.find(
+            (r) => normId(r.payload?._id) === backendId || normId(r.payload?.id) === backendId
+        );
+        if (record) {
+            record.payload = { ...record.payload, ...payment, _id: payment._id || payment.id, id: payment.id || payment._id };
+            await db.transactions.put(record);
+            updated++;
+        }
+    }
+    return { success: true, updated };
+};
+
+/**
  * Get payment detail by ID
  */
 export const getPaymentDetail = async (id) => {
     let record = await paymentRepository.getByUuid(id);
-    
+
     if (!record) {
         const masterData = await paymentRepository.getMasterData();
-        record = masterData.find(r => 
-            r.uuid === id || 
-            r.payload?._id === id || 
+        record = masterData.find(r =>
+            r.uuid === id ||
+            r.payload?._id === id ||
             r.payload?.id === id
         );
-        
+
         if (record) {
             return {
                 success: true,
@@ -147,13 +296,13 @@ export const getPaymentDetail = async (id) => {
                 },
             };
         }
-        
+
         return {
             success: false,
             message: `Payment with ID ${id} not found`,
         };
     }
-    
+
     return {
         success: true,
         data: {
@@ -173,15 +322,15 @@ export const getPaymentDetail = async (id) => {
  */
 export const approvePayment = async (id) => {
     let record = await paymentRepository.getByUuid(id);
-    
+
     if (!record) {
         const masterData = await paymentRepository.getMasterData();
-        const masterRecord = masterData.find(r => 
-            r.uuid === id || 
-            r.payload?._id === id || 
+        const masterRecord = masterData.find(r =>
+            r.uuid === id ||
+            r.payload?._id === id ||
             r.payload?.id === id
         );
-        
+
         if (masterRecord) {
             const updated = await paymentRepository.update(masterRecord.uuid, {
                 ...masterRecord.payload,
@@ -196,18 +345,18 @@ export const approvePayment = async (id) => {
                 },
             };
         }
-        
+
         return {
             success: false,
             message: `Payment with ID ${id} not found`,
         };
     }
-    
+
     const updated = await paymentRepository.update(id, {
         ...record.payload,
         status: 'approved',
     });
-    
+
     return {
         success: true,
         data: {
@@ -224,15 +373,15 @@ export const approvePayment = async (id) => {
  */
 export const rejectPayment = async (id, reason) => {
     let record = await paymentRepository.getByUuid(id);
-    
+
     if (!record) {
         const masterData = await paymentRepository.getMasterData();
-        const masterRecord = masterData.find(r => 
-            r.uuid === id || 
-            r.payload?._id === id || 
+        const masterRecord = masterData.find(r =>
+            r.uuid === id ||
+            r.payload?._id === id ||
             r.payload?.id === id
         );
-        
+
         if (masterRecord) {
             const updated = await paymentRepository.update(masterRecord.uuid, {
                 ...masterRecord.payload,
@@ -248,19 +397,19 @@ export const rejectPayment = async (id, reason) => {
                 },
             };
         }
-        
+
         return {
             success: false,
             message: `Payment with ID ${id} not found`,
         };
     }
-    
+
     const updated = await paymentRepository.update(id, {
         ...record.payload,
         status: 'rejected',
         rejectionReason: reason,
     });
-    
+
     return {
         success: true,
         data: {
@@ -277,15 +426,15 @@ export const rejectPayment = async (id, reason) => {
  */
 export const completePayment = async (id) => {
     let record = await paymentRepository.getByUuid(id);
-    
+
     if (!record) {
         const masterData = await paymentRepository.getMasterData();
-        const masterRecord = masterData.find(r => 
-            r.uuid === id || 
-            r.payload?._id === id || 
+        const masterRecord = masterData.find(r =>
+            r.uuid === id ||
+            r.payload?._id === id ||
             r.payload?.id === id
         );
-        
+
         if (masterRecord) {
             const updated = await paymentRepository.update(masterRecord.uuid, {
                 ...masterRecord.payload,
@@ -300,18 +449,18 @@ export const completePayment = async (id) => {
                 },
             };
         }
-        
+
         return {
             success: false,
             message: `Payment with ID ${id} not found`,
         };
     }
-    
+
     const updated = await paymentRepository.update(id, {
         ...record.payload,
         status: 'completed',
     });
-    
+
     return {
         success: true,
         data: {

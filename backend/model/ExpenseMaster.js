@@ -50,6 +50,18 @@ const ExpenseMasterSchema = new mongoose.Schema({
     // Created by
     createdBy: { type: String }, // Admin user ID or "admin"
 
+    // Approval status (for group panel requests)
+    approvalStatus: {
+        type: String,
+        enum: ["pending", "approved", "rejected"],
+        default: "approved" // Admin panel creates are auto-approved
+    },
+    approvedBy: { type: String }, // Admin who approved (if from group panel)
+    approvedAt: { type: Date },
+    rejectedBy: { type: String },
+    rejectedAt: { type: Date },
+    rejectionReason: { type: String },
+
 }, {
     timestamps: true,
 });

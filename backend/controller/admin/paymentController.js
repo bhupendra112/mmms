@@ -122,7 +122,6 @@ export const getMemberSavings = async (req, res) => {
 export const createPayment = async (req, res) => {
     try {
         const payload = req.body || {};
-        console.log(payload);
         // Validate required fields
         if (!payload.memberId || !payload.paymentType || !payload.amount) {
             return apiResponse.error(res, "memberId, paymentType, and amount are required", 400);
@@ -247,17 +246,12 @@ export const createPayment = async (req, res) => {
         // Check if the user is a group (type === "group") or an admin
         // Group payments must go through approval workflow (pending status)
         // Admin payments are immediately approved
+        // Also check requireApproval flag or source='group_sync' from payload (for offline sync)
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'paymentController.js:225', message: 'Auth check - req.admin', data: { reqAdmin: req.admin, reqUser: req.user, type: req.admin?.type }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) }).catch(() => { });
-        // #endregion
-
-        const isAdmin = req.admin?.type !== "group";
+        // Check if payment requires approval (from group panel via offline sync)
+        const requiresApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        const isAdmin = req.admin?.type !== "group" && !requiresApproval;
         const status = isAdmin ? "approved" : "pending";
-
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'paymentController.js:231', message: 'Status determination', data: { isAdmin: isAdmin, status: status, type: req.admin?.type }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) }).catch(() => { });
-        // #endregion
 
         // Parse payment date
         let paymentDate = payload.paymentDate ? new Date(payload.paymentDate) : new Date();
@@ -272,7 +266,7 @@ export const createPayment = async (req, res) => {
         }
 
         // Create payment
-        const payment = await PaymentMaster.create({
+        const paymentData = {
             memberId: payload.memberId,
             memberCode: member.Member_Id,
             memberName: member.Member_Nm,
@@ -290,11 +284,12 @@ export const createPayment = async (req, res) => {
             paymentDate: paymentDate,
             createdBy: req.user?.id || "admin",
             remarks: payload.remarks || null,
-        });
+        };
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'paymentController.js:260', message: 'Payment created', data: { paymentId: payment._id.toString(), status: payment.status, isAdmin: isAdmin, type: req.admin?.type }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) }).catch(() => { });
-        // #endregion
+        const payment = await PaymentMaster.create(paymentData);
+
+        // Verify payment was saved to database
+        const verifyPayment = await PaymentMaster.findById(payment._id);
 
         // Update bank current_balance when bank payment is created (for admin, payment is approved immediately)
         if (paymentMode === "Bank" && bank && isAdmin) {
@@ -542,13 +537,126 @@ export const approvePayment = async (req, res) => {
             return apiResponse.error(res, `Payment is already ${payment.status}`, 400);
         }
 
+        // Get group as Mongoose document (not lean) to use instance methods
+        const group = await GroupMaster.findById(payment.groupId);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        const paymentAmount = parseFloat(payment.amount || 0);
+        const paymentMode = payment.paymentMode || "Bank";
+
+        // Validate balance before approving
+        if (paymentMode === "Bank" && payment.bankId) {
+            const bank = await BankMaster.findById(payment.bankId);
+            if (!bank) {
+                return apiResponse.error(res, "Bank not found", 404);
+            }
+            const balanceInfo = await BankMaster.calculateAvailableBalance(payment.bankId);
+            const availableBalance = balanceInfo.availableBalance || 0;
+            if (availableBalance < paymentAmount) {
+                return apiResponse.error(res, `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${paymentAmount.toFixed(2)}`, 400);
+            }
+        } else if (paymentMode === "Cash") {
+            await group.recalculateCashBalance();
+            const cashBalance = group.current_cash_balance || 0;
+            if (cashBalance < paymentAmount) {
+                return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${paymentAmount.toFixed(2)}`, 400);
+            }
+        }
+
+        // Update payment status
         payment.status = "approved";
         payment.approvedBy = req.user?.id || "admin";
         payment.approvedAt = new Date();
         await payment.save();
 
+        // Update bank balance when bank payment is approved
+        if (paymentMode === "Bank" && payment.bankId) {
+            const bank = await BankMaster.findById(payment.bankId);
+            if (bank) {
+                const balanceBefore = bank.current_balance || 0;
+                console.log("[PAYMENT_APPROVE] Bank balance before:", balanceBefore, "Amount to deduct:", paymentAmount);
+                bank.current_balance = Math.max(0, balanceBefore - paymentAmount);
+                const balanceAfter = bank.current_balance;
+                console.log("[PAYMENT_APPROVE] Bank balance after:", balanceAfter);
+                await bank.save();
+
+                // Create bank transaction record
+                const { createBankTransactionRecord } = await import("../../utility/bankTransactionHelper.js");
+                await createBankTransactionRecord({
+                    bankId: payment.bankId,
+                    groupId: payment.groupId,
+                    transactionType: "payment",
+                    amount: paymentAmount,
+                    date: payment.paymentDate,
+                    description: `Payment - ${payment.paymentType}: ${payment.memberName} (${payment.memberCode})`,
+                    paymentId: payment._id,
+                    memberId: payment.memberId,
+                    memberCode: payment.memberCode,
+                    memberName: payment.memberName,
+                    createdBy: req.user?.id || "admin",
+                    status: "verified", // Approved payments are verified
+                });
+                console.log("[PAYMENT_APPROVE] Bank transaction record created");
+
+                // Link bank to group so listBanksByGroup returns it in group panel
+                const groupIdStr = payment.groupId?.toString?.() || payment.groupId;
+                const bankGroupId = bank.group_id?.toString?.();
+                if (groupIdStr && (!bankGroupId || bankGroupId !== groupIdStr)) {
+                    await BankMaster.findByIdAndUpdate(payment.bankId, { group_id: payment.groupId });
+                }
+                const groupDoc = await GroupMaster.findById(payment.groupId);
+                if (groupDoc) {
+                    const bankIds = groupDoc.bankmasters?.map(b => b.toString()) || [];
+                    const bankIdStr = payment.bankId?.toString?.();
+                    if (bankIdStr && !bankIds.includes(bankIdStr)) {
+                        await GroupMaster.findByIdAndUpdate(payment.groupId, {
+                            $addToSet: { bankmasters: payment.bankId },
+                            $set: { bankmaster: payment.bankId },
+                        });
+                        console.log("[PAYMENT_APPROVE] Bank linked to group:", payment.bankId, "group:", payment.groupId);
+                    }
+                }
+            }
+        }
+
+        // Update cash balance when cash payment is approved
+        if (paymentMode === "Cash") {
+            await group.recalculateCashBalance();
+            const cashBalanceBefore = group.current_cash_balance || 0;
+            console.log("[PAYMENT_APPROVE] Cash balance before:", cashBalanceBefore, "Amount to deduct:", paymentAmount);
+            group.current_cash_balance = Math.max(0, cashBalanceBefore - paymentAmount);
+            const cashBalanceAfter = group.current_cash_balance;
+            console.log("[PAYMENT_APPROVE] Cash balance after:", cashBalanceAfter);
+            await group.save();
+
+            // Create cash transaction record
+            await createCashTransactionRecord({
+                groupId: payment.groupId,
+                transactionType: "payment",
+                amount: paymentAmount,
+                date: payment.paymentDate,
+                description: `Payment - ${payment.paymentType}: ${payment.memberName} (${payment.memberCode})`,
+                paymentId: payment._id,
+                memberId: payment.memberId,
+                memberCode: payment.memberCode,
+                memberName: payment.memberName,
+                createdBy: req.user?.id || "admin",
+            });
+            console.log("[PAYMENT_APPROVE] Cash transaction record created");
+        }
+
+        // Mark FD as paid/closed if payment type is fd_maturity
+        if (payment.paymentType === "fd_maturity" && payment.fdId) {
+            const updatedFD = await FDMaster.findByIdAndUpdate(payment.fdId, {
+                status: "closed",
+                paymentId: payment._id,
+            }, { new: true });
+            console.log("[PAYMENT_APPROVE] FD marked as closed:", payment.fdId, "Status:", updatedFD?.status);
+        }
+
         // Post ledger entry when payment is approved
-        const group = await GroupMaster.findById(payment.groupId).lean();
         if (group) {
             if (payment.paymentType === "saving_withdrawal") {
                 const headInfo = await findOrCreateHead(payment.groupId, "Saving Return", "liability");

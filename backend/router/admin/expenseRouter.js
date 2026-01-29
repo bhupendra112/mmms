@@ -1,5 +1,5 @@
 import express from "express";
-import { createExpense, listExpenses, getExpenseDetail, updateExpense, deleteExpense } from "../../controller/admin/expenseController.js";
+import { createExpense, listExpenses, getExpenseDetail, updateExpense, deleteExpense, approveExpense, rejectExpense } from "../../controller/admin/expenseController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const Router = express.Router();
@@ -18,6 +18,12 @@ Router.put("/:id", authAdmin, updateExpense);
 
 // Delete expense
 Router.delete("/:id", authAdmin, deleteExpense);
+
+// Approve Expense (from group panel)
+Router.put("/approve/:id", authAdmin, approveExpense);
+
+// Reject Expense (from group panel)
+Router.put("/reject/:id", authAdmin, rejectExpense);
 
 export default Router;
 

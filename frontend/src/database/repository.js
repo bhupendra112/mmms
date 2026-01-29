@@ -40,7 +40,7 @@ export class BaseRepository {
         await db.transactions.add(record);
 
         // Add to sync queue
-        await db.sync_queue.add({
+        const queueItem = {
             uuid: record.uuid,
             entityType: this.entityType,
             operation: Operations.CREATE,
@@ -48,7 +48,8 @@ export class BaseRepository {
             createdAt: record.createdAt,
             retryCount: 0,
             syncStatus: SyncStatuses.PENDING,
-        });
+        };
+        await db.sync_queue.add(queueItem);
 
         return record;
     }
@@ -154,7 +155,7 @@ export class BaseRepository {
      */
     async getAll(filters = {}) {
         let query = db.transactions.where('entityType').equals(this.entityType);
-        
+
         // Apply filters
         if (filters.groupId) {
             query = query.filter(record => record.payload?.groupId === filters.groupId);
@@ -185,9 +186,9 @@ export class BaseRepository {
      */
     async getPaginated(params = {}) {
         const { page = 1, pageSize = 50, filters = {} } = params;
-        
+
         let query = db.transactions.where('entityType').equals(this.entityType);
-        
+
         // Apply filters
         if (filters.groupId) {
             query = query.filter(record => record.payload?.groupId === filters.groupId);
@@ -262,7 +263,7 @@ export class BaseRepository {
      */
     async getMasterData(filters = {}) {
         const masterStoreName = `master_${this.storeName.replace('master_', '')}`;
-        
+
         if (!db[masterStoreName]) {
             console.warn(`Master store ${masterStoreName} does not exist`);
             return [];

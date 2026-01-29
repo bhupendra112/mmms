@@ -433,6 +433,8 @@ export default function DemandRecovery() {
 
     const savingDue = parseFloat(summary?.saving?.total ?? 0) || 0;
     const loanDue = parseFloat(summary?.loan?.total ?? 0) || 0;
+    const loanCurr = parseFloat(summary?.loan?.curr ?? 0) || 0;
+    const loanUnpaid = parseFloat(summary?.loan?.unpaid ?? 0) || 0;
     const interestDue = parseFloat(summary?.interest?.total ?? 0) || 0;
     const yogdanDue = parseFloat(summary?.yogdan?.total ?? summary?.yogdan?.unpaid ?? 0) || 0;
 
@@ -457,7 +459,8 @@ export default function DemandRecovery() {
 
     const chargesDue = summary?.charges?.chargesDue || {};
 
-    // Priority: Yogdan -> MemFeesGroup -> MemFeesSHG -> MemFeesSamiti -> Charges -> Interest -> Saving -> Loan -> FD -> Penalty
+    // Priority: Yogdan -> MemFeesGroup -> MemFeesSHG -> MemFeesSamiti -> Charges -> Interest -> Loan -> Saving -> FD -> Penalty
+    // Loan comes before Saving to ensure loan repayment is prioritized
     if (yogdanDue > 0 && remaining > 0) {
       const v = Math.min(yogdanDue, remaining);
       calculated.yogdan = v.toFixed(2);
@@ -501,21 +504,56 @@ export default function DemandRecovery() {
       remaining -= v;
     }
 
+    // Calculate loan BEFORE saving to prioritize loan repayment
+    const currentLoanTotals = memberLoanTotals[currentMember.id];
+    const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
+    // Only consider loan fully paid if we have loan totals AND remaining amount is 0 or fully recovered
+    const isLoanFullyPaid = currentLoanTotals
+      ? (remainingLoanAmount <= 0 ||
+        currentLoanTotals.totalLoanRecovered >= currentLoanTotals.totalLoanAmount)
+      : false;
+
+    // Calculate effective loan due with multiple fallbacks:
+    // 1. Use remainingLoanAmount from memberLoanTotals (most accurate - actual remaining loan)
+    // 2. Fallback to loanDue from summary (total demand)
+    // 3. Fallback to loanUnpaid from summary (unpaid demand)
+    // 4. Fallback to loanCurr from summary (current demand)
+    // This ensures loan is calculated even if one source is 0 or not loaded yet
+    let effectiveLoanDue = 0;
+
+    // Get the maximum loan amount from summary (use the highest available)
+    const maxLoanFromSummary = Math.max(loanDue, loanUnpaid, loanCurr);
+
+    if (remainingLoanAmount > 0) {
+      // If we have remaining loan amount, use it (capped by maxLoanFromSummary if it's smaller and > 0)
+      // This ensures we don't exceed the actual remaining loan, but use summary data if it's more restrictive
+      effectiveLoanDue = maxLoanFromSummary > 0
+        ? Math.min(maxLoanFromSummary, remainingLoanAmount)
+        : remainingLoanAmount;
+    } else if (maxLoanFromSummary > 0) {
+      // Fallback to summary data if no remainingLoanAmount available or it's 0
+      effectiveLoanDue = maxLoanFromSummary;
+    }
+
+    // Calculate loan if we have effective loan due and remaining amount
+    // Only skip if loan is explicitly marked as fully paid from loan totals AND we don't have summary data
+    // If we have loan due from summary, always allow calculation (summary is more up-to-date)
+    const hasLoanFromSummary = loanDue > 0 || loanUnpaid > 0 || loanCurr > 0;
+
+    // Always calculate if we have effective loan due and remaining, unless:
+    // - Loan is fully paid from loan totals AND we don't have summary data suggesting otherwise
+    if (effectiveLoanDue > 0 && remaining > 0) {
+      if (!isLoanFullyPaid || hasLoanFromSummary) {
+        const v = Math.min(effectiveLoanDue, remaining);
+        calculated.loan = v.toFixed(2);
+        remaining -= v;
+      }
+    }
+
+    // Calculate saving AFTER loan to ensure loan gets priority
     if (savingDue > 0 && remaining > 0) {
       const v = Math.min(savingDue, remaining);
       calculated.saving = v.toFixed(2);
-      remaining -= v;
-    }
-
-    const currentLoanTotals = memberLoanTotals[currentMember.id];
-    const isLoanFullyPaid = currentLoanTotals
-      ? currentLoanTotals.remainingLoanAmount <= 0 ||
-      currentLoanTotals.totalLoanRecovered >= currentLoanTotals.totalLoanAmount
-      : false;
-
-    if (loanDue > 0 && remaining > 0 && !isLoanFullyPaid) {
-      const v = Math.min(loanDue, remaining);
-      calculated.loan = v.toFixed(2);
       remaining -= v;
     }
 
@@ -1127,7 +1165,7 @@ export default function DemandRecovery() {
                     : "Loading group information..."}
               </p>
             </div>
-            
+
             {/* Get Fresh Data Button */}
             {isOnline ? (
               <button
@@ -1153,11 +1191,10 @@ export default function DemandRecovery() {
         {/* Refresh Message */}
         {refreshMessage && (
           <div
-            className={`mb-4 px-4 py-3 rounded-lg text-sm ${
-              refreshMessage.type === "success"
-                ? "bg-green-50 text-green-800 border border-green-200"
-                : "bg-red-50 text-red-800 border border-red-200"
-            }`}
+            className={`mb-4 px-4 py-3 rounded-lg text-sm ${refreshMessage.type === "success"
+              ? "bg-green-50 text-green-800 border border-green-200"
+              : "bg-red-50 text-red-800 border border-red-200"
+              }`}
           >
             {refreshMessage.text}
           </div>

@@ -53,43 +53,45 @@ export default function AmountBreakupForm({
               step="1"
             />
           )}
-          {(parseFloat(amountBreakup.loan) || 0) > 0 && (
-            <div className="relative">
-              <Input
-                label="Loan"
-                name="loan"
-                type="number"
-                value={amountBreakup.loan}
-                handleChange={(e) => onAmountChange('loan', e.target.value)}
-                placeholder="Enter loan payment"
-                step="1"
-                max={currentMemberSummary?.loan?.total || undefined}
-              />
-              {(() => {
-                const currentLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
-                const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
-                const hasRemaining = remainingLoanAmount > 0;
+          {(() => {
+            const hasLoanAmount = (parseFloat(amountBreakup.loan) || 0) > 0;
+            const hasLoanDue = (currentMemberSummary?.loan?.total ?? 0) > 0 ||
+              (currentMemberSummary?.loan?.unpaid ?? 0) > 0 ||
+              (currentMemberSummary?.loan?.curr ?? 0) > 0;
+            const currentLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
+            const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
+            const hasRemainingLoan = remainingLoanAmount > 0;
+            const shouldShowLoan = hasLoanAmount || hasLoanDue || hasRemainingLoan;
 
-                if (!hasRemaining) return null;
-
-                const remainingLoanValue = Math.round(remainingLoanAmount);
-
-                return (
+            return shouldShowLoan && (
+              <div className="relative">
+                <Input
+                  label="Loan"
+                  name="loan"
+                  type="number"
+                  value={amountBreakup.loan}
+                  handleChange={(e) => onAmountChange('loan', e.target.value)}
+                  placeholder="Enter loan payment"
+                  step="1"
+                  max={remainingLoanAmount > 0 ? remainingLoanAmount : (currentMemberSummary?.loan?.total || undefined)}
+                />
+                {hasRemainingLoan && (
                   <button
                     type="button"
                     onClick={() => {
+                      const remainingLoanValue = Math.round(remainingLoanAmount);
                       onAmountChange('loan', remainingLoanValue.toString());
                       onSetAutoCalculated(false);
                     }}
                     className="absolute right-2 top-9 sm:top-10 px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors"
-                    title={`Fill full remaining loan amount: ₹${remainingLoanValue.toLocaleString()} (same as shown in Loan Details)`}
+                    title={`Fill full remaining loan amount: ₹${Math.round(remainingLoanAmount).toLocaleString()} (same as shown in Loan Details)`}
                   >
                     Fill Remaining
                   </button>
-                );
-              })()}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
           {(parseFloat(amountBreakup.interest) || 0) > 0 && (
             <Input
               label="Interest on Loan"

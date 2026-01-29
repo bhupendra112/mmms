@@ -17,6 +17,10 @@ export const registerRecovery = async (req, res) => {
         const payload = req.body || {};
         
         // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:15', message: 'registerRecovery called - payload received', data: { hasGroupId: !!payload.groupId, hasRecoveries: !!payload.recoveries, recoveriesCount: payload.recoveries?.length || 0, requireApproval: payload.requireApproval, source: payload.source, date: payload.date, payloadKeys: Object.keys(payload) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => {});
+        // #endregion
+        
+        // #region agent log
         console.log('[RECOVERY_DEBUG] registerRecovery called', {
             hasGroupId: !!payload.groupId,
             hasRecoveries: !!payload.recoveries,
@@ -111,11 +115,15 @@ export const registerRecovery = async (req, res) => {
             }
         }
 
+        // Check if approval is required (from group panel) - do this early to skip validations
+        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        
         // Validate meeting day - recovery can only be done on scheduled meeting days
+        // Skip this validation for group panel recoveries that require approval - let admin decide during approval
         const meetingDay1 = groupDoc.meeting_date_1_day;
         const meetingDay2 = groupDoc.meeting_date_2_day;
 
-        if (meetingDay1 != null || meetingDay2 != null) {
+        if ((meetingDay1 != null || meetingDay2 != null) && !requireApproval) {
             const dayOfMonth = parsedDate.getDate();
             const isMeetingDay = dayOfMonth === meetingDay1 || dayOfMonth === meetingDay2;
 
@@ -197,9 +205,12 @@ export const registerRecovery = async (req, res) => {
             }
         }
 
-        // Check if approval is required (from group panel)
-        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        // Approval status determined earlier (requireApproval already checked above)
         const approvalStatus = requireApproval ? 'pending' : 'approved';
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:201', message: 'Approval check in backend', data: { requireApproval, hasRequireApproval: payload.requireApproval === true, source: payload.source, sourceMatches: payload.source === 'group_sync', approvalStatus, groupId: groupDoc._id.toString(), recoveriesCount: payload.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => {});
+        // #endregion
         
         // #region agent log
         console.log('[RECOVERY_DEBUG] Approval check', {
@@ -237,6 +248,10 @@ export const registerRecovery = async (req, res) => {
         // #endregion
         
         const recovery = await RecoveryMaster.create(recoveryData);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:239', message: 'Recovery created in database', data: { recoveryId: recovery._id.toString(), approvalStatus: recovery.approvalStatus, groupId: recovery.groupId.toString(), date: recovery.date, recoveriesCount: recovery.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => {});
+        // #endregion
         
         // #region agent log
         console.log('[RECOVERY_DEBUG] Recovery created successfully', {

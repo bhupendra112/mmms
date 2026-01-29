@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import { X, DollarSign, Calendar, Wallet, CreditCard } from "lucide-react";
 import { Input, Select } from "../forms/FormComponents";
 import { createFD } from "../../services/fdService";
-import { getGroups, getGroupBanks, getGroupDetail } from "../../services/groupService";
+import { registerFD } from "../../services/fdServiceOffline";
+import { getGroups, getGroupBanks, getGroupDetail } from "../../services/groupServiceOffline";
 import { getCashAmount } from "../../services/cashAmount";
 import { useGroup } from "../../contexts/GroupContext";
-import { createApprovalRequest } from "../../services/approvalDB";
 
 export default function CreateFD({ member, onClose, onSuccess }) {
     const { currentGroup, isGroupPanel } = useGroup();
@@ -38,7 +38,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                             (g) => g.group_name === member.Group_Name
                         );
                         if (memberGroup) {
-                            setSelectedGroupId(memberGroup._id);
+                            setSelectedGroupId(memberGroup._id || memberGroup._uuid || memberGroup.id);
                             setSelectedClusterKey(`${memberGroup.cluster_name || ""}|${memberGroup.cluster_code || ""}`);
                         }
                     }
@@ -48,7 +48,7 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                 });
         } else {
             // Member has group info
-            const groupId = member.group._id || member.group;
+            const groupId = member.group._id || member.group._uuid || member.group.id || member.group;
             setSelectedGroupId(groupId);
             if (member.group?.cluster_name || member.group?.cluster_code) {
                 setSelectedClusterKey(`${member.group.cluster_name || ""}|${member.group.cluster_code || ""}`);
@@ -80,42 +80,45 @@ export default function CreateFD({ member, onClose, onSuccess }) {
     // Load FD rate and banks when group is selected
     useEffect(() => {
         if (selectedGroupId) {
-            // When online, fetch fresh group data from backend to get current fd_rate
-            if (navigator.onLine) {
-                getGroupDetail(selectedGroupId)
-                    .then((res) => {
-                        if (res?.success && res?.data) {
-                            const freshGroup = res.data;
-                            setFdRate(freshGroup.fd_rate || 0);
-                        } else {
-                            // Fallback to cached data if API fails
-                            const selectedGroup = groups.find((g) => g._id === selectedGroupId);
-                            if (selectedGroup) {
-                                setFdRate(selectedGroup.fd_rate || 0);
-                            } else if (member?.group) {
-                                setFdRate(member.group.fd_rate || 0);
-                            }
-                        }
-                    })
-                    .catch((e) => {
-                        console.error("Failed to fetch fresh group data:", e);
-                        // Fallback to cached data
-                        const selectedGroup = groups.find((g) => g._id === selectedGroupId);
+            // Use offline service which reads from pre-synced master_groups store
+            // This works both online and offline, and includes fd_rate from pre-sync
+            getGroupDetail(selectedGroupId)
+                .then((res) => {
+                    if (res?.success && res?.data) {
+                        const group = res.data;
+                        setFdRate(group.fd_rate || 0);
+                    } else {
+                        // Fallback to groups list or member group
+                        const selectedGroup = groups.find((g) => 
+                            g._id === selectedGroupId || 
+                            g._uuid === selectedGroupId || 
+                            g.id === selectedGroupId
+                        );
                         if (selectedGroup) {
                             setFdRate(selectedGroup.fd_rate || 0);
                         } else if (member?.group) {
                             setFdRate(member.group.fd_rate || 0);
+                        } else {
+                            setFdRate(0);
                         }
-                    });
-            } else {
-                // Offline: use cached data
-                const selectedGroup = groups.find((g) => g._id === selectedGroupId);
-                if (selectedGroup) {
-                    setFdRate(selectedGroup.fd_rate || 0);
-                } else if (member?.group) {
-                    setFdRate(member.group.fd_rate || 0);
-                }
-            }
+                    }
+                })
+                .catch((e) => {
+                    console.error("Failed to fetch group data:", e);
+                    // Fallback to groups list or member group
+                    const selectedGroup = groups.find((g) => 
+                        g._id === selectedGroupId || 
+                        g._uuid === selectedGroupId || 
+                        g.id === selectedGroupId
+                    );
+                    if (selectedGroup) {
+                        setFdRate(selectedGroup.fd_rate || 0);
+                    } else if (member?.group) {
+                        setFdRate(member.group.fd_rate || 0);
+                    } else {
+                        setFdRate(0);
+                    }
+                });
 
             // Load banks for the selected group
             getGroupBanks(selectedGroupId)
@@ -231,14 +234,21 @@ export default function CreateFD({ member, onClose, onSuccess }) {
                 onlineRef: paymentMode.online ? onlineRef : null,
                 bankId: paymentMode.online ? selectedBankId : null,
                 date: new Date().toLocaleDateString("en-GB"),
+                // Include fd_rate_snapshot so it's preserved when syncing offline
+                fd_rate_snapshot: fdRate !== null ? parseFloat(fdRate) : null,
             };
 
-            // Group panel: create approval request (will sync to backend when online)
+            // Group panel: use offline service (saves to IndexedDB and queues for sync)
+            // This will sync to backend automatically when online, with approvalStatus: 'pending'
             if (isGroupPanel && currentGroup) {
-                await createApprovalRequest("fd", fdData, currentGroup.id, currentGroup.name);
-                alert("FD request submitted for approval!");
-                if (onSuccess) onSuccess(fdData);
-                onClose();
+                const response = await registerFD(fdData);
+                if (response?.success) {
+                    alert("FD request submitted for approval! It will sync to backend when online.");
+                    if (onSuccess) onSuccess(response.data);
+                    onClose();
+                } else {
+                    alert(response?.message || "Failed to create FD request");
+                }
             } else {
                 // Admin: directly create FD
                 const response = await createFD(fdData);

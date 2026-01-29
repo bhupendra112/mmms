@@ -3,19 +3,23 @@ import { DollarSign, Calendar, Banknote, Search, Filter, CheckCircle, XCircle, C
 import { Input, Select, FormSection } from "../../components/forms/FormComponents";
 import { useGroup } from "../../contexts/GroupContext";
 import { useOffline } from "../../contexts/OfflineContext";
-import { 
-    getMaturedFDs, 
-    getMemberSavings, 
-    createPayment, 
-    getPayments
+import { CloudOff, Cloud } from "lucide-react";
+import syncManager from "../../database/syncEngine";
+import {
+    getMaturedFDs,
+    getMemberSavings,
+    createPayment,
+    getPayments,
+    refreshPaymentsFromBackend,
 } from "../../services/paymentServiceOffline";
-import { getGroupBanks } from "../../services/groupServiceOffline";
+import { getGroupBanks as getGroupBanksOffline } from "../../services/groupServiceOffline";
+import { getGroupBanks as getGroupBanksOnline } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberServiceOffline";
 import { getCashAmount } from "../../services/cashAmount";
 
 export default function PaymentManagement() {
     const { currentGroup, isGroupLoading } = useGroup();
-    const { lastRefreshedAt } = useOffline();
+    const { isOnline, lastRefreshedAt } = useOffline();
     const [activeTab, setActiveTab] = useState("fd_maturity"); // "fd_maturity", "saving_withdrawal", "history"
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
@@ -59,10 +63,40 @@ export default function PaymentManagement() {
             } else if (activeTab === "saving_withdrawal") {
                 loadMembersWithSavings();
             } else if (activeTab === "history") {
-                loadPaymentHistory();
+                // Refresh payment data from backend when opening history tab (e.g. after admin approval)
+                if (navigator.onLine) {
+                    refreshPaymentsFromBackend(currentGroup.id).finally(() => loadPaymentHistory());
+                } else {
+                    loadPaymentHistory();
+                }
             }
         }
     }, [currentGroup, isGroupLoading, activeTab, lastRefreshedAt]);
+
+    // When opening payment module while online, sync any pending payments to backend (e.g. created while offline)
+    useEffect(() => {
+        if (currentGroup?.id && navigator.onLine) {
+            syncManager.syncNow().catch((err) => console.error('[PaymentManagement] syncNow on mount:', err));
+        }
+    }, [currentGroup?.id]);
+
+    // Refetch banks, cash, and payment list when user returns to this tab (e.g. after approving in admin)
+    // so group panel shows updated payment status/details instead of stale data
+    useEffect(() => {
+        const onVisibilityChange = () => {
+            if (document.visibilityState === "visible" && currentGroup?.id && navigator.onLine) {
+                loadBanks(currentGroup.id);
+                loadCashBalance(currentGroup.id);
+                refreshPaymentsFromBackend(currentGroup.id).then((result) => {
+                    if (result?.success && activeTab === "history") {
+                        loadPaymentHistory();
+                    }
+                }).catch((err) => console.error("[PaymentManagement] refreshPaymentsFromBackend:", err));
+            }
+        };
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    }, [currentGroup?.id, activeTab]);
 
     const loadCashBalance = async (groupId) => {
         if (!groupId) return;
@@ -80,9 +114,63 @@ export default function PaymentManagement() {
         if (!groupId) return;
         setBanksLoading(true);
         try {
-            const res = await getGroupBanks(groupId);
-            const list = Array.isArray(res?.data) ? res.data : [];
-            setBanks(list.map(b => {
+            // Prefer live backend data when online so balances reflect latest approvals
+            const useOnline = typeof navigator !== "undefined" && navigator.onLine;
+
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    location: 'PaymentManagement.jsx:loadBanks - START',
+                    message: 'Loading banks',
+                    data: { groupId, useOnline, isOnline: navigator.onLine },
+                    timestamp: Date.now(),
+                    sessionId: 'debug-session',
+                    runId: 'run1',
+                    hypothesisId: 'H8',
+                }),
+            }).catch(() => { });
+            // #endregion
+
+            const res = useOnline
+                ? await getGroupBanksOnline(groupId)
+                : await getGroupBanksOffline(groupId);
+
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    location: 'PaymentManagement.jsx:loadBanks - API RESPONSE',
+                    message: 'Banks API response received',
+                    data: {
+                        groupId,
+                        source: useOnline ? 'backend_api' : 'offline_master_banks',
+                        hasResponse: !!res,
+                        success: res?.success,
+                        hasData: !!res?.data,
+                        dataIsArray: Array.isArray(res?.data),
+                        rawDataLength: res?.data?.length,
+                        rawDataKeys: res?.data ? Object.keys(res?.data) : [],
+                        nestedDataIsArray: Array.isArray(res?.data?.data),
+                        nestedDataLength: res?.data?.data?.length,
+                    },
+                    timestamp: Date.now(),
+                    sessionId: 'debug-session',
+                    runId: 'run1',
+                    hypothesisId: 'H8',
+                }),
+            }).catch(() => { });
+            // #endregion
+
+            // Handle response structure:
+            // - Online: getGroupBanksOnline returns axios res.data = { success: true, message: "...", data: banks }
+            // - Offline: getGroupBanksOffline returns { success: true, data: banks }
+            const list = useOnline
+                ? (res?.success && Array.isArray(res?.data) ? res.data : (Array.isArray(res?.data?.data) ? res.data.data : []))
+                : (res?.success && Array.isArray(res?.data) ? res.data : []);
+            const mapped = list.map(b => {
                 const availableBalance = b.available_balance !== undefined
                     ? b.available_balance
                     : (b.current_balance !== undefined
@@ -97,9 +185,57 @@ export default function PaymentManagement() {
                     current_balance: b.current_balance,
                     opening_balance: b.opening_balance,
                 };
-            }));
+            });
+
+            setBanks(mapped);
+
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    location: 'PaymentManagement.jsx:loadBanks - FINAL',
+                    message: 'Group banks loaded for payment module',
+                    data: {
+                        groupId,
+                        source: useOnline ? 'backend_api' : 'offline_master_banks',
+                        bankCount: mapped.length,
+                        sampleBank: mapped[0] ? {
+                            id: mapped[0].id,
+                            name: mapped[0].name,
+                            available_balance: mapped[0].available_balance,
+                            current_balance: mapped[0].current_balance,
+                        } : null,
+                    },
+                    timestamp: Date.now(),
+                    sessionId: 'debug-session',
+                    runId: 'run1',
+                    hypothesisId: 'H8',
+                }),
+            }).catch(() => { });
+            // #endregion
         } catch (err) {
             console.error("Error loading banks:", err);
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    location: 'PaymentManagement.jsx:loadBanks - ERROR',
+                    message: 'Error loading banks',
+                    data: {
+                        groupId,
+                        errorMessage: err?.message,
+                        errorStack: err?.stack,
+                        errorResponse: err?.response?.data,
+                    },
+                    timestamp: Date.now(),
+                    sessionId: 'debug-session',
+                    runId: 'run1',
+                    hypothesisId: 'H8',
+                }),
+            }).catch(() => { });
+            // #endregion
             setBanks([]);
         } finally {
             setBanksLoading(false);
@@ -140,32 +276,57 @@ export default function PaymentManagement() {
         try {
             const res = await getMembersByGroup(currentGroup.id);
             const members = Array.isArray(res?.data) ? res.data : [];
-            
+
+            if (members.length === 0) {
+                console.warn("No members found for group:", currentGroup.id);
+                setMembersWithSavings([]);
+                setLoading(false);
+                return;
+            }
+
             // Get savings for each member
             const membersWithSavingsData = await Promise.all(
                 members.map(async (member) => {
                     try {
-                        const savingsRes = await getMemberSavings(member._id);
-                        if (savingsRes?.success && savingsRes.data?.availableSavings > 0) {
-                            return {
-                                id: member._id,
-                                code: member.Member_Id,
-                                name: member.Member_Nm,
-                                availableSavings: savingsRes.data.availableSavings,
-                            };
+                        const memberId = member._id || member.id;
+                        if (!memberId) {
+                            console.warn("Member missing ID:", member);
+                            return null;
+                        }
+
+                        const savingsRes = await getMemberSavings(memberId);
+
+                        if (savingsRes?.success) {
+                            // Use availableSavings or availableBalance (for backward compatibility)
+                            const availableSavings = savingsRes.data?.availableSavings ??
+                                savingsRes.data?.availableBalance ?? 0;
+
+                            // Include members with savings > 0
+                            if (availableSavings > 0) {
+                                return {
+                                    id: memberId,
+                                    code: member.Member_Id || member.memberCode || member.code,
+                                    name: member.Member_Nm || member.memberName || member.name,
+                                    availableSavings: availableSavings,
+                                };
+                            }
+                        } else {
+                            console.warn(`Failed to get savings for member ${memberId}:`, savingsRes);
                         }
                         return null;
                     } catch (err) {
-                        console.error(`Error loading savings for member ${member._id}:`, err);
+                        console.error(`Error loading savings for member ${member._id || member.id}:`, err);
                         return null;
                     }
                 })
             );
 
-            setMembersWithSavings(membersWithSavingsData.filter(m => m !== null));
+            const validMembers = membersWithSavingsData.filter(m => m !== null);
+            console.log(`Found ${validMembers.length} members with savings out of ${members.length} total members`);
+            setMembersWithSavings(validMembers);
         } catch (err) {
             console.error("Error loading members with savings:", err);
-            setError("Failed to load members with savings");
+            setError("Failed to load members with savings: " + (err?.message || "Unknown error"));
         } finally {
             setLoading(false);
         }
@@ -235,20 +396,59 @@ export default function PaymentManagement() {
 
         setLoading(true);
         try {
+            // Get selected bank details if Bank mode
+            const selectedBank = fdPaymentMode === "Bank" && fdBankId
+                ? banks.find(b => (b.id || b._id) === fdBankId)
+                : null;
+
             const paymentData = {
                 memberId: selectedFD.memberId,
+                memberCode: selectedFD.memberCode,
+                memberName: selectedFD.memberName,
                 groupId: currentGroup.id,
+                groupName: currentGroup.name,
+                groupCode: currentGroup.code,
                 paymentType: "fd_maturity",
                 amount: parseFloat(fdPaymentAmount),
                 paymentMode: fdPaymentMode,
                 bankId: fdPaymentMode === "Bank" ? fdBankId : null,
+                bankName: selectedBank?.name || null,
+                accountNo: selectedBank?.accountNo || null,
                 fdId: selectedFD.id,
                 remarks: fdRemarks,
+                paymentDate: new Date().toISOString(),
             };
 
+            console.log('[PAYMENT] Creating payment with data:', paymentData);
             const res = await createPayment(paymentData);
+            console.log('[PAYMENT] Payment creation response:', res);
+
             if (res?.success) {
-                alert("Payment request created successfully! Waiting for admin approval.");
+                const message = isOnline
+                    ? "Payment request created successfully! Syncing to backend now..."
+                    : "Payment request saved offline! It will be synced to backend and sent for admin approval when you're online.";
+                alert(message);
+
+                // Trigger sync if online
+                if (isOnline) {
+                    try {
+                        console.log('[PAYMENT] Triggering sync now...');
+                        const syncResult = await syncManager.syncNow();
+                        console.log('[PAYMENT] Sync result:', syncResult);
+
+                        // Check sync queue status
+                        const stats = await syncManager.getStats();
+                        console.log('[PAYMENT] Sync queue stats:', stats);
+                    } catch (syncError) {
+                        console.error('[PAYMENT] Error syncing payment:', syncError);
+                        alert(`Payment saved but sync failed: ${syncError.message}. It will retry automatically.`);
+                    }
+                } else {
+                    // Check sync queue even when offline
+                    const stats = await syncManager.getStats();
+                    console.log('[PAYMENT] Payment queued for sync (offline). Queue stats:', stats);
+                }
+
                 // Reset form
                 setSelectedFD(null);
                 setFdPaymentAmount("");
@@ -270,7 +470,8 @@ export default function PaymentManagement() {
             }
         } catch (err) {
             console.error("Error creating FD payment:", err);
-            alert(err?.response?.data?.message || err?.message || "Error creating payment request");
+            const errorMessage = err?.response?.data?.message || err?.message || "Error creating payment request";
+            alert(errorMessage);
         } finally {
             setLoading(false);
         }
@@ -319,19 +520,58 @@ export default function PaymentManagement() {
 
         setLoading(true);
         try {
+            // Get selected bank details if Bank mode
+            const selectedBank = savingsPaymentMode === "Bank" && savingsBankId
+                ? banks.find(b => (b.id || b._id) === savingsBankId)
+                : null;
+
             const paymentData = {
                 memberId: selectedMember.id,
+                memberCode: selectedMember.code,
+                memberName: selectedMember.name,
                 groupId: currentGroup.id,
+                groupName: currentGroup.name,
+                groupCode: currentGroup.code,
                 paymentType: "saving_withdrawal",
                 amount: parseFloat(savingsAmount),
                 paymentMode: savingsPaymentMode,
                 bankId: savingsPaymentMode === "Bank" ? savingsBankId : null,
+                bankName: selectedBank?.name || null,
+                accountNo: selectedBank?.accountNo || null,
                 remarks: savingsRemarks,
+                paymentDate: new Date().toISOString(),
             };
 
+            console.log('[PAYMENT] Creating savings withdrawal with data:', paymentData);
             const res = await createPayment(paymentData);
+            console.log('[PAYMENT] Savings withdrawal creation response:', res);
+
             if (res?.success) {
-                alert("Payment request created successfully! Waiting for admin approval.");
+                const message = isOnline
+                    ? "Withdrawal request created successfully! Syncing to backend now..."
+                    : "Withdrawal request saved offline! It will be synced to backend and sent for admin approval when you're online.";
+                alert(message);
+
+                // Trigger sync if online
+                if (isOnline) {
+                    try {
+                        console.log('[PAYMENT] Triggering sync now for savings withdrawal...');
+                        const syncResult = await syncManager.syncNow();
+                        console.log('[PAYMENT] Sync result:', syncResult);
+
+                        // Check sync queue status
+                        const stats = await syncManager.getStats();
+                        console.log('[PAYMENT] Sync queue stats:', stats);
+                    } catch (syncError) {
+                        console.error('[PAYMENT] Error syncing savings withdrawal:', syncError);
+                        alert(`Payment saved but sync failed: ${syncError.message}. It will retry automatically.`);
+                    }
+                } else {
+                    // Check sync queue even when offline
+                    const stats = await syncManager.getStats();
+                    console.log('[PAYMENT] Savings withdrawal queued for sync (offline). Queue stats:', stats);
+                }
+
                 // Reset form
                 setSelectedMember(null);
                 setSavingsAmount("");
@@ -349,11 +589,12 @@ export default function PaymentManagement() {
                     loadPaymentHistory();
                 }
             } else {
-                alert(res?.message || "Failed to create payment request");
+                alert(res?.message || "Failed to create withdrawal request");
             }
         } catch (err) {
             console.error("Error creating savings payment:", err);
-            alert(err?.response?.data?.message || err?.message || "Error creating payment request");
+            const errorMessage = err?.response?.data?.message || err?.message || "Error creating withdrawal request";
+            alert(errorMessage);
         } finally {
             setLoading(false);
         }
@@ -409,16 +650,36 @@ export default function PaymentManagement() {
     return (
         <div className="max-w-7xl mx-auto">
             <div className="mb-6">
-                <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-                    <DollarSign size={32} />
-                    Payment Management
-                </h1>
-                <p className="text-gray-600 mt-2">
-                    Request FD maturity payments and savings withdrawals (requires admin approval)
-                </p>
-                <p className="text-sm text-gray-500 mt-1">
-                    Group: <strong>{currentGroup.name}</strong> ({currentGroup.code})
-                </p>
+                <div className="flex items-start justify-between">
+                    <div>
+                        <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+                            <DollarSign size={32} />
+                            Payment Management
+                        </h1>
+                        <p className="text-gray-600 mt-2">
+                            Request FD maturity payments and savings withdrawals (requires admin approval)
+                        </p>
+                        <p className="text-sm text-gray-500 mt-1">
+                            Group: <strong>{currentGroup.name}</strong> ({currentGroup.code})
+                        </p>
+                    </div>
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${isOnline
+                        ? 'bg-green-50 text-green-700 border border-green-200'
+                        : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
+                        }`}>
+                        {isOnline ? (
+                            <>
+                                <Cloud size={16} />
+                                <span>Online - Changes will sync</span>
+                            </>
+                        ) : (
+                            <>
+                                <CloudOff size={16} />
+                                <span>Offline - Will sync when online</span>
+                            </>
+                        )}
+                    </div>
+                </div>
             </div>
 
             {/* Tabs */}
@@ -426,21 +687,19 @@ export default function PaymentManagement() {
                 <nav className="flex space-x-8">
                     <button
                         onClick={() => setActiveTab("fd_maturity")}
-                        className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                            activeTab === "fd_maturity"
-                                ? "border-blue-500 text-blue-600"
-                                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "fd_maturity"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }`}
                     >
                         FD Maturity Payments
                     </button>
                     <button
                         onClick={() => setActiveTab("saving_withdrawal")}
-                        className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                            activeTab === "saving_withdrawal"
-                                ? "border-blue-500 text-blue-600"
-                                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "saving_withdrawal"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }`}
                     >
                         Savings Withdrawals
                     </button>
@@ -449,11 +708,10 @@ export default function PaymentManagement() {
                             setActiveTab("history");
                             loadPaymentHistory();
                         }}
-                        className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                            activeTab === "history"
-                                ? "border-blue-500 text-blue-600"
-                                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "history"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }`}
                     >
                         Payment History
                     </button>
@@ -482,11 +740,10 @@ export default function PaymentManagement() {
                                         {maturedFDs.map((fd) => (
                                             <div
                                                 key={fd.id}
-                                                className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                                                    selectedFD?.id === fd.id
-                                                        ? "border-blue-500 bg-blue-50"
-                                                        : "border-gray-200 hover:border-gray-300"
-                                                }`}
+                                                className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedFD?.id === fd.id
+                                                    ? "border-blue-500 bg-blue-50"
+                                                    : "border-gray-200 hover:border-gray-300"
+                                                    }`}
                                                 onClick={() => {
                                                     setSelectedFD(fd);
                                                     setFdPaymentAmount(fd.maturityAmount.toString());
@@ -499,8 +756,8 @@ export default function PaymentManagement() {
                                                             Maturity Date: {formatDate(fd.maturityDate)}
                                                         </p>
                                                         <p className="text-sm text-gray-600">
-                                                            Principal: {formatCurrency(fd.amount)} | 
-                                                            Interest: {formatCurrency(fd.interestAmount)} | 
+                                                            Principal: {formatCurrency(fd.amount)} |
+                                                            Interest: {formatCurrency(fd.interestAmount)} |
                                                             Total: {formatCurrency(fd.maturityAmount)}
                                                         </p>
                                                     </div>
@@ -519,12 +776,12 @@ export default function PaymentManagement() {
                                     <div className="col-span-2">
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                                             <p className="text-sm text-yellow-800">
-                                                <strong>Note:</strong> This payment request will be sent for admin approval. 
+                                                <strong>Note:</strong> This payment request will be sent for admin approval.
                                                 The payment will be processed after approval.
                                             </p>
                                         </div>
                                         <p className="text-sm text-gray-600 mb-4">
-                                            Member: <strong>{selectedFD.memberName}</strong> | 
+                                            Member: <strong>{selectedFD.memberName}</strong> |
                                             Amount: <strong>{formatCurrency(selectedFD.maturityAmount)}</strong>
                                         </p>
                                         {fdPaymentMode === "Cash" && (
@@ -612,11 +869,10 @@ export default function PaymentManagement() {
                                         {membersWithSavings.map((member) => (
                                             <div
                                                 key={member.id}
-                                                className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                                                    selectedMember?.id === member.id
-                                                        ? "border-blue-500 bg-blue-50"
-                                                        : "border-gray-200 hover:border-gray-300"
-                                                }`}
+                                                className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedMember?.id === member.id
+                                                    ? "border-blue-500 bg-blue-50"
+                                                    : "border-gray-200 hover:border-gray-300"
+                                                    }`}
                                                 onClick={() => {
                                                     setSelectedMember(member);
                                                     setSavingsAmount("");
@@ -644,12 +900,12 @@ export default function PaymentManagement() {
                                     <div className="col-span-2">
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                                             <p className="text-sm text-yellow-800">
-                                                <strong>Note:</strong> This withdrawal request will be sent for admin approval. 
+                                                <strong>Note:</strong> This withdrawal request will be sent for admin approval.
                                                 The payment will be processed after approval.
                                             </p>
                                         </div>
                                         <p className="text-sm text-gray-600 mb-4">
-                                            Member: <strong>{selectedMember.name}</strong> | 
+                                            Member: <strong>{selectedMember.name}</strong> |
                                             Available: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
                                         </p>
                                         {savingsPaymentMode === "Cash" && (
