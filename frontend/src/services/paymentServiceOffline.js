@@ -8,7 +8,7 @@
  * Components should use this service instead of making direct API calls.
  */
 
-import { paymentRepository, fdRepository, recoveryRepository } from '../database/repository';
+import { paymentRepository, fdRepository, recoveryRepository, groupRepository } from '../database/repository';
 import db, { EntityTypes, Operations } from '../database/db';
 import { getAuthToken } from '../utils/getAuthToken';
 
@@ -98,9 +98,22 @@ export const getMaturedFDs = async (params = {}) => {
     };
 };
 
+// Interest on savings: same formula as backend (prorated for current year to date)
+const computeInterestOnSavings = (totalSavings, savingRatePercent) => {
+    if (!totalSavings || totalSavings <= 0) return 0;
+    const rate = typeof savingRatePercent === 'number' && !Number.isNaN(savingRatePercent) ? savingRatePercent : 1;
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const daysElapsed = Math.max(0, (now - startOfYear) / (24 * 60 * 60 * 1000));
+    const daysInYear = 365;
+    const interest = (totalSavings * (rate / 100) * daysElapsed) / daysInYear;
+    return Math.round(interest * 100) / 100;
+};
+
 /**
  * Get member savings - computed from local IndexedDB
  * Calculates: openingSaving + recovery savings - approved/completed withdrawals
+ * Includes interest on savings (group saving_rate % p.a., prorated) for payment module (same as admin)
  */
 export const getMemberSavings = async (memberId) => {
     // Get member to access openingSaving
@@ -119,6 +132,8 @@ export const getMemberSavings = async (memberId) => {
                 totalWithdrawn: 0,
                 availableSavings: 0,
                 availableBalance: 0,
+                interestOnSavings: 0,
+                savingRate: 1,
             },
         };
     }
@@ -126,16 +141,33 @@ export const getMemberSavings = async (memberId) => {
     // Get member's group ID
     const groupId = member.group || member.groupId || member.Group_Name;
     if (!groupId) {
+        const opening = parseFloat(member.openingSaving || 0);
+        const interestOnSavings = computeInterestOnSavings(opening, 1);
         return {
             success: true,
             data: {
-                totalSaving: member.openingSaving || 0,
+                totalSaving: opening,
                 totalWithdrawn: 0,
-                availableSavings: member.openingSaving || 0,
-                availableBalance: member.openingSaving || 0,
+                availableSavings: opening,
+                availableBalance: opening,
+                interestOnSavings,
+                savingRate: 1,
             },
         };
     }
+
+    // Get group's saving_rate (same as backend)
+    let savingRate = 1;
+    try {
+        const groups = await groupRepository.getMerged({});
+        const group = groups.find(g => String(g._id || g.id) === String(groupId));
+        if (group && typeof group.saving_rate === 'number' && !Number.isNaN(group.saving_rate)) {
+            savingRate = group.saving_rate;
+        } else if (group && group.saving_rate != null) {
+            const r = parseFloat(group.saving_rate);
+            if (!Number.isNaN(r)) savingRate = r;
+        }
+    } catch (_) { /* keep default 1 */ }
 
     // Get all recoveries for the group (recoveries are stored by groupId, not memberId)
     const recoveries = await recoveryRepository.getMerged({ groupId });
@@ -177,6 +209,7 @@ export const getMemberSavings = async (memberId) => {
 
     const totalSaving = openingSaving + totalRecoverySavings;
     const availableSavings = Math.max(0, totalSaving - totalWithdrawn);
+    const interestOnSavings = computeInterestOnSavings(totalSaving, savingRate);
 
     return {
         success: true,
@@ -185,6 +218,8 @@ export const getMemberSavings = async (memberId) => {
             totalWithdrawn,
             availableSavings,
             availableBalance: availableSavings, // Alias for compatibility
+            interestOnSavings,
+            savingRate,
         },
     };
 };

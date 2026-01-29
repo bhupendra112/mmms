@@ -301,13 +301,16 @@ export default function PaymentManagement() {
                             const availableSavings = savingsRes.data?.availableSavings ??
                                 savingsRes.data?.availableBalance ?? 0;
 
-                            // Include members with savings > 0
+                            // Include members with savings > 0 (same fields as admin: interest on savings for payment module)
                             if (availableSavings > 0) {
                                 return {
                                     id: memberId,
                                     code: member.Member_Id || member.memberCode || member.code,
                                     name: member.Member_Nm || member.memberName || member.name,
-                                    availableSavings: availableSavings,
+                                    availableSavings,
+                                    interestOnSavings: savingsRes.data?.interestOnSavings ?? 0,
+                                    savingRate: savingsRes.data?.savingRate ?? 1,
+                                    totalSavings: savingsRes.data?.totalSavings ?? savingsRes.data?.totalSaving ?? availableSavings,
                                 };
                             }
                         } else {
@@ -882,8 +885,16 @@ export default function PaymentManagement() {
                                                     <div>
                                                         <p className="font-semibold">{member.name} ({member.code})</p>
                                                         <p className="text-sm text-gray-600">
-                                                            Available Savings: <strong>{formatCurrency(member.availableSavings)}</strong>
+                                                            Savings: <strong>{formatCurrency(member.availableSavings)}</strong>
+                                                            {(member.interestOnSavings != null && member.interestOnSavings > 0) && (
+                                                                <> | Interest ({member.savingRate ?? 1}% p.a.): <strong>{formatCurrency(member.interestOnSavings)}</strong></>
+                                                            )}
                                                         </p>
+                                                        {(member.interestOnSavings != null && member.interestOnSavings > 0) && (
+                                                            <p className="text-xs text-gray-500">
+                                                                Total with interest: {formatCurrency(member.availableSavings + (member.interestOnSavings || 0))}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                     {selectedMember?.id === member.id && (
                                                         <CheckCircle className="text-blue-500" size={20} />
@@ -906,8 +917,16 @@ export default function PaymentManagement() {
                                         </div>
                                         <p className="text-sm text-gray-600 mb-4">
                                             Member: <strong>{selectedMember.name}</strong> |
-                                            Available: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
+                                            Savings: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
+                                            {(selectedMember.interestOnSavings != null && selectedMember.interestOnSavings > 0) && (
+                                                <> | Interest ({(selectedMember.savingRate ?? 1)}% p.a.): <strong>{formatCurrency(selectedMember.interestOnSavings)}</strong></>
+                                            )}
                                         </p>
+                                        {(selectedMember.interestOnSavings != null && selectedMember.interestOnSavings > 0) && (
+                                            <p className="text-xs text-gray-500 mb-4">
+                                                Total with interest: {formatCurrency(selectedMember.availableSavings + (selectedMember.interestOnSavings || 0))}
+                                            </p>
+                                        )}
                                         {savingsPaymentMode === "Cash" && (
                                             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
                                                 <p className="text-sm text-blue-800">
