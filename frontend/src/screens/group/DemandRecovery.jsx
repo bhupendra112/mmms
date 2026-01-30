@@ -6,9 +6,12 @@ import { useOffline } from "../../contexts/OfflineContext";
 import { createApprovalRequest, getPendingApprovals } from "../../services/approvalDB";
 import * as recoveryOffline from "../../services/recoveryServiceOffline";
 import * as recoveryOnline from "../../services/recoveryService";
-import { getLoans } from "../../services/loanServiceOffline";
-import { getGroups, getGroupBanks } from "../../services/groupServiceOffline";
-import { getMembersByGroup } from "../../services/memberServiceOffline";
+import { getLoans as getLoansOffline } from "../../services/loanServiceOffline";
+import { getGroups as getGroupsOffline, getGroupBanks as getGroupBanksOffline } from "../../services/groupServiceOffline";
+import { getMembersByGroup as getMembersByGroupOffline } from "../../services/memberServiceOffline";
+import { getGroups, getGroupBanks } from "../../services/groupService";
+import { getMembersByGroup } from "../../services/memberService";
+import { getLoans } from "../../services/loanService";
 import {
   isMeetingDay,
   getNextMeetingDate,
@@ -182,13 +185,14 @@ export default function DemandRecovery() {
       .finally(() => setGroupsLoading(false));
   }, [isAdminMode, lastRefreshedAt]);
 
-  // Load members when active group changes
+  // Load members when active group changes (admin: memberService, group: memberServiceOffline)
   useEffect(() => {
     if (!activeGroup?.id) {
       setAllMembers([]);
       return;
     }
-    getMembersByGroup(activeGroup.id)
+    const fetchMembers = isAdminMode ? getMembersByGroup : getMembersByGroupOffline;
+    fetchMembers(activeGroup.id)
       .then((res) => {
         const list = Array.isArray(res?.data) ? res.data : [];
         setAllMembers(
@@ -209,13 +213,14 @@ export default function DemandRecovery() {
         console.error("Failed to load members:", e);
         setAllMembers([]);
       });
-  }, [activeGroup?.id, lastRefreshedAt]);
+  }, [activeGroup?.id, isAdminMode, lastRefreshedAt]);
 
-  // Load active loans (latest approved loan per member)
+  // Load active loans (admin: loanService, group: loanServiceOffline)
   useEffect(() => {
     if (!activeGroup?.id) return;
 
-    getLoans(activeGroup.id)
+    const fetchLoans = isAdminMode ? getLoans : getLoansOffline;
+    fetchLoans(activeGroup.id)
       .then((res) => {
         const loans = Array.isArray(res?.data) ? res.data : [];
         const loansByMember = {};
@@ -233,9 +238,9 @@ export default function DemandRecovery() {
         console.error("Error loading loans:", err);
         setActiveLoans({});
       });
-  }, [activeGroup?.id, lastRefreshedAt]);
+  }, [activeGroup?.id, isAdminMode, lastRefreshedAt]);
 
-  // Load group banks
+  // Load group banks (admin: groupService, group: groupServiceOffline)
   useEffect(() => {
     const groupId = activeGroup?.id;
     if (!groupId) {
@@ -243,7 +248,8 @@ export default function DemandRecovery() {
       setSelectedBankId("");
       return;
     }
-    getGroupBanks(groupId)
+    const fetchBanks = isAdminMode ? getGroupBanks : getGroupBanksOffline;
+    fetchBanks(groupId)
       .then((res) => {
         const banks = Array.isArray(res?.data) ? res.data : [];
         setGroupBanks(banks);
@@ -252,7 +258,7 @@ export default function DemandRecovery() {
         console.error("Error loading banks:", e);
         setGroupBanks([]);
       });
-  }, [activeGroup?.id, lastRefreshedAt]);
+  }, [activeGroup?.id, isAdminMode, lastRefreshedAt]);
 
   const loadRecoveries = async () => {
     if (!activeGroup?.id) return;
@@ -1391,7 +1397,8 @@ export default function DemandRecovery() {
             }}
             onSuccess={() => {
               if (!activeGroup?.id) return;
-              getMembersByGroup(activeGroup.id)
+              const fetchMembers = isAdminMode ? getMembersByGroup : getMembersByGroupOffline;
+              fetchMembers(activeGroup.id)
                 .then((res) => {
                   const list = Array.isArray(res?.data) ? res.data : [];
                   setAllMembers(
