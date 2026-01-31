@@ -12,6 +12,7 @@ import CashTransaction from "./CashTransaction.js";
 import CashAmount from "./CashAmount.js";
 import MemberRevenueDemand from "./MemberRevenueDemand.js";
 import GroupLedger from "./GroupLedger.js";
+import IncomeExpenseHead from "./IncomeExpenseHead.js";
 
 export {
     Admin,
@@ -27,5 +28,6 @@ export {
     CashTransaction,
     CashAmount,
     MemberRevenueDemand,
-    GroupLedger
+    GroupLedger,
+    IncomeExpenseHead
 };

@@ -20,8 +20,10 @@ import { useGroup } from "../../contexts/GroupContext";
 import { useOffline } from "../../contexts/OfflineContext";
 import { createApprovalRequest } from "../../services/approvalDB";
 import { registerLoan } from "../../services/loanServiceOffline";
-import { getGroups, getGroupBanks } from "../../services/groupServiceOffline";
-import { getMembersByGroup } from "../../services/memberServiceOffline";
+import { getGroups as getGroupsOffline, getGroupBanks as getGroupBanksOffline } from "../../services/groupServiceOffline";
+import { getMembersByGroup as getMembersByGroupOffline } from "../../services/memberServiceOffline";
+import { getGroups, getGroupBanks } from "../../services/groupService";
+import { getMembersByGroup } from "../../services/memberService";
 import { getCashAmount } from "../../services/cashAmount";
 
 export default function LoanTaking() {
@@ -48,6 +50,7 @@ export default function LoanTaking() {
     const [purpose, setPurpose] = useState("");
     const [amount, setAmount] = useState("");
     const [timePeriod, setTimePeriod] = useState("");
+    const [periodUnit, setPeriodUnit] = useState("years"); // "months" | "years"
     const [installmentAmount, setInstallmentAmount] = useState("");
     const [bachanPathraPhoto, setBachanPathraPhoto] = useState(null);
 
@@ -55,23 +58,22 @@ export default function LoanTaking() {
     const activeGroup = currentGroup || selectedGroup;
 
     // Auto-calculate installment amount when amount and time period are entered
-    // timePeriod is now in years, convert to months for calculation
+    // periodUnit: months → use value as months; years → value * 12
     useEffect(() => {
         if (amount && timePeriod) {
             const loanAmount = parseFloat(amount);
-            const years = parseFloat(timePeriod);
-            if (loanAmount > 0 && years > 0) {
-                const months = years * 12; // Convert years to months
+            const num = parseFloat(timePeriod);
+            if (loanAmount > 0 && num > 0) {
+                const months = periodUnit === "months" ? num : num * 12;
                 const calculatedInstallment = (loanAmount / months).toFixed(2);
                 setInstallmentAmount(calculatedInstallment);
             }
         } else if (!amount || !timePeriod) {
-            // Clear installment if amount or time period is cleared
             setInstallmentAmount("");
         }
-    }, [amount, timePeriod]);
+    }, [amount, timePeriod, periodUnit]);
 
-    // Load groups dynamically (admin mode only)
+    // Load groups dynamically (admin mode only) - use admin API so cluster/group list is correct
     useEffect(() => {
         if (!isAdminMode) return;
         setGroupsLoading(true);
@@ -95,16 +97,17 @@ export default function LoanTaking() {
                 setGroups([]);
             })
             .finally(() => setGroupsLoading(false));
-    }, [isAdminMode]);
+    }, [isAdminMode, lastRefreshedAt]);
 
-    // Initialize members from active group
+    // Initialize members from active group (admin: memberService, group: memberServiceOffline)
     useEffect(() => {
         const groupId = activeGroup?.id;
         if (!groupId) {
             setAllMembers([]);
             return;
         }
-        getMembersByGroup(groupId)
+        const fetchMembers = isAdminMode ? getMembersByGroup : getMembersByGroupOffline;
+        fetchMembers(groupId)
             .then((res) => {
                 const list = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
                 setAllMembers(
@@ -119,9 +122,9 @@ export default function LoanTaking() {
                 console.error("Error loading members:", e);
                 setAllMembers([]);
             });
-    }, [activeGroup?.id, lastRefreshedAt]);
+    }, [activeGroup?.id, isAdminMode, lastRefreshedAt]);
 
-    // Load group banks when active group changes
+    // Load group banks when active group changes (admin: groupService, group: groupServiceOffline)
     useEffect(() => {
         const groupId = activeGroup?.id;
         if (!groupId) {
@@ -129,7 +132,8 @@ export default function LoanTaking() {
             setSelectedBankId("");
             return;
         }
-        getGroupBanks(groupId)
+        const fetchBanks = isAdminMode ? getGroupBanks : getGroupBanksOffline;
+        fetchBanks(groupId)
             .then((res) => {
                 const banks = Array.isArray(res?.data) ? res.data : [];
                 setGroupBanks(banks);
@@ -138,7 +142,7 @@ export default function LoanTaking() {
                 console.error("Error loading banks:", e);
                 setGroupBanks([]);
             });
-    }, [activeGroup?.id, lastRefreshedAt]);
+    }, [activeGroup?.id, isAdminMode, lastRefreshedAt]);
 
     // Load cash balance when active group changes
     useEffect(() => {
@@ -185,6 +189,7 @@ export default function LoanTaking() {
         setPurpose("");
         setAmount("");
         setTimePeriod("");
+        setPeriodUnit("years");
         setInstallmentAmount("");
         setBachanPathraPhoto(null);
     };
@@ -198,6 +203,7 @@ export default function LoanTaking() {
             setPurpose("");
             setAmount("");
             setTimePeriod("");
+            setPeriodUnit("years");
             setInstallmentAmount("");
             setBachanPathraPhoto(null);
         }
@@ -300,8 +306,10 @@ export default function LoanTaking() {
                 bankId: paymentMode === "Bank" ? selectedBankId : null,
                 purpose,
                 amount: parseFloat(amount),
-                // Send time_period in years, backend will convert to months
-                time_period: timePeriod ? parseFloat(timePeriod) : null,
+                // Send time_period in years (backend converts to months)
+                time_period: timePeriod
+                    ? (periodUnit === "months" ? parseFloat(timePeriod) / 12 : parseFloat(timePeriod))
+                    : null,
                 installment_amount: installmentAmount ? parseFloat(installmentAmount) : null,
                 bachanPathraPhoto: bachanPathraPhoto || null,
                 date: new Date().toLocaleDateString("en-GB"),
@@ -327,6 +335,7 @@ export default function LoanTaking() {
             setPurpose("");
             setAmount("");
             setTimePeriod("");
+            setPeriodUnit("years");
             setInstallmentAmount("");
             setBachanPathraPhoto(null);
         } catch (error) {
@@ -478,6 +487,7 @@ export default function LoanTaking() {
                                         setPurpose("");
                                         setAmount("");
                                         setTimePeriod("");
+                                        setPeriodUnit("years");
                                         setInstallmentAmount("");
                                         setBachanPathraPhoto(null);
                                     }
@@ -565,6 +575,7 @@ export default function LoanTaking() {
                                                 setPurpose("");
                                                 setAmount("");
                                                 setTimePeriod("");
+                                                setPeriodUnit("years");
                                                 setInstallmentAmount("");
                                                 setBachanPathraPhoto(null);
                                             }}
@@ -747,20 +758,42 @@ export default function LoanTaking() {
                                         </div>
                                     )}
 
-                                    {/* Time Period - Required for member loans */}
+                                    {/* Time Period - Required for member loans (Month or Year) */}
                                     {amount && (
                                         <div className="mb-6">
-                                            <Input
-                                                label="Time Period (Years) *"
-                                                name="timePeriod"
-                                                type="number"
-                                                value={timePeriod}
-                                                handleChange={(e) => setTimePeriod(e.target.value)}
-                                                placeholder="Enter loan duration in years"
-                                                min="0.1"
-                                                step="0.1"
-                                                required
-                                            />
+                                            <div className="flex flex-wrap gap-3 items-end">
+                                                <div className="flex-1 min-w-[120px]">
+                                                    <Input
+                                                        label="Time Period *"
+                                                        name="timePeriod"
+                                                        type="number"
+                                                        value={timePeriod}
+                                                        handleChange={(e) => setTimePeriod(e.target.value)}
+                                                        placeholder={periodUnit === "months" ? "e.g. 6, 12, 24" : "e.g. 1, 2, 3"}
+                                                        min={periodUnit === "months" ? "1" : "0.1"}
+                                                        step={periodUnit === "months" ? "1" : "0.1"}
+                                                        required
+                                                    />
+                                                </div>
+                                                <div className="w-full sm:w-[120px]">
+                                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Unit</label>
+                                                    <select
+                                                        value={periodUnit}
+                                                        onChange={(e) => {
+                                                            setPeriodUnit(e.target.value);
+                                                            setTimePeriod("");
+                                                            setInstallmentAmount("");
+                                                        }}
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                                    >
+                                                        <option value="months">Months</option>
+                                                        <option value="years">Years</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                Loan duration in {periodUnit === "months" ? "months" : "years"}
+                                            </p>
                                         </div>
                                     )}
 
@@ -772,7 +805,10 @@ export default function LoanTaking() {
                                                     Installment Amount Per Month (Auto-calculated)
                                                 </label>
                                                 <p className="text-xs text-gray-500 mt-1">
-                                                    Calculated: ₹{parseFloat(amount || 0).toLocaleString('en-IN')} ÷ {parseFloat(timePeriod || 0) * 12} months ({timePeriod} {parseFloat(timePeriod) === 1 ? 'year' : 'years'}) = ₹{installmentAmount || "0.00"}
+                                                    Calculated: ₹{parseFloat(amount || 0).toLocaleString('en-IN')} ÷ {(periodUnit === "months" ? parseFloat(timePeriod || 0) : parseFloat(timePeriod || 0) * 12)} months
+                                                    {periodUnit === "years" && timePeriod && ` (${timePeriod} ${parseFloat(timePeriod) === 1 ? "year" : "years"})`}
+                                                    {periodUnit === "months" && timePeriod && ` (${timePeriod} months)`}
+                                                    {" = ₹" + (installmentAmount || "0.00")}
                                                 </p>
                                             </div>
                                             <Input
@@ -840,6 +876,7 @@ export default function LoanTaking() {
                                                     setPurpose("");
                                                     setAmount("");
                                                     setTimePeriod("");
+                                                    setPeriodUnit("years");
                                                     setInstallmentAmount("");
                                                     setBachanPathraPhoto(null);
                                                 }}

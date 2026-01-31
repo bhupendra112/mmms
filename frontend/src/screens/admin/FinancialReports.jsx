@@ -51,13 +51,6 @@ function useViewportDebug(enable = true) {
             hasHorizontalOverflow: overflow,
             ts: Date.now(),
         };
-        console.log("[FinancialReports viewport]", payload);
-        if (overflow) {
-            console.warn(
-                "[FinancialReports] Horizontal overflow detected – may cause phone layout issues.",
-                payload
-            );
-        }
         try {
             if (!window.__financialReportsViewportLog) window.__financialReportsViewportLog = [];
             window.__financialReportsViewportLog.push(payload);

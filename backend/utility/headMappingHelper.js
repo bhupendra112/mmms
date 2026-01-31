@@ -36,6 +36,8 @@ export const DEFAULT_HEAD_MAPPINGS = {
     "Interest to Bank CC": { section: "expense", headType: "expenseMaster" },
     "Interest from Bank": { section: "income", headType: "expenseMaster" },
     "Interest Income": { section: "income", headType: "groupMaster" },
+    "Penalty from members": { section: "income", headType: "groupMaster" },
+    "Penalty": { section: "income", headType: "groupMaster" },
 };
 
 /**
@@ -79,6 +81,8 @@ export const normalizeHeadName = (headName) => {
         "interest from bank": "Interest from Bank",
         "interest to bank": "Interest to Bank CC",
         "interest to bank cc": "Interest to Bank CC",
+        "penalty": "Penalty from members",
+        "penalty from members": "Penalty from members",
     };
 
     const lower = normalized.toLowerCase();

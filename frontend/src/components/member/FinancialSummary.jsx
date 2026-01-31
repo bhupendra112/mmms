@@ -90,6 +90,12 @@ export default function FinancialSummary({ member, memberDoc, isMobile, windowWi
               <span className="text-xs font-semibold text-gray-700">Interest Pending:</span>
               <span className="text-xs text-gray-800">₹{(member?.interestPending || 0).toLocaleString()}</span>
             </div>
+            {(member?.penaltyPaid || 0) > 0 && (
+              <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-200">
+                <span className="text-xs font-semibold text-gray-700">Penalty Paid:</span>
+                <span className="text-xs text-gray-800">₹{(member?.penaltyPaid || 0).toLocaleString()}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center">
               <span className="text-xs font-semibold text-gray-700">Last Recovery:</span>
               <span className="text-xs text-gray-800">{formatDateFn(member?.lastRecoveryDate) || "N/A"}</span>
@@ -173,6 +179,12 @@ export default function FinancialSummary({ member, memberDoc, isMobile, windowWi
                 <td className="p-2 md:p-3 font-semibold text-gray-700 bg-gray-50">Interest Pending:</td>
                 <td className="p-2 md:p-3 text-gray-800">₹{(member?.interestPending || 0).toLocaleString()}</td>
               </tr>
+              {(member?.penaltyPaid || 0) > 0 && (
+                <tr className="border-b border-gray-200">
+                  <td className="p-2 md:p-3 font-semibold text-gray-700 bg-gray-50">Penalty Paid:</td>
+                  <td className="p-2 md:p-3 text-gray-800">₹{(member?.penaltyPaid || 0).toLocaleString()}</td>
+                </tr>
+              )}
               <tr>
                 <td className="p-2 md:p-3 font-semibold text-gray-700 bg-gray-50">Last Recovery:</td>
                 <td className="p-2 md:p-3 text-gray-800">{formatDateFn(member?.lastRecoveryDate) || "N/A"}</td>

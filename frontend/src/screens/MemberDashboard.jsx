@@ -217,6 +217,7 @@ export default function MemberDashboard() {
     let currentFD = fdDetails?.amount || 0;
     let currentInterest = loanDetails?.overdueInterest || 0;
     let lastRecoveryDate = null;
+    let totalPenaltyPaid = 0;
 
     memberRecoveries.forEach((recovery) => {
       const amounts = recovery.amounts || {};
@@ -224,11 +225,13 @@ export default function MemberDashboard() {
       const loanAmt = parseFloat(amounts.loan || 0);
       const fdAmt = parseFloat(amounts.fd || 0);
       const interestAmt = parseFloat(amounts.interest || 0);
+      const penaltyAmt = parseFloat(amounts.penalty || 0);
 
       currentSavings += savingAmt;
       currentLoan = Math.max(0, currentLoan - loanAmt);
       currentFD += fdAmt;
       currentInterest = Math.max(0, currentInterest - interestAmt);
+      totalPenaltyPaid += penaltyAmt;
 
       const recoveryDate = recovery.recoveryDate || recovery.date;
       if (recoveryDate) {
@@ -270,6 +273,7 @@ export default function MemberDashboard() {
       fdMaturityDate: fdDetails?.maturityDate || null,
       fdInterest: fdDetails?.interest || 0,
       interestPending: currentInterest,
+      penaltyPaid: totalPenaltyPaid,
       openingYogdan,
       isExistingMember: isExisting,
       lastRecoveryDate,
@@ -415,6 +419,7 @@ export default function MemberDashboard() {
       ...(member.fdInterest > 0 ? [["FD Interest", `₹${member.fdInterest.toLocaleString()}`]] : []),
       ...(member.openingYogdan > 0 ? [["Opening Yogdan", `₹${member.openingYogdan.toLocaleString()}`]] : []),
       ["Interest Pending", `₹${member.interestPending.toLocaleString()}`],
+      ...(member.penaltyPaid > 0 ? [["Penalty Paid", `₹${member.penaltyPaid.toLocaleString()}`]] : []),
       ["Last Recovery", formatDate(member.lastRecoveryDate) || "N/A"],
     ];
 
@@ -467,6 +472,10 @@ export default function MemberDashboard() {
 
     yPos += lineHeight;
     doc.text(`Interest Pending: ${member.interestPending.toLocaleString()}`, 14, yPos);
+    if (member.penaltyPaid > 0) {
+      yPos += lineHeight;
+      doc.text(`Penalty Paid: ${member.penaltyPaid.toLocaleString()}`, 14, yPos);
+    }
     yPos += lineHeight;
     doc.text(`Last Recovery: ${formatDate(member.lastRecoveryDate) || "N/A"}`, 14, yPos);
     yPos += lineHeight + 10;
@@ -695,10 +704,10 @@ export default function MemberDashboard() {
                         <td className="p-2 md:p-3 text-gray-800">
                           <span
                             className={`px-2 py-1 rounded text-xs font-semibold whitespace-nowrap ${fd.status === "active"
-                                ? "bg-green-200 text-green-800"
-                                : fd.status === "matured"
-                                  ? "bg-yellow-200 text-yellow-800"
-                                  : "bg-gray-200 text-gray-800"
+                              ? "bg-green-200 text-green-800"
+                              : fd.status === "matured"
+                                ? "bg-yellow-200 text-yellow-800"
+                                : "bg-gray-200 text-gray-800"
                               }`}
                           >
                             {fd.status || "active"}
@@ -735,12 +744,12 @@ export default function MemberDashboard() {
                             </p>
                             <span
                               className={`inline-block px-2 py-1 rounded text-xs font-semibold ${loan.transactionType === "Loan"
-                                  ? "bg-red-100 text-red-800"
-                                  : loan.transactionType === "FD"
-                                    ? "bg-blue-100 text-blue-800"
-                                    : loan.transactionType === "Saving"
-                                      ? "bg-green-100 text-green-800"
-                                      : "bg-gray-100 text-gray-800"
+                                ? "bg-red-100 text-red-800"
+                                : loan.transactionType === "FD"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : loan.transactionType === "Saving"
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-gray-100 text-gray-800"
                                 }`}
                             >
                               {loan.transactionType || "N/A"}
@@ -752,10 +761,10 @@ export default function MemberDashboard() {
                             </p>
                             <span
                               className={`inline-block mt-1 px-2 py-0.5 rounded text-xs ${loan.status === "verified"
-                                  ? "bg-green-100 text-green-800"
-                                  : loan.status === "pending"
-                                    ? "bg-yellow-100 text-yellow-800"
-                                    : "bg-gray-100 text-gray-800"
+                                ? "bg-green-100 text-green-800"
+                                : loan.status === "pending"
+                                  ? "bg-yellow-100 text-yellow-800"
+                                  : "bg-gray-100 text-gray-800"
                                 }`}
                             >
                               {loan.status || "N/A"}
@@ -794,12 +803,12 @@ export default function MemberDashboard() {
                             <td className="border border-gray-300 p-2 md:p-3">
                               <span
                                 className={`px-2 py-1 rounded text-xs font-semibold whitespace-nowrap ${loan.transactionType === "Loan"
-                                    ? "bg-red-100 text-red-800"
-                                    : loan.transactionType === "FD"
-                                      ? "bg-blue-100 text-blue-800"
-                                      : loan.transactionType === "Saving"
-                                        ? "bg-green-100 text-green-800"
-                                        : "bg-gray-100 text-gray-800"
+                                  ? "bg-red-100 text-red-800"
+                                  : loan.transactionType === "FD"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : loan.transactionType === "Saving"
+                                      ? "bg-green-100 text-green-800"
+                                      : "bg-gray-100 text-gray-800"
                                   }`}
                               >
                                 {loan.transactionType || "N/A"}
@@ -813,10 +822,10 @@ export default function MemberDashboard() {
                             <td className="border border-gray-300 p-2 md:p-3">
                               <span
                                 className={`px-2 py-1 rounded text-xs whitespace-nowrap ${loan.status === "approved"
-                                    ? "bg-green-100 text-green-800"
-                                    : loan.status === "rejected"
-                                      ? "bg-red-100 text-red-800"
-                                      : "bg-yellow-100 text-yellow-800"
+                                  ? "bg-green-100 text-green-800"
+                                  : loan.status === "rejected"
+                                    ? "bg-red-100 text-red-800"
+                                    : "bg-yellow-100 text-yellow-800"
                                   }`}
                               >
                                 {loan.status || "Pending"}

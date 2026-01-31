@@ -1,6 +1,8 @@
 import apiResponse from "../../utility/apiResponse.js";
-import { GroupMaster, RecoveryMaster, LoanMaster, FDMaster, ExpenseMaster, PaymentMaster, BankTransaction, CashTransaction, GroupLedger } from "../../model/index.js";
+import { GroupMaster, RecoveryMaster, LoanMaster, FDMaster, ExpenseMaster, PaymentMaster, BankTransaction, CashTransaction, GroupLedger, BankMaster, MemberRevenueDemand, Member } from "../../model/index.js";
 import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
+import { buildIncomeExpenseReport } from "../../service/reportIncomeExpenseService.js";
+import { parseDate } from "../../utility/dateUtils.js";
 
 /**
  * Get Receipt & Payment Account for a date range
@@ -8,7 +10,6 @@ import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 export const getReceiptPaymentAccount = async (req, res) => {
     try {
         const { groupId, fromDate, toDate } = req.query;
-        console.log("[getReceiptPaymentAccount] Input params:", { groupId, fromDate, toDate });
 
         if (!groupId) {
             return apiResponse.error(res, "groupId is required", 400);
@@ -16,7 +17,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        console.log("[getReceiptPaymentAccount] Admin place:", adminPlace);
 
         // Verify group exists and belongs to admin's place
         const accessCheck = await verifyGroupAccess(groupId, adminPlace);
@@ -24,7 +24,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
         const group = accessCheck.group;
-        console.log("[getReceiptPaymentAccount] Group verified:", group._id);
 
         // Parse dates - if not provided, use full range (no date filtering)
         let from = null;
@@ -35,7 +34,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             to = new Date(toDate);
             to.setHours(23, 59, 59, 999);
         }
-        console.log("[getReceiptPaymentAccount] Date range:", { from, to });
 
         // Calculate opening balances (before fromDate) - if no date range, opening balances are 0
         let openingCash = 0;
@@ -48,11 +46,9 @@ export const getReceiptPaymentAccount = async (req, res) => {
             openingSaving = await calculateOpeningSaving(groupId, from);
             openingFD = await calculateOpeningFD(groupId, from);
         }
-        console.log("[getReceiptPaymentAccount] Opening balances:", { openingCash, openingBank, openingSaving, openingFD });
 
         // Build date filter condition
         const dateFilter = (from && to) ? { date: { $gte: from, $lte: to } } : {};
-        console.log("[getReceiptPaymentAccount] Date filter:", dateFilter);
 
         // Receipts in period
         // Cash: Sum of cash receipts from recoveries
@@ -121,7 +117,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const cashReceiptsTotal = cashReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Cash receipts from RecoveryMaster:", cashReceiptsTotal);
 
         // Bank: Sum of bank receipts from recoveries
         // Use recovery.total field directly to avoid double-counting charges
@@ -189,7 +184,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const bankReceiptsTotal = bankReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Bank receipts from RecoveryMaster:", bankReceiptsTotal);
 
         // Saving: Sum of saving amounts from RecoveryMaster
         const savingReceipts = await RecoveryMaster.aggregate([
@@ -208,7 +202,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const savingTotal = savingReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Saving receipts:", savingTotal);
 
         // FD: Sum of FD amounts created in period
         const fdReceipts = await FDMaster.aggregate([
@@ -226,7 +219,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const fdTotal = fdReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] FD receipts:", fdTotal);
 
         // Loan Recovered: Sum of loan amounts from RecoveryMaster
         const loanRecoveredReceipts = await RecoveryMaster.aggregate([
@@ -245,7 +237,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const loanRecoveredTotal = loanRecoveredReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Loan recovered receipts:", loanRecoveredTotal);
 
         // Interest: Sum of interest amounts from RecoveryMaster
         const interestReceipts = await RecoveryMaster.aggregate([
@@ -264,7 +255,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const interestTotal = interestReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Interest receipts:", interestTotal);
 
         // Group Fee (memFeesGroup): Sum of memFeesGroup from RecoveryMaster
         const groupFeeReceipts = await RecoveryMaster.aggregate([
@@ -283,7 +273,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const groupFeeTotal = groupFeeReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Group fee receipts:", groupFeeTotal);
 
         // Yogdan: Sum of yogdan amounts from RecoveryMaster
         const yogdanReceipts = await RecoveryMaster.aggregate([
@@ -302,7 +291,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const yogdanTotal = yogdanReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Yogdan receipts:", yogdanTotal);
 
         // Charges: Sum of all charges from RecoveryMaster (dynamic charges object)
         const chargesReceipts = await RecoveryMaster.aggregate([
@@ -346,7 +334,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const chargesTotal = chargesReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Charges receipts:", chargesTotal);
 
         // Member Fees: Sum of memFeesSHG + memFeesSamiti
         const memberFeesReceipts = await RecoveryMaster.aggregate([
@@ -372,7 +359,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const memberFeesTotal = memberFeesReceipts[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Member fees receipts:", memberFeesTotal);
 
         // Payments in period
         // Expenses from ExpenseMaster: Stationery and Travel only
@@ -394,7 +380,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
         expenses.forEach(exp => {
             expensesByType[exp._id] = exp.total;
         });
-        console.log("[getReceiptPaymentAccount] Expenses by type from ExpenseMaster:", expensesByType);
 
         // Other expenses from LoanMaster where transactionType="Expense"
         const otherExpenses = await LoanMaster.aggregate([
@@ -416,7 +401,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
         if (otherExpensesTotal > 0) {
             expensesByType["Other"] = otherExpensesTotal;
         }
-        console.log("[getReceiptPaymentAccount] Other expenses from LoanMaster:", otherExpensesTotal);
 
         // Loans: Sum of LoanMaster where transactionType="Loan"
         const loanPayments = await LoanMaster.aggregate([
@@ -435,7 +419,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const loanTotal = loanPayments[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Loan payments:", loanTotal);
 
         // Payments from PaymentMaster (FD maturity, saving withdrawal)
         // Break down by paymentType - include all statuses, not just "completed"
@@ -466,10 +449,7 @@ export const getReceiptPaymentAccount = async (req, res) => {
                 fdMaturityTotal = payment.total;
             }
         });
-        console.log("[getReceiptPaymentAccount] Payments by type:", { savingWithdrawalTotal, fdMaturityTotal });
-        // Bank payments from PaymentMaster (always bank-based)
         const bankPaymentTotal = savingWithdrawalTotal + fdMaturityTotal;
-        console.log("[getReceiptPaymentAccount] Bank payment total:", bankPaymentTotal);
 
         // Cash payments from PaymentMaster (from CashTransaction)
         const cashTransactionPaymentQuery = {
@@ -482,10 +462,7 @@ export const getReceiptPaymentAccount = async (req, res) => {
         }
         const cashTransactionPayments = await CashTransaction.find(cashTransactionPaymentQuery).lean();
         const cashTransactionPaymentTotal = cashTransactionPayments.reduce((sum, t) => sum + (t.amount || 0), 0);
-        console.log("[getReceiptPaymentAccount] Cash transaction payments:", cashTransactionPaymentTotal);
-
         const paymentTotal = bankPaymentTotal + cashTransactionPaymentTotal;
-        console.log("[getReceiptPaymentAccount] Total payments:", paymentTotal);
 
         // Get BankTransaction receipts for this period
         const bankTransactionQuery = {
@@ -499,7 +476,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
 
         // Calculate total from BankTransaction receipts
         const bankTransactionReceiptsTotal = bankTransactionReceipts.reduce((sum, t) => sum + (t.amount || 0), 0);
-        console.log("[getReceiptPaymentAccount] Bank transaction receipts:", bankTransactionReceiptsTotal, "count:", bankTransactionReceipts.length);
 
         // Calculate balance based on payment mode
         // Get cash expenses from ExpenseMaster
@@ -519,7 +495,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const cashExpensesTotal = cashExpenses[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Cash expenses from ExpenseMaster:", cashExpensesTotal);
 
         // Get cash expenses from CashTransaction (expense payments in cash)
         const cashTransactionExpensesQuery = {
@@ -532,7 +507,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
         }
         const cashTransactionExpenses = await CashTransaction.find(cashTransactionExpensesQuery).lean();
         const cashTransactionExpensesTotal = cashTransactionExpenses.reduce((sum, t) => sum + (t.amount || 0), 0);
-        console.log("[getReceiptPaymentAccount] Cash transaction expenses:", cashTransactionExpensesTotal);
 
         // Other expenses from LoanMaster (transactionType="Expense") paid in Cash
         const otherCashExpenses = await LoanMaster.aggregate([
@@ -552,7 +526,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const otherCashExpensesTotal = otherCashExpenses[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Other cash expenses from LoanMaster:", otherCashExpensesTotal);
 
         const bankExpenses = await ExpenseMaster.aggregate([
             {
@@ -570,7 +543,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const bankExpensesTotal = bankExpenses[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Bank expenses from ExpenseMaster:", bankExpensesTotal);
 
         // Other expenses from LoanMaster (transactionType="Expense") paid via Bank
         const otherBankExpenses = await LoanMaster.aggregate([
@@ -590,7 +562,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const otherBankExpensesTotal = otherBankExpenses[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Other bank expenses from LoanMaster:", otherBankExpensesTotal);
 
         // Get cash loans from LoanMaster
         const cashLoans = await LoanMaster.aggregate([
@@ -610,7 +581,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const cashLoansTotal = cashLoans[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Cash loans from LoanMaster:", cashLoansTotal);
 
         // Get cash loans from CashTransaction (loan payments in cash)
         const cashTransactionLoansQuery = {
@@ -623,7 +593,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
         }
         const cashTransactionLoans = await CashTransaction.find(cashTransactionLoansQuery).lean();
         const cashTransactionLoansTotal = cashTransactionLoans.reduce((sum, t) => sum + (t.amount || 0), 0);
-        console.log("[getReceiptPaymentAccount] Cash transaction loans:", cashTransactionLoansTotal);
 
         // Get cash FD payments from CashTransaction (FD creation paid in cash)
         const cashTransactionFDQuery = {
@@ -636,7 +605,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
         }
         const cashTransactionFD = await CashTransaction.find(cashTransactionFDQuery).lean();
         const cashTransactionFDTotal = cashTransactionFD.reduce((sum, t) => sum + (t.amount || 0), 0);
-        console.log("[getReceiptPaymentAccount] Cash transaction FD:", cashTransactionFDTotal);
 
         // Get cash-to-bank conversions (cash debit) - stored as "other" transaction type
         const cashToBankQuery = {
@@ -650,7 +618,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
         }
         const cashToBankTransactions = await CashTransaction.find(cashToBankQuery).lean();
         const cashToBankTotal = cashToBankTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-        console.log("[getReceiptPaymentAccount] Cash to bank conversions:", cashToBankTotal);
 
         const bankLoans = await LoanMaster.aggregate([
             {
@@ -669,34 +636,19 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         ]);
         const bankLoansTotal = bankLoans[0]?.total || 0;
-        console.log("[getReceiptPaymentAccount] Bank loans:", bankLoansTotal);
 
         // Payments from PaymentMaster are always bank payments (they require bankId)
         // Calculate total cash receipts (from RecoveryMaster only)
         const totalCashReceipts = cashReceiptsTotal + cashTransactionFDTotal;
-        console.log("[getReceiptPaymentAccount] Total cash receipts:", totalCashReceipts, "= cashReceiptsTotal:", cashReceiptsTotal);
 
         // Calculate total cash payments (expenses + loans + FD + payments + cash-to-bank from CashTransaction)
         const totalCashPayments = cashExpensesTotal +
             cashLoansTotal +
             cashTransactionPaymentTotal + cashToBankTotal;
-        console.log("[getReceiptPaymentAccount] Total cash payments:", totalCashPayments, {
-            cashExpensesTotal,
-            cashTransactionExpensesTotal,
-            otherCashExpensesTotal,
-            cashLoansTotal,
-            cashTransactionLoansTotal,
-            cashTransactionFDTotal,
-            cashTransactionPaymentTotal,
-            cashToBankTotal
-        });
 
         const closingCashBalance = totalCashPayments - openingCash - totalCashReceipts;
         const closingBankBalance = openingBank + bankReceiptsTotal - bankExpensesTotal - otherBankExpensesTotal - bankLoansTotal - paymentTotal;
-        console.log("[getReceiptPaymentAccount] Closing balances:", { closingCashBalance, closingBankBalance });
-
         const totalPayments = Object.values(expensesByType).reduce((sum, val) => sum + val, 0) + loanTotal + paymentTotal;
-        console.log("[getReceiptPaymentAccount] Total payments:", totalPayments);
 
         const result = {
             period: {
@@ -738,7 +690,6 @@ export const getReceiptPaymentAccount = async (req, res) => {
             }
         };
 
-        console.log("[getReceiptPaymentAccount] Final result:", JSON.stringify(result, null, 2));
         return apiResponse.success(res, "Receipt & Payment Account generated successfully", result);
 
     } catch (error) {
@@ -749,173 +700,39 @@ export const getReceiptPaymentAccount = async (req, res) => {
 };
 
 /**
- * Get Income & Expense Account for a date range
+ * Get Income & Expense Account for a date range.
+ * Uses master mapping (IncomeExpenseHeads) to map GroupLedger headName to HeaderName/ItemName.
+ * Transaction source: GroupLedger (section income/expense) - fields used: groupId, date, headName, amount, section.
+ * Matching: normalize headName to ItemName (LedgerCode is not stored in GroupLedger; match by name only).
  */
 export const getIncomeExpenseAccount = async (req, res) => {
     try {
         const { groupId, fromDate, toDate } = req.query;
-        console.log("[getIncomeExpenseAccount] Input params:", { groupId, fromDate, toDate });
 
         if (!groupId) {
             return apiResponse.error(res, "groupId is required", 400);
         }
 
-        // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-        console.log("[getIncomeExpenseAccount] Admin place:", adminPlace);
-
-        // Verify group exists and belongs to admin's place
         const accessCheck = await verifyGroupAccess(groupId, adminPlace);
         if (!accessCheck.valid) {
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
         const group = accessCheck.group;
-        console.log("[getIncomeExpenseAccount] Group verified:", group._id);
 
-        // Parse dates - if not provided, use full range (no date filtering)
         let from = null;
         let to = null;
         if (fromDate && toDate) {
-            from = new Date(fromDate);
-            from.setHours(0, 0, 0, 0);
-            to = new Date(toDate);
-            to.setHours(23, 59, 59, 999);
+            const parsedFrom = parseDate(fromDate);
+            const parsedTo = parseDate(toDate);
+            if (parsedFrom instanceof Date && !isNaN(parsedFrom.getTime())) from = parsedFrom;
+            if (parsedTo instanceof Date && !isNaN(parsedTo.getTime())) to = parsedTo;
         }
-        console.log("[getIncomeExpenseAccount] Date range:", { from, to });
+        if (from) from.setHours(0, 0, 0, 0);
+        if (to) to.setHours(23, 59, 59, 999);
 
-        // Build date filter condition
-        const dateFilter = (from && to) ? { date: { $gte: from, $lte: to } } : {};
-        console.log("[getIncomeExpenseAccount] Date filter:", dateFilter);
-
-        // Try to use ledger first, fallback to old calculation if ledger is empty
-        const ledgerQuery = {
-            groupId: group._id,
-            section: { $in: ["income", "expense"] },
-            ...dateFilter
-        };
-        console.log("[getIncomeExpenseAccount] Ledger query:", ledgerQuery);
-
-        const ledgerEntries = await GroupLedger.find(ledgerQuery).lean();
-        console.log("[getIncomeExpenseAccount] Ledger entries found:", ledgerEntries.length);
-
-        let expensesByType = {};
-        let incomeByHead = {};
-        let incomeTotal = 0;
-        let totalExpenses = 0;
-
-        if (ledgerEntries.length > 0) {
-            // Use ledger data
-            console.log("[getIncomeExpenseAccount] Using ledger data");
-            ledgerEntries.forEach(entry => {
-                if (entry.section === "expense") {
-                    const headName = entry.headName || "Other";
-                    expensesByType[headName] = (expensesByType[headName] || 0) + entry.amount;
-                    totalExpenses += entry.amount;
-                } else if (entry.section === "income") {
-                    const headName = entry.headName || "Other";
-                    incomeByHead[headName] = (incomeByHead[headName] || 0) + entry.amount;
-                    incomeTotal += entry.amount;
-                }
-            });
-            console.log("[getIncomeExpenseAccount] Expenses from ledger:", expensesByType);
-            console.log("[getIncomeExpenseAccount] Income from ledger:", incomeByHead);
-        } else {
-            console.log("[getIncomeExpenseAccount] No ledger entries, using fallback calculation");
-            // Fallback to old calculation
-            // Expenses: Group ExpenseMaster by expenseType
-            const expenses = await ExpenseMaster.aggregate([
-                {
-                    $match: {
-                        groupId: group._id,
-                        ...dateFilter
-                    }
-                },
-                {
-                    $group: {
-                        _id: "$expenseType",
-                        total: { $sum: { $ifNull: ["$amount", 0] } }
-                    }
-                }
-            ]);
-            expenses.forEach(exp => {
-                expensesByType[exp._id] = exp.total;
-            });
-            console.log("[getIncomeExpenseAccount] Expenses from ExpenseMaster:", expensesByType);
-
-            // Other expenses from LoanMaster where transactionType="Expense"
-            const otherExpenses = await LoanMaster.aggregate([
-                {
-                    $match: {
-                        groupId: group._id,
-                        transactionType: "Expense",
-                        ...dateFilter
-                    }
-                },
-                {
-                    $group: {
-                        _id: null,
-                        total: { $sum: { $ifNull: ["$amount", 0] } }
-                    }
-                }
-            ]);
-            const otherExpensesTotal = otherExpenses[0]?.total || 0;
-            if (otherExpensesTotal > 0) {
-                expensesByType["Other"] = otherExpensesTotal;
-            }
-            console.log("[getIncomeExpenseAccount] Other expenses from LoanMaster:", otherExpensesTotal);
-
-            // Income: Sum of Member Fees from RecoveryMaster
-            const memberFees = await RecoveryMaster.aggregate([
-                {
-                    $match: {
-                        groupId: group._id,
-                        ...dateFilter
-                    }
-                },
-                { $unwind: "$recoveries" },
-                {
-                    $group: {
-                        _id: null,
-                        total: {
-                            $sum: {
-                                $add: [
-                                    { $ifNull: ["$recoveries.amounts.memFeesSHG", 0] },
-                                    { $ifNull: ["$recoveries.amounts.memFeesSamiti", 0] }
-                                ]
-                            }
-                        }
-                    }
-                }
-            ]);
-            incomeTotal = memberFees[0]?.total || 0;
-            incomeByHead["Member Fee"] = incomeTotal;
-            console.log("[getIncomeExpenseAccount] Member fees income:", incomeTotal);
-
-            totalExpenses = Object.values(expensesByType).reduce((sum, val) => sum + val, 0);
-            console.log("[getIncomeExpenseAccount] Total expenses:", totalExpenses);
-        }
-
-        const surplus = incomeTotal - totalExpenses;
-        console.log("[getIncomeExpenseAccount] Surplus calculation:", { incomeTotal, totalExpenses, surplus });
-
-        const result = {
-            period: {
-                fromDate: from,
-                toDate: to
-            },
-            expenses: expensesByType,
-            income: incomeByHead,
-            surplus: surplus,
-            totals: {
-                expenses: totalExpenses,
-                income: incomeTotal
-            },
-            netProfit: surplus // Alias for surplus
-        };
-
-        console.log("[getIncomeExpenseAccount] Final result:", JSON.stringify(result, null, 2));
+        const result = await buildIncomeExpenseReport(group._id, from, to);
         return apiResponse.success(res, "Income & Expense Account generated successfully", result);
-
     } catch (error) {
         console.error("Error generating Income & Expense Account:", error);
         return apiResponse.error(res, error.message, 500);
@@ -1059,21 +876,105 @@ export const getBalanceSheet = async (req, res) => {
             // Bank: Calculated balance from all bank transactions up to asOnDate
             const bankBalance = await calculateBankBalance(groupId, asOn);
 
-            // Use old structure for backward compatibility
+            // Saving and FD are Liabilities (group owes members), not Assets
             assetsByHead = {
-                "Saving": savingTotal,
-                "FD": fdTotal,
                 "Loan Outstanding": loanTotal,
                 "Cash": cashBalance,
                 "Bank": bankBalance
             };
-            assetsTotal = loanTotal + cashBalance + bankBalance + savingTotal + fdTotal;
+            assetsTotal = loanTotal + cashBalance + bankBalance;
 
             liabilitiesByHead = {
-                "Surplus": cumulativeSurplus
+                "Surplus": cumulativeSurplus,
+                "Saving": savingTotal,
+                "FD": fdTotal
             };
-            liabilitiesTotal = cumulativeSurplus;
+            liabilitiesTotal = cumulativeSurplus + savingTotal + fdTotal;
         }
+
+        // Remove "Loan Recover" from assets – asset is REMAINING loan (what members owe), not recovered amount
+        delete assetsByHead["Loan Recover"];
+
+        // Cash: same as getCashAmount - GroupMaster.current_cash_balance (total cash in hand)
+        // Bank: same as bank screens - sum of current_balance of all banks linked to group (total all bank in hand)
+        const cashBalance = Number(group.current_cash_balance) || 0;
+        const bankIds = [...new Set([...(group.bankmasters && Array.isArray(group.bankmasters) ? group.bankmasters : []), ...(group.bankmaster ? [group.bankmaster] : [])].filter(Boolean).map((id) => id.toString()))];
+        const banks = bankIds.length > 0 ? await BankMaster.find({ _id: { $in: bankIds } }).select("current_balance").lean() : [];
+        const bankBalance = banks.reduce((sum, b) => sum + (Number(b.current_balance) || 0), 0);
+
+        // Loan REMAINING (assets) = total disbursed − total recovered. NOT recovered amount.
+        const loanDisbursedAgg = await LoanMaster.aggregate([
+            { $match: { groupId: group._id, transactionType: "Loan", date: { $lte: asOn }, status: "approved" } },
+            { $group: { _id: null, total: { $sum: { $ifNull: ["$amount", 0] } } } }
+        ]);
+        const totalLoanDisbursed = loanDisbursedAgg[0]?.total || 0;
+        const loanRecoveredAgg = await RecoveryMaster.aggregate([
+            { $match: { groupId: group._id, date: { $lte: asOn } } },
+            { $unwind: "$recoveries" },
+            { $group: { _id: null, total: { $sum: { $ifNull: ["$recoveries.amounts.loan", 0] } } } }
+        ]);
+        const totalLoanRecovered = loanRecoveredAgg[0]?.total || 0;
+        const loanRemaining = Math.max(0, totalLoanDisbursed - totalLoanRecovered);
+
+        // MEMBERSHIP FEE RECOVERABLE (assets) = remaining membership fee demand from MemberRevenueDemand (SHG + Group)
+        const membershipFeeAgg = await MemberRevenueDemand.aggregate([
+            {
+                $match: {
+                    groupId: group._id,
+                    revenueType: { $in: ["membership_fees_shg", "membership_fees_group"] },
+                },
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalDemand: { $sum: { $ifNull: ["$amount", 0] } },
+                    totalPaid: { $sum: { $ifNull: ["$paidAmount", 0] } },
+                },
+            },
+        ]);
+        const totalMembershipFeeDemand = membershipFeeAgg[0]?.totalDemand || 0;
+        const totalMembershipFeePaid = membershipFeeAgg[0]?.totalPaid || 0;
+        const membershipFeeRecoverableRemaining = Math.max(0, totalMembershipFeeDemand - totalMembershipFeePaid);
+
+        // GROUP CHARGES RECOVERABLE (assets) = only charges with entryType "assets" in GroupMaster.charges; demand minus paid from RecoveryMaster
+        const memberCount = await Member.countDocuments({ group: group._id });
+        const assetCharges = (group.charges || []).filter((c) => c.isActive !== false && (c.entryType || "expense") === "assets");
+        const assetChargeNames = new Set(assetCharges.map((c) => (c.name || "").trim()).filter(Boolean));
+        const totalChargesDemand = assetCharges.reduce((sum, c) => sum + (Number(c.amount) || 0) * memberCount, 0);
+        const recoverySessions = await RecoveryMaster.find({ groupId: group._id, date: { $lte: asOn } })
+            .select("recoveries.amounts.charges")
+            .lean();
+        let totalChargesPaid = 0;
+        for (const session of recoverySessions) {
+            for (const rec of session.recoveries || []) {
+                const charges = rec.amounts?.charges || {};
+                for (const [chargeName, amt] of Object.entries(charges)) {
+                    if (assetChargeNames.has((chargeName || "").trim())) {
+                        totalChargesPaid += Number(amt) || 0;
+                    }
+                }
+            }
+        }
+        const chargesUnpaidRemaining = Math.max(0, totalChargesDemand - totalChargesPaid);
+
+        assetsByHead["Cash"] = cashBalance;
+        assetsByHead["Bank"] = bankBalance;
+        assetsByHead["Loan Outstanding"] = loanRemaining;
+        assetsByHead["MEMBERSHIP FEE RECOVERABLE"] = membershipFeeRecoverableRemaining;
+        assetsByHead["GROUP CHARGES RECOVERABLE"] = chargesUnpaidRemaining;
+
+        // Saving and FD are Liabilities (group owes members), not Assets – move from assets to liabilities
+        const savingVal = Number(assetsByHead["Saving"]) || 0;
+        const fdVal = Number(assetsByHead["FD"]) || 0;
+        if (savingVal > 0 || fdVal > 0) {
+            liabilitiesByHead["Saving"] = (Number(liabilitiesByHead["Saving"]) || 0) + savingVal;
+            liabilitiesByHead["FD"] = (Number(liabilitiesByHead["FD"]) || 0) + fdVal;
+            delete assetsByHead["Saving"];
+            delete assetsByHead["FD"];
+            liabilitiesTotal += savingVal + fdVal;
+        }
+
+        assetsTotal = Object.keys(assetsByHead).reduce((sum, key) => sum + (Number(assetsByHead[key]) || 0), 0);
 
         const result = {
             asOnDate: asOn,

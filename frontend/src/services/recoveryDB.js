@@ -133,11 +133,8 @@ export async function initRecoveryDB() {
         try {
             // Use the imported Dexie instance instead of dynamic import
             await Dexie.delete('recoverydb');
-        } catch (deleteError) {
+        } catch {
             // Ignore errors if database doesn't exist
-            if (import.meta.env.DEV) {
-            console.log('No existing database to delete or delete failed:', deleteError.message);
-            }
         }
 
         // Create database

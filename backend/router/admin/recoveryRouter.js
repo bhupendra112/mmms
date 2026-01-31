@@ -1,5 +1,5 @@
 import express from "express";
-import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, getGroupRecoveryDetails, exportRecoveryPDF, getMemberRecoveryStatus, approveRecovery, rejectRecovery } from "../../controller/admin/recoveryController.js";
+import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, addPenaltyDemand, getGroupRecoveryDetails, exportRecoveryPDF, getMemberRecoveryStatus, approveRecovery, rejectRecovery } from "../../controller/admin/recoveryController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const Router = express.Router();
@@ -27,6 +27,9 @@ Router.get("/loan-totals", authAdmin, getMemberLoanTotals);
 
 // Get remaining revenue demands for a member (from MemberRevenueDemand)
 Router.get("/revenue-remaining", authAdmin, getMemberRevenueRemaining);
+
+// Add penalty demand for a member (decide penalty; recover in Demand Recovery)
+Router.post("/add-penalty-demand", authAdmin, addPenaltyDemand);
 
 // List recoveries
 Router.get("/list", authAdmin, listRecoveries);

@@ -117,7 +117,24 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         opening: 0,
         closing: 0,
       },
-
+      penalty: {
+        prev: dd.penalty?.prevDemand ?? 0,
+        curr: dd.penalty?.currDemand ?? 0,
+        total: dd.penalty?.totalDemand ?? 0,
+        actual: dd.penalty?.actualPaid ?? 0,
+        unpaid: dd.penalty?.unpaidDemand ?? 0,
+        opening: 0,
+        closing: 0,
+      },
+      other: {
+        prev: 0,
+        curr: 0,
+        total: (recovery?.amounts?.other1 ?? 0) + (recovery?.amounts?.other2 ?? 0) + (recovery?.amounts?.other ?? 0),
+        actual: (recovery?.amounts?.other1 ?? 0) + (recovery?.amounts?.other2 ?? 0) + (recovery?.amounts?.other ?? 0),
+        unpaid: 0,
+        opening: 0,
+        closing: 0,
+      },
       charges: {
         prev: 0,
         curr: 0,
@@ -212,11 +229,11 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         closing: 0,
       },
       penalty: {
-        prev: 0,
-        curr: 0,
-        total: recovery?.amounts?.penalty ?? 0,
-        actual: recovery?.amounts?.penalty ?? 0,
-        unpaid: 0,
+        prev: dd.penalty?.prevDemand ?? 0,
+        curr: dd.penalty?.currDemand ?? 0,
+        total: dd.penalty?.totalDemand ?? 0,
+        actual: dd.penalty?.actualPaid ?? 0,
+        unpaid: dd.penalty?.unpaidDemand ?? 0,
         opening: 0,
         closing: 0,
       },
@@ -253,6 +270,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
     memFeesSHG: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 },
     memFeesSamiti: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 },
     memFeesGroup: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 },
+    penalty: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 },
     charges: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0, chargesDue: {}, actualCharges: {} },
   };
 };

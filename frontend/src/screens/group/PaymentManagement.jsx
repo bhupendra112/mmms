@@ -325,7 +325,6 @@ export default function PaymentManagement() {
             );
 
             const validMembers = membersWithSavingsData.filter(m => m !== null);
-            console.log(`Found ${validMembers.length} members with savings out of ${members.length} total members`);
             setMembersWithSavings(validMembers);
         } catch (err) {
             console.error("Error loading members with savings:", err);
@@ -422,9 +421,7 @@ export default function PaymentManagement() {
                 paymentDate: new Date().toISOString(),
             };
 
-            console.log('[PAYMENT] Creating payment with data:', paymentData);
             const res = await createPayment(paymentData);
-            console.log('[PAYMENT] Payment creation response:', res);
 
             if (res?.success) {
                 const message = isOnline
@@ -435,21 +432,10 @@ export default function PaymentManagement() {
                 // Trigger sync if online
                 if (isOnline) {
                     try {
-                        console.log('[PAYMENT] Triggering sync now...');
-                        const syncResult = await syncManager.syncNow();
-                        console.log('[PAYMENT] Sync result:', syncResult);
-
-                        // Check sync queue status
-                        const stats = await syncManager.getStats();
-                        console.log('[PAYMENT] Sync queue stats:', stats);
+                        await syncManager.syncNow();
                     } catch (syncError) {
-                        console.error('[PAYMENT] Error syncing payment:', syncError);
-                        alert(`Payment saved but sync failed: ${syncError.message}. It will retry automatically.`);
+                        alert(`Payment saved but sync failed: ${syncError?.message || "Unknown error"}. It will retry automatically.`);
                     }
-                } else {
-                    // Check sync queue even when offline
-                    const stats = await syncManager.getStats();
-                    console.log('[PAYMENT] Payment queued for sync (offline). Queue stats:', stats);
                 }
 
                 // Reset form
@@ -545,9 +531,7 @@ export default function PaymentManagement() {
                 paymentDate: new Date().toISOString(),
             };
 
-            console.log('[PAYMENT] Creating savings withdrawal with data:', paymentData);
             const res = await createPayment(paymentData);
-            console.log('[PAYMENT] Savings withdrawal creation response:', res);
 
             if (res?.success) {
                 const message = isOnline
@@ -558,21 +542,10 @@ export default function PaymentManagement() {
                 // Trigger sync if online
                 if (isOnline) {
                     try {
-                        console.log('[PAYMENT] Triggering sync now for savings withdrawal...');
-                        const syncResult = await syncManager.syncNow();
-                        console.log('[PAYMENT] Sync result:', syncResult);
-
-                        // Check sync queue status
-                        const stats = await syncManager.getStats();
-                        console.log('[PAYMENT] Sync queue stats:', stats);
+                        await syncManager.syncNow();
                     } catch (syncError) {
-                        console.error('[PAYMENT] Error syncing savings withdrawal:', syncError);
-                        alert(`Payment saved but sync failed: ${syncError.message}. It will retry automatically.`);
+                        alert(`Payment saved but sync failed: ${syncError?.message || "Unknown error"}. It will retry automatically.`);
                     }
-                } else {
-                    // Check sync queue even when offline
-                    const stats = await syncManager.getStats();
-                    console.log('[PAYMENT] Savings withdrawal queued for sync (offline). Queue stats:', stats);
                 }
 
                 // Reset form

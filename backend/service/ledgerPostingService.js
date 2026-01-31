@@ -60,7 +60,7 @@ export const postTransaction = async (options) => {
 
         // Normalize head name
         const normalizedHeadName = normalizeHeadName(headName);
-        
+
         // Determine section if not provided (use mapping)
         let finalSection = section;
         if (!finalSection) {
@@ -95,11 +95,24 @@ export const postTransaction = async (options) => {
             }
         }
 
-        // Check for existing ledger entry (deduplication)
-        const existingEntry = await GroupLedger.findOne({
-            referenceModel,
-            referenceId
-        });
+        // Deduplication: RecoveryMaster has multiple entries per recovery (one per head per member); others are one per reference.
+        let existingEntry;
+        if (referenceModel === "RecoveryMaster") {
+            existingEntry = await GroupLedger.findOne({
+                referenceModel,
+                referenceId,
+                headName: normalizedHeadName,
+                ...(memberId ? { memberId } : {})
+            });
+            if (normalizedHeadName.toLowerCase().includes("penalty")) {
+                console.log("[LEDGER_POSTING] RecoveryMaster penalty:", { headName: normalizedHeadName, amount, section: finalSection, existingEntry: !!existingEntry, memberId: memberId?.toString?.() });
+            }
+        } else {
+            existingEntry = await GroupLedger.findOne({
+                referenceModel,
+                referenceId
+            });
+        }
 
         const ledgerData = {
             groupId,
@@ -160,13 +173,13 @@ export const removeTransaction = async (referenceModel, referenceId) => {
             referenceModel,
             referenceId
         });
-        
+
         console.log("[LEDGER_POSTING] Removed ledger entries:", {
             referenceModel,
             referenceId,
             deletedCount: result.deletedCount
         });
-        
+
         return result.deletedCount > 0;
     } catch (error) {
         console.error("[LEDGER_POSTING] Error removing transaction:", error);
@@ -186,7 +199,7 @@ export const updateTransaction = async (referenceModel, referenceId, newTransact
     try {
         // Remove old entries
         await removeTransaction(referenceModel, referenceId);
-        
+
         // Create new entries
         const results = [];
         for (const tx of newTransactions) {
@@ -199,7 +212,7 @@ export const updateTransaction = async (referenceModel, referenceId, newTransact
                 results.push(entry);
             }
         }
-        
+
         return results;
     } catch (error) {
         console.error("[LEDGER_POSTING] Error updating transaction:", error);

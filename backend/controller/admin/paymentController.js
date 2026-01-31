@@ -259,10 +259,11 @@ export const createPayment = async (req, res) => {
                 return apiResponse.error(res, "Payment already exists for this FD", 400);
             }
         } else if (payload.paymentType === "saving_withdrawal") {
-            // Verify member has sufficient savings
+            // Verify member has sufficient savings (principal + interest)
             const savingsData = await getMemberSavingsData(payload.memberId);
-            if (savingsData.availableSavings < payload.amount) {
-                return apiResponse.error(res, `Insufficient savings. Available: ₹${savingsData.availableSavings}`, 400);
+            const maxPayout = (savingsData.availableSavings ?? 0) + (savingsData.interestOnSavings ?? 0);
+            if (payload.amount > maxPayout) {
+                return apiResponse.error(res, `Amount exceeds maximum payout (savings + interest): ₹${maxPayout.toFixed(2)}`, 400);
             }
         }
 
@@ -387,46 +388,99 @@ export const createPayment = async (req, res) => {
         // Post ledger entry for approved payments (admin payments are immediately approved)
         if (isAdmin && payment.status === "approved") {
             if (payment.paymentType === "saving_withdrawal") {
-                const headInfo = await findOrCreateHead(group._id, "Saving Return", "liability");
+                const savingsData = await getMemberSavingsData(member._id);
+                const availableSavings = savingsData.availableSavings ?? 0;
+                const interestOnSavings = savingsData.interestOnSavings ?? 0;
+                const interestAmount = Math.min(
+                    Math.max(0, paymentAmount - availableSavings),
+                    interestOnSavings
+                );
+                const principalAmount = Math.round((paymentAmount - interestAmount) * 100) / 100;
+
+                const headInfoReturn = await findOrCreateHead(group._id, "Saving Return", "liability");
                 await postTransaction({
                     sourceDoc: payment,
                     headName: "Saving Return",
-                    headType: headInfo?.headType || "groupMaster",
-                    headId: headInfo?.headId,
+                    headType: headInfoReturn?.headType || "groupMaster",
+                    headId: headInfoReturn?.headId,
                     section: "liability",
-                    amount: paymentAmount,
+                    amount: principalAmount,
                     direction: "out",
                     groupId: group._id,
                     memberId: payment.memberId,
                     date: paymentDate,
-                    notes: `Saving withdrawal - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                    notes: `Saving withdrawal (principal) - Member: ${member.Member_Nm} (${member.Member_Id})`,
                     paymentMode: paymentMode,
                     bankId: paymentMode === "Bank" && bank ? bank._id : undefined,
                     referenceModel: "PaymentMaster",
                     referenceId: payment._id,
                     createdBy: req.user?.id || "admin",
                 });
+                if (interestAmount > 0) {
+                    await postTransaction({
+                        sourceDoc: payment,
+                        headName: "INTEREST PAID ON MEMBER SAVINGS",
+                        headType: "groupMaster",
+                        headId: headInfoReturn?.headId || payment._id,
+                        section: "expense",
+                        amount: interestAmount,
+                        direction: "out",
+                        groupId: group._id,
+                        memberId: payment.memberId,
+                        date: paymentDate,
+                        notes: `Interest on savings - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                        paymentMode: paymentMode,
+                        bankId: paymentMode === "Bank" && bank ? bank._id : undefined,
+                        referenceModel: "PaymentMasterInterest",
+                        referenceId: payment._id,
+                        createdBy: req.user?.id || "admin",
+                    });
+                }
             } else if (payment.paymentType === "fd_maturity" && payment.fdId) {
                 const fd = await FDMaster.findById(payment.fdId).lean();
-                const headInfo = await findOrCreateHead(group._id, "FD Return", "liability");
+                const fdPrincipal = fd?.amount ?? 0;
+                const principalPosted = Math.round(Math.min(paymentAmount, fdPrincipal) * 100) / 100;
+                const interestPosted = Math.round(Math.max(0, paymentAmount - principalPosted) * 100) / 100;
+
+                const headInfoReturn = await findOrCreateHead(group._id, "FD Return", "liability");
                 await postTransaction({
                     sourceDoc: payment,
                     headName: "FD Return",
-                    headType: headInfo?.headType || "groupMaster",
-                    headId: headInfo?.headId,
+                    headType: headInfoReturn?.headType || "groupMaster",
+                    headId: headInfoReturn?.headId,
                     section: "liability",
-                    amount: paymentAmount,
+                    amount: principalPosted,
                     direction: "out",
                     groupId: group._id,
                     memberId: payment.memberId,
                     date: paymentDate,
-                    notes: `FD maturity payment - Amount: ₹${paymentAmount} - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                    notes: `FD maturity (principal) - Member: ${member.Member_Nm} (${member.Member_Id})`,
                     paymentMode: paymentMode,
                     bankId: paymentMode === "Bank" && bank ? bank._id : undefined,
                     referenceModel: "PaymentMaster",
                     referenceId: payment._id,
                     createdBy: req.user?.id || "admin",
                 });
+                if (interestPosted > 0) {
+                    await postTransaction({
+                        sourceDoc: payment,
+                        headName: "INTEREST PAID ON MEMBER'S F.D.",
+                        headType: "groupMaster",
+                        headId: headInfoReturn?.headId || payment._id,
+                        section: "expense",
+                        amount: interestPosted,
+                        direction: "out",
+                        groupId: group._id,
+                        memberId: payment.memberId,
+                        date: paymentDate,
+                        notes: `Interest on FD - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                        paymentMode: paymentMode,
+                        bankId: paymentMode === "Bank" && bank ? bank._id : undefined,
+                        referenceModel: "PaymentMasterFDInterest",
+                        referenceId: payment._id,
+                        createdBy: req.user?.id || "admin",
+                    });
+                }
             }
         }
 
@@ -691,48 +745,102 @@ export const approvePayment = async (req, res) => {
             console.log("[PAYMENT_APPROVE] FD marked as closed:", payment.fdId, "Status:", updatedFD?.status);
         }
 
-        // Post ledger entry when payment is approved
+        // Post ledger entry when payment is approved (split principal + interest for Income/Expense report)
         if (group) {
             if (payment.paymentType === "saving_withdrawal") {
-                const headInfo = await findOrCreateHead(payment.groupId, "Saving Return", "liability");
+                const savingsData = await getMemberSavingsData(payment.memberId);
+                const availableSavings = savingsData.availableSavings ?? 0;
+                const interestOnSavings = savingsData.interestOnSavings ?? 0;
+                const interestAmount = Math.min(
+                    Math.max(0, payment.amount - availableSavings),
+                    interestOnSavings
+                );
+                const principalAmount = Math.round((payment.amount - interestAmount) * 100) / 100;
+
+                const headInfoReturn = await findOrCreateHead(payment.groupId, "Saving Return", "liability");
                 await postTransaction({
                     sourceDoc: payment,
                     headName: "Saving Return",
-                    headType: headInfo?.headType || "groupMaster",
-                    headId: headInfo?.headId,
+                    headType: headInfoReturn?.headType || "groupMaster",
+                    headId: headInfoReturn?.headId,
                     section: "liability",
-                    amount: payment.amount,
+                    amount: principalAmount,
                     direction: "out",
                     groupId: payment.groupId,
                     memberId: payment.memberId,
                     date: payment.paymentDate,
-                    notes: `Saving withdrawal - Member: ${payment.memberName} (${payment.memberCode})`,
+                    notes: `Saving withdrawal (principal) - Member: ${payment.memberName} (${payment.memberCode})`,
                     paymentMode: payment.paymentMode || "Cash",
                     bankId: payment.bankId || undefined,
                     referenceModel: "PaymentMaster",
                     referenceId: payment._id,
                     createdBy: req.user?.id || "admin",
                 });
+                if (interestAmount > 0) {
+                    await postTransaction({
+                        sourceDoc: payment,
+                        headName: "INTEREST PAID ON MEMBER SAVINGS",
+                        headType: "groupMaster",
+                        headId: headInfoReturn?.headId || payment._id,
+                        section: "expense",
+                        amount: interestAmount,
+                        direction: "out",
+                        groupId: payment.groupId,
+                        memberId: payment.memberId,
+                        date: payment.paymentDate,
+                        notes: `Interest on savings - Member: ${payment.memberName} (${payment.memberCode})`,
+                        paymentMode: payment.paymentMode || "Cash",
+                        bankId: payment.bankId || undefined,
+                        referenceModel: "PaymentMasterInterest",
+                        referenceId: payment._id,
+                        createdBy: req.user?.id || "admin",
+                    });
+                }
             } else if (payment.paymentType === "fd_maturity" && payment.fdId) {
-                const headInfo = await findOrCreateHead(payment.groupId, "FD Return", "liability");
+                const fd = await FDMaster.findById(payment.fdId).lean();
+                const fdPrincipal = fd?.amount ?? 0;
+                const principalPosted = Math.round(Math.min(payment.amount, fdPrincipal) * 100) / 100;
+                const interestPosted = Math.round(Math.max(0, payment.amount - principalPosted) * 100) / 100;
+
+                const headInfoReturn = await findOrCreateHead(payment.groupId, "FD Return", "liability");
                 await postTransaction({
                     sourceDoc: payment,
                     headName: "FD Return",
-                    headType: headInfo?.headType || "groupMaster",
-                    headId: headInfo?.headId,
+                    headType: headInfoReturn?.headType || "groupMaster",
+                    headId: headInfoReturn?.headId,
                     section: "liability",
-                    amount: payment.amount,
+                    amount: principalPosted,
                     direction: "out",
                     groupId: payment.groupId,
                     memberId: payment.memberId,
                     date: payment.paymentDate,
-                    notes: `FD maturity payment - Amount: ₹${payment.amount} - Member: ${payment.memberName} (${payment.memberCode})`,
+                    notes: `FD maturity (principal) - Member: ${payment.memberName} (${payment.memberCode})`,
                     paymentMode: payment.paymentMode || "Cash",
                     bankId: payment.bankId || undefined,
                     referenceModel: "PaymentMaster",
                     referenceId: payment._id,
                     createdBy: req.user?.id || "admin",
                 });
+                if (interestPosted > 0) {
+                    await postTransaction({
+                        sourceDoc: payment,
+                        headName: "INTEREST PAID ON MEMBER'S F.D.",
+                        headType: "groupMaster",
+                        headId: headInfoReturn?.headId || payment._id,
+                        section: "expense",
+                        amount: interestPosted,
+                        direction: "out",
+                        groupId: payment.groupId,
+                        memberId: payment.memberId,
+                        date: payment.paymentDate,
+                        notes: `Interest on FD - Member: ${payment.memberName} (${payment.memberCode})`,
+                        paymentMode: payment.paymentMode || "Cash",
+                        bankId: payment.bankId || undefined,
+                        referenceModel: "PaymentMasterFDInterest",
+                        referenceId: payment._id,
+                        createdBy: req.user?.id || "admin",
+                    });
+                }
             }
         }
 

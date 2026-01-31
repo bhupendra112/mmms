@@ -675,6 +675,13 @@ export const getDemandDetails = async (groupId, memberId, date, testMode = false
             unpaidDemand: chargesUnpaidDemand,
             unpaidDemandTotal: chargesUnpaidTotal,
         },
+        penalty: {
+            prevDemand: 0,
+            currDemand: 0,
+            totalDemand: 0,
+            actualPaid: 0,
+            unpaidDemand: 0,
+        },
     };
 
     return {
@@ -685,22 +692,54 @@ export const getDemandDetails = async (groupId, memberId, date, testMode = false
 
 /**
  * Get member loan totals - computed from local IndexedDB
+ * Returns same shape as backend (recoveryController getMemberLoanTotals) so admin and group panel show same loan details.
  */
 export const getMemberLoanTotals = async (groupId, memberId, testMode = false) => {
-    const loans = await loanRepository.getMerged({ groupId, memberId });
+    const rawLoans = await loanRepository.getMerged({ groupId, memberId });
+    const memberIdStr = String(memberId);
 
-    const totals = loans.reduce((acc, loan) => {
-        const amount = parseFloat(loan.amount || 0);
-        const paid = parseFloat(loan.loanPaid || 0);
-        acc.totalLoan += amount;
-        acc.totalPaid += paid;
-        acc.totalRemaining += (amount - paid);
-        return acc;
-    }, { totalLoan: 0, totalPaid: 0, totalRemaining: 0 });
+    const approvedLoans = rawLoans.filter(
+        (loan) =>
+            (loan.transactionType === "Loan" || loan.transactionType == null) &&
+            (loan.status === "approved" || loan.status == null) &&
+            (String(loan.memberId) === memberIdStr || loan.memberId === memberId)
+    );
+
+    let totalLoanAmount = 0;
+    let totalLoanRecovered = 0;
+    approvedLoans.forEach((loan) => {
+        totalLoanAmount += parseFloat(loan.amount || 0);
+        totalLoanRecovered += parseFloat(loan.loanPaid || 0);
+    });
+    const remainingLoanAmount = Math.round(Math.max(0, totalLoanAmount - totalLoanRecovered));
+
+    const loanDetails = approvedLoans.map((loan) => ({
+        id: loan._id || loan.id,
+        amount: parseFloat(loan.amount) || 0,
+        date: loan.date,
+        installment_amount: loan.installment_amount != null ? parseFloat(loan.installment_amount) : null,
+        time_period: loan.time_period ?? null,
+        purpose: loan.purpose ?? null,
+        loan_rate: loan.loan_rate_snapshot != null ? parseFloat(loan.loan_rate_snapshot) : (loan.loan_rate != null ? parseFloat(loan.loan_rate) : null),
+        yogdanAmount: parseFloat(loan.yogdanAmount) || 0,
+        memberCode: loan.memberCode,
+        memberName: loan.memberName,
+    }));
 
     return {
         success: true,
-        data: totals,
+        data: {
+            totalLoanAmount,
+            totalLoanRecovered,
+            remainingLoanAmount,
+            loans: loanDetails,
+            openingYogdan: 0,
+            totalYogdanRecovered: 0,
+            remainingYogdanAmount: 0,
+            openingOverdueInterest: 0,
+            totalOverdueInterestRecovered: 0,
+            remainingOverdueInterestAmount: 0,
+        },
     };
 };
 

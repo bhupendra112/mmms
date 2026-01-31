@@ -168,18 +168,17 @@ export default function AmountBreakupForm({
               />
             );
           })()}
-          {(parseFloat(amountBreakup.penalty) || 0) > 0 && (
-            <Input
-              label="Penalty"
-              name="penalty"
-              type="number"
-              value={amountBreakup.penalty}
-              handleChange={(e) => onAmountChange('penalty', e.target.value)}
-              placeholder="Enter penalty amount"
-              step="1"
-              max={currentMemberSummary?.penalty?.total || undefined}
-            />
-          )}
+          <Input
+            label="Penalty (optional)"
+            name="penalty"
+            type="number"
+            value={amountBreakup.penalty}
+            handleChange={(e) => onAmountChange('penalty', e.target.value)}
+            placeholder="Enter penalty amount if applicable"
+            step="1"
+            min="0"
+            max={currentMemberSummary?.penalty?.total ?? undefined}
+          />
           {(parseFloat(amountBreakup.other) || 0) > 0 && (
             <Input
               label="Other"

@@ -42,23 +42,8 @@ export const createPayment = async (data) => {
         paymentDate: data.paymentDate || new Date().toISOString(),
     };
 
-    console.log('[PAYMENT_SERVICE] Creating payment:', {
-        isGroupPanel,
-        hasRequireApproval: !!payload.requireApproval,
-        source: payload.source,
-        status: payload.status,
-        paymentType: payload.paymentType,
-        amount: payload.amount,
-    });
-
     // Save to IndexedDB (will be synced to backend when online)
     const record = await paymentRepository.create(payload);
-
-    console.log('[PAYMENT_SERVICE] Payment record created:', {
-        uuid: record.uuid,
-        syncStatus: record.syncStatus,
-        payload: record.payload,
-    });
 
     return {
         success: true,

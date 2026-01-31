@@ -95,10 +95,10 @@ GroupLedgerSchema.index({ referenceModel: 1, referenceId: 1 }); // For deduplica
 GroupLedgerSchema.index({ section: 1, date: 1 });
 GroupLedgerSchema.index({ groupId: 1, section: 1, date: 1 }); // For financial reports
 
-// Compound unique index to prevent duplicate entries for same reference
+// Unique index only for non-RecoveryMaster (one entry per reference). RecoveryMaster has multiple entries per recovery.
 GroupLedgerSchema.index(
     { referenceModel: 1, referenceId: 1 },
-    { unique: true, sparse: true } // Sparse allows null values but ensures uniqueness when present
+    { unique: true, sparse: true, partialFilterExpression: { referenceModel: { $ne: "RecoveryMaster" } } }
 );
 
 export default mongoose.model("GroupLedger", GroupLedgerSchema);

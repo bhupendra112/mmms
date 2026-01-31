@@ -117,6 +117,12 @@ export default function DemandRecovery() {
   const [activeLoans, setActiveLoans] = useState({});
   const [demandSummaries, setDemandSummaries] = useState({});
 
+  // Add penalty for member (decide penalty; then recover in form below)
+  const [penaltyAmountToAdd, setPenaltyAmountToAdd] = useState("");
+  const [penaltyNotesToAdd, setPenaltyNotesToAdd] = useState("");
+  const [addPenaltyLoading, setAddPenaltyLoading] = useState(false);
+  const [addPenaltyError, setAddPenaltyError] = useState(null);
+
   // Determine active group
   const activeGroup = currentGroup || selectedGroup;
 
@@ -149,6 +155,9 @@ export default function DemandRecovery() {
     setOnlineRef("");
     setSelectedBankId("");
     setScreenshot(null);
+    setPenaltyAmountToAdd("");
+    setPenaltyNotesToAdd("");
+    setAddPenaltyError(null);
   };
 
   // Responsive-safe wrapper demand summary (FIX: always pass required args)
@@ -326,11 +335,8 @@ export default function DemandRecovery() {
 
     recovery.getDemandDetails(activeGroup.id, member.id, today)
       .then((res) => {
-        console.log("[DEBUG DemandRecovery] getDemandDetails response", { memberId: member.id, success: res?.success, hasData: !!res?.data });
         if (res?.success && res?.data) {
-          // FIX: Store res.data.data (the actual demandDetails) instead of res.data (the wrapper)
           const demandDetails = res.data.data || res.data;
-          console.log("[DEBUG DemandRecovery] demandDetails for member", member.id, "interest", demandDetails?.interest);
           setDemandSummaries((prev) => ({ ...prev, [member.id]: demandDetails }));
         }
       })
@@ -381,6 +387,54 @@ export default function DemandRecovery() {
     resetForm();
   };
 
+  // Add penalty demand for current member (decide penalty; then recover via form below)
+  const handleAddPenalty = async () => {
+    const amount = parseFloat(penaltyAmountToAdd);
+    if (!(amount > 0)) {
+      setAddPenaltyError("Enter a valid penalty amount.");
+      return;
+    }
+    if (!activeGroup?.id || !currentMember?.id) {
+      setAddPenaltyError("Group or member missing.");
+      return;
+    }
+    setAddPenaltyError(null);
+    setAddPenaltyLoading(true);
+    try {
+      await recoveryOnline.addPenaltyDemand(activeGroup.id, currentMember.id, amount, penaltyNotesToAdd.trim() || "");
+      setPenaltyAmountToAdd("");
+      setPenaltyNotesToAdd("");
+      const today = new Date().toLocaleDateString("en-GB");
+      const res = await recovery.getDemandDetails(activeGroup.id, currentMember.id, today);
+      if (res?.success && res?.data) {
+        const demandDetails = res.data.data || res.data;
+        setDemandSummaries((prev) => ({ ...prev, [currentMember.id]: demandDetails }));
+      }
+    } catch (err) {
+      setAddPenaltyError(err?.response?.data?.message || err?.message || "Failed to add penalty.");
+    } finally {
+      setAddPenaltyLoading(false);
+    }
+  };
+
+  // Compute total from amount breakup (for auto-calc when user edits breakup fields)
+  const totalFromBreakup = (breakup) => {
+    const saving = parseFloat(breakup.saving ?? 0) || 0;
+    const loan = parseFloat(breakup.loan ?? 0) || 0;
+    const fd = parseFloat(breakup.fd ?? 0) || 0;
+    const interest = parseFloat(breakup.interest ?? 0) || 0;
+    const yogdan = parseFloat(breakup.yogdan ?? 0) || 0;
+    const memFeesSHG = parseFloat(breakup.memFeesSHG ?? 0) || 0;
+    const memFeesSamiti = parseFloat(breakup.memFeesSamiti ?? 0) || 0;
+    const memFeesGroup = parseFloat(breakup.memFeesGroup ?? 0) || 0;
+    const penalty = parseFloat(breakup.penalty ?? 0) || 0;
+    const other = parseFloat(breakup.other ?? 0) || 0;
+    const chargesTotal = breakup.charges && typeof breakup.charges === "object"
+      ? Object.values(breakup.charges).reduce((sum, amt) => sum + (parseFloat(amt ?? 0) || 0), 0)
+      : 0;
+    return saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + memFeesGroup + penalty + other + chargesTotal;
+  };
+
   // Amount change validation
   const handleAmountChange = (fieldName, value) => {
     const numValue = parseFloat(value) || 0;
@@ -393,21 +447,30 @@ export default function DemandRecovery() {
       maxValue = currentMemberSummary?.[fieldName]?.total || 0;
     }
 
+    const nextBreakup = fieldName === "charges" && typeof value === "object"
+      ? { ...amountBreakup, charges: value || {} }
+      : { ...amountBreakup, [fieldName]: value };
+
     if (fieldName === "saving") {
-      setAmountBreakup({ ...amountBreakup, [fieldName]: value });
+      setAmountBreakup(nextBreakup);
+      setTotalAmount(totalFromBreakup(nextBreakup) > 0 ? totalFromBreakup(nextBreakup).toFixed(2) : "");
       setAutoCalculated(false);
       return;
     }
 
     if (value === "" || value == null) {
-      setAmountBreakup({ ...amountBreakup, [fieldName]: value });
+      setAmountBreakup(nextBreakup);
+      setTotalAmount(totalFromBreakup(nextBreakup) > 0 ? totalFromBreakup(nextBreakup).toFixed(2) : "");
       setAutoCalculated(false);
     } else if (numValue <= maxValue) {
-      setAmountBreakup({ ...amountBreakup, [fieldName]: value });
+      setAmountBreakup(nextBreakup);
+      setTotalAmount(totalFromBreakup(nextBreakup) > 0 ? totalFromBreakup(nextBreakup).toFixed(2) : "");
       setAutoCalculated(false);
     } else {
       alert(`Amount cannot exceed the due amount of ₹${maxValue.toLocaleString()}`);
-      setAmountBreakup({ ...amountBreakup, [fieldName]: String(maxValue) });
+      const capped = { ...amountBreakup, [fieldName]: String(maxValue) };
+      setAmountBreakup(capped);
+      setTotalAmount(totalFromBreakup(capped) > 0 ? totalFromBreakup(capped).toFixed(2) : "");
       setAutoCalculated(false);
     }
   };
@@ -984,11 +1047,8 @@ export default function DemandRecovery() {
       // refresh demand details
       recovery.getDemandDetails(activeGroup.id, currentMember.id, today)
         .then((res) => {
-          console.log("[DEBUG DemandRecovery] getDemandDetails refresh after full loan", { memberId: currentMember.id, success: res?.success, hasData: !!res?.data });
           if (res?.success && res?.data) {
-            // FIX: Store res.data.data (the actual demandDetails) instead of res.data (the wrapper)
             const demandDetails = res.data.data || res.data;
-            console.log("[DEBUG DemandRecovery] refreshed demandDetails interest", demandDetails?.interest);
             setDemandSummaries((prev) => ({ ...prev, [currentMember.id]: demandDetails }));
           }
         })
@@ -1277,7 +1337,48 @@ export default function DemandRecovery() {
               <div className="lg:col-span-8 min-w-0">
                 {currentMember && currentMemberSummary ? (
                   <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                    <div className="p-2 sm:p-3 md:p-4">
+                    <div className="p-2 sm:p-3 md:p-4 space-y-4">
+                      {/* Add penalty: decide penalty for member; recover via form below */}
+                      <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 sm:p-4">
+                        <h4 className="text-sm font-semibold text-amber-900 mb-2">Add penalty for this member</h4>
+                        <p className="text-xs text-amber-800 mb-3">Set a penalty amount for the member. It will appear in demand and can be recovered in the form below.</p>
+                        <div className="flex flex-col sm:flex-row sm:items-end gap-2 sm:gap-3">
+                          <div className="flex-1 min-w-0">
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Amount (₹)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={penaltyAmountToAdd}
+                              onChange={(e) => setPenaltyAmountToAdd(e.target.value)}
+                              placeholder="0.00"
+                              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Notes (optional)</label>
+                            <input
+                              type="text"
+                              value={penaltyNotesToAdd}
+                              onChange={(e) => setPenaltyNotesToAdd(e.target.value)}
+                              placeholder="Reason for penalty"
+                              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleAddPenalty}
+                            disabled={addPenaltyLoading || !penaltyAmountToAdd || !(parseFloat(penaltyAmountToAdd) > 0) || (!isOnline && !isAdminMode)}
+                            className="shrink-0 px-4 py-2 rounded-lg font-medium text-sm bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            title={!isOnline && !isAdminMode ? "Add penalty requires connection when in group panel" : undefined}
+                          >
+                            {addPenaltyLoading ? "Adding…" : "Add penalty"}
+                          </button>
+                        </div>
+                        {addPenaltyError && (
+                          <p className="mt-2 text-xs text-red-600">{addPenaltyError}</p>
+                        )}
+                      </div>
                       <MemberRecoveryForm
                         currentMember={currentMember}
                         currentMemberSummary={currentMemberSummary}
@@ -1300,7 +1401,7 @@ export default function DemandRecovery() {
                         showLoanBreakdown={showLoanBreakdown}
                         currentMemberIndex={currentMemberIndex}
                         allMembersLength={allMembers.length}
-                        onFullLoanRecoveryClick={() => setShowFullLoanRecovery(true)}
+                        onFullLoanRecoveryClick={isAdminMode ? undefined : () => setShowFullLoanRecovery(true)}
                         onCreateFDClick={() => {
                           const fullMember = allMembers.find((m) => m.id === currentMember.id);
                           const memberData = fullMember?.raw
@@ -1324,7 +1425,12 @@ export default function DemandRecovery() {
                         onOtherMemberIdChange={setOtherMemberId}
                         onTotalAmountChange={handleTotalAmountChange}
                         onAmountChange={handleAmountChange}
-                        onAmountBreakupChange={setAmountBreakup}
+                        onAmountBreakupChange={(nextBreakup) => {
+                          setAmountBreakup(nextBreakup);
+                          const total = totalFromBreakup(nextBreakup);
+                          setTotalAmount(total > 0 ? total.toFixed(2) : "");
+                          setAutoCalculated(false);
+                        }}
                         onSetAutoCalculated={setAutoCalculated}
                         onPaymentModeChange={handlePaymentModeChange}
                         onBankIdChange={setSelectedBankId}

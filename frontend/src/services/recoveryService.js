@@ -23,7 +23,6 @@ export const registerRecovery = async (data, testMode = false) => {
   }
   const params = testMode ? { testMode: 'true' } : {};
   const res = await httpRecovery.post("/register-recovery", payload, { params });
-  console.log("registerRecovery res", res.data);
   return res.data;
 };
 
@@ -47,7 +46,6 @@ export const getRecoveryByDate = async (groupId, date, testMode = false) => {
     params.testMode = 'true';
   }
   const res = await httpRecovery.get("/by-date", { params });
-  console.log("getRecoveryByDate res", res.data)
   return res.data;
 };
 
@@ -63,7 +61,6 @@ export const getRecoveries = async (groupId = null, testMode = false) => {
 export const getRecoveryDetail = async (id, testMode = false) => {
   const params = testMode ? { testMode: 'true' } : {};
   const res = await httpRecovery.get(`/detail/${id}`, { params });
-  console.log(" getRecoveryDetail res : ", res.data)
   return res.data;
 };
 
@@ -98,11 +95,7 @@ export const getDemandDetails = async (groupId, memberId, date, testMode = false
   if (testMode) {
     params.testMode = 'true';
   }
-  console.log("[DEBUG getDemandDetails] request params", { groupId, memberId, date });
   const res = await httpRecovery.get("/demand-details", { params });
-  console.log("[DEBUG getDemandDetails] response raw", res.data);
-  const data = res.data?.data ?? res.data;
-  console.log("[DEBUG getDemandDetails] interest", data);
   return res.data;
 };
 
@@ -121,7 +114,16 @@ export const getMemberRevenueRemaining = async (groupId, memberId, testMode = fa
     params.testMode = 'true';
   }
   const res = await httpRecovery.get("/revenue-remaining", { params });
-  console.log("revainue detail : ", res.data)
+  return res.data;
+};
+
+export const addPenaltyDemand = async (groupId, memberId, amount, notes = "", testMode = false) => {
+  const payload = { groupId, memberId, amount, notes };
+  if (testMode) {
+    payload.testMode = true;
+  }
+  const params = testMode ? { testMode: 'true' } : {};
+  const res = await httpRecovery.post("/add-penalty-demand", payload, { params });
   return res.data;
 };
 

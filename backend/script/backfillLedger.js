@@ -41,16 +41,7 @@ async function backfillLedger(groupId = null) {
                         const amounts = memberRecovery.amounts || {};
                         const paymentMode = memberRecovery.paymentMode?.cash ? "Cash" : (memberRecovery.paymentMode?.online ? "Bank" : "Cash");
 
-                        // Check if ledger entry already exists
-                        const existing = await GroupLedger.findOne({
-                            referenceModel: "RecoveryMaster",
-                            referenceId: recovery._id
-                        });
-
-                        if (existing) {
-                            totalSkipped++;
-                            continue; // Skip if already exists
-                        }
+                        // RecoveryMaster has multiple ledger entries per recovery (one per head per member). postTransaction dedupes by (referenceModel, referenceId, headName, memberId).
 
                         try {
                             // Post saving
@@ -184,6 +175,29 @@ async function backfillLedger(groupId = null) {
                                     memberId: memberRecovery.memberId,
                                     date: recovery.date,
                                     notes: `Member Fee Group - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                                    paymentMode,
+                                    bankId: memberRecovery.bankId || undefined,
+                                    referenceModel: "RecoveryMaster",
+                                    referenceId: recovery._id,
+                                    createdBy: "backfill-script",
+                                });
+                            }
+
+                            // Post penalty (income)
+                            if (parseFloat(amounts.penalty || 0) > 0) {
+                                const headInfo = await findOrCreateHead(group._id, "Penalty from members", "income");
+                                await postTransaction({
+                                    sourceDoc: recovery,
+                                    headName: "Penalty from members",
+                                    headType: headInfo?.headType || "groupMaster",
+                                    headId: headInfo?.headId,
+                                    section: "income",
+                                    amount: amounts.penalty,
+                                    direction: "in",
+                                    groupId: group._id,
+                                    memberId: memberRecovery.memberId,
+                                    date: recovery.date,
+                                    notes: `Penalty recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
                                     paymentMode,
                                     bankId: memberRecovery.bankId || undefined,
                                     referenceModel: "RecoveryMaster",

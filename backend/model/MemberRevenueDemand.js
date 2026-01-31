@@ -13,7 +13,7 @@ const MemberRevenueDemandSchema = new mongoose.Schema({
     },
     revenueType: {
         type: String,
-        enum: ["membership_fees_shg", "membership_fees_group", "yogdan"],
+        enum: ["membership_fees_shg", "membership_fees_group", "yogdan", "penalty"],
         required: true,
     },
     amount: {

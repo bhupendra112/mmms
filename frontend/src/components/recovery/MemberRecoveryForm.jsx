@@ -58,7 +58,7 @@ export default function MemberRecoveryForm({
           {(() => {
             const currentLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
             const hasRemainingLoan = currentLoanTotals && (currentLoanTotals.remainingLoanAmount ?? 0) > 0;
-            return hasRemainingLoan ? (
+            return hasRemainingLoan && onFullLoanRecoveryClick ? (
               <button
                 onClick={onFullLoanRecoveryClick}
                 className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-xs sm:text-sm shadow-md transition-colors"

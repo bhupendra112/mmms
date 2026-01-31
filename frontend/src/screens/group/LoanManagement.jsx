@@ -433,7 +433,6 @@ export default function LoanManagement() {
                                                             title="View"
                                                             onClick={() => {
                                                                 // keep as placeholder; wire to your modal/route
-                                                                console.log("View loan:", loan.id);
                                                             }}
                                                         >
                                                             <Eye size={18} />
@@ -539,7 +538,6 @@ export default function LoanManagement() {
                                                         className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-blue-600"
                                                         title="View"
                                                         onClick={() => {
-                                                            console.log("View loan:", loan.id);
                                                         }}
                                                     >
                                                         <Eye size={18} />

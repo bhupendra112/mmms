@@ -364,6 +364,8 @@ export const updateMemberRecovery = async (req, res) => {
     try {
         const { groupId, date, memberRecovery } = req.body;
 
+        console.log("[updateMemberRecovery] Called with:", { groupId, date: date?.slice?.(0, 10), memberId: memberRecovery?.memberId, amountsPenalty: memberRecovery?.amounts?.penalty, amountsKeys: memberRecovery?.amounts ? Object.keys(memberRecovery.amounts) : [] });
+
         if (!groupId || !memberRecovery) {
             return apiResponse.error(res, "groupId and memberRecovery are required", 400);
         }
@@ -645,6 +647,40 @@ export const updateMemberRecovery = async (req, res) => {
                 }
             }
 
+            // Handle penalty payment - update MemberRevenueDemand
+            if (memberRecovery.amounts?.penalty > 0 && memberRecovery.memberId) {
+                const unpaidPenaltyDemands = await MemberRevenueDemand.find({
+                    memberId: memberRecovery.memberId,
+                    groupId: groupDoc._id,
+                    revenueType: "penalty",
+                    isPaid: false,
+                }).sort({ demandDate: 1 });
+
+                let remainingPayment = parseFloat(memberRecovery.amounts.penalty) || 0;
+
+                for (const demand of unpaidPenaltyDemands) {
+                    if (remainingPayment <= 0) break;
+
+                    const demandAmount = parseFloat(demand.amount) || 0;
+                    const currentPaidAmount = parseFloat(demand.paidAmount) || 0;
+                    const remainingDemand = Math.max(0, demandAmount - currentPaidAmount);
+
+                    const paymentForThisDemand = Math.min(remainingPayment, remainingDemand);
+                    const newPaidAmount = currentPaidAmount + paymentForThisDemand;
+
+                    demand.paidAmount = newPaidAmount;
+                    demand.paidDate = parsedDate;
+                    demand.recoveryId = recoverySession._id;
+
+                    if (newPaidAmount >= demandAmount) {
+                        demand.isPaid = true;
+                    }
+
+                    await demand.save();
+                    remainingPayment -= paymentForThisDemand;
+                }
+            }
+
             // Mark yogdan as collected when yogdan is paid
             // Yogdan is now managed only in LoanMaster, not in MemberRevenueDemand or member model
             if (memberRecovery.amounts?.yogdan > 0 && memberRecovery.memberId) {
@@ -735,6 +771,15 @@ export const updateMemberRecovery = async (req, res) => {
             }
 
             await recoverySession.save();
+
+            // Post/update ledger entries for this recovery session (including penalty) so Income & Expense report shows them
+            try {
+                await processRecoveryTransactions(recoverySession, groupDoc, parsedDate, req.user?.id || "admin");
+            } catch (ledgerErr) {
+                console.error("[updateMemberRecovery] Ledger posting failed:", ledgerErr);
+                // Don't fail the request; recovery is saved
+            }
+
             return apiResponse.success(res, "Member recovery updated successfully", recoverySession);
         } else {
             // Calculate demand details for this member
@@ -915,6 +960,40 @@ export const updateMemberRecovery = async (req, res) => {
                 }
             }
 
+            // Handle penalty payment - update MemberRevenueDemand (for new recovery session)
+            if (memberRecovery.amounts?.penalty > 0 && memberRecovery.memberId) {
+                const unpaidPenaltyDemands = await MemberRevenueDemand.find({
+                    memberId: memberRecovery.memberId,
+                    groupId: groupDoc._id,
+                    revenueType: "penalty",
+                    isPaid: false,
+                }).sort({ demandDate: 1 });
+
+                let remainingPayment = parseFloat(memberRecovery.amounts.penalty) || 0;
+
+                for (const demand of unpaidPenaltyDemands) {
+                    if (remainingPayment <= 0) break;
+
+                    const demandAmount = parseFloat(demand.amount) || 0;
+                    const currentPaidAmount = parseFloat(demand.paidAmount) || 0;
+                    const remainingDemand = Math.max(0, demandAmount - currentPaidAmount);
+
+                    const paymentForThisDemand = Math.min(remainingPayment, remainingDemand);
+                    const newPaidAmount = currentPaidAmount + paymentForThisDemand;
+
+                    demand.paidAmount = newPaidAmount;
+                    demand.paidDate = parsedDate;
+                    demand.recoveryId = newRecovery._id;
+
+                    if (newPaidAmount >= demandAmount) {
+                        demand.isPaid = true;
+                    }
+
+                    await demand.save();
+                    remainingPayment -= paymentForThisDemand;
+                }
+            }
+
             // Mark yogdan as collected when yogdan is paid (for new recovery session)
             // Yogdan is now managed only in LoanMaster, not in MemberRevenueDemand or member model
             if (memberRecovery.amounts?.yogdan > 0 && memberRecovery.memberId) {
@@ -996,6 +1075,13 @@ export const updateMemberRecovery = async (req, res) => {
                     console.error("[UPDATE_MEMBER_RECOVERY] Error creating cash transaction (new session):", cashError);
                     // Don't throw - allow recovery to be saved even if cash transaction fails
                 }
+            }
+
+            // Post ledger entries for this new recovery session (including penalty) so Income & Expense report shows them
+            try {
+                await processRecoveryTransactions(newRecovery, groupDoc, parsedDate, req.user?.id || "admin");
+            } catch (ledgerErr) {
+                console.error("[updateMemberRecovery] Ledger posting failed (new session):", ledgerErr);
             }
 
             return apiResponse.success(res, "Recovery session created successfully", newRecovery);
@@ -1256,6 +1342,13 @@ const getPreviousRecoveryForMember = async (
                         memberRecovery.amounts?.memFeesGroup ||
                         0,
                 },
+                penalty: {
+                    unpaidDemand: demandDetails.penalty?.unpaidDemand || 0,
+                    actualPaid:
+                        demandDetails.penalty?.actualPaid ||
+                        memberRecovery.amounts?.penalty ||
+                        0,
+                },
                 charges: {
                     unpaidDemand: demandDetails.charges?.unpaidDemand || {},
                     actualPaid: memberRecovery.amounts?.charges || {},
@@ -1273,6 +1366,7 @@ const getPreviousRecoveryForMember = async (
             yogdan: { unpaidDemand: 0, actualPaid: 0 },
             memFeesSHG: { unpaidDemand: 0, actualPaid: 0 },
             memFeesGroup: { unpaidDemand: 0, actualPaid: 0 },
+            penalty: { unpaidDemand: 0, actualPaid: 0 },
             charges: { unpaidDemand: {}, actualPaid: {} },
         };
 
@@ -1287,6 +1381,7 @@ const getPreviousRecoveryForMember = async (
             yogdan: { unpaidDemand: 0, actualPaid: 0 },
             memFeesSHG: { unpaidDemand: 0, actualPaid: 0 },
             memFeesGroup: { unpaidDemand: 0, actualPaid: 0 },
+            penalty: { unpaidDemand: 0, actualPaid: 0 },
             charges: { unpaidDemand: {}, actualPaid: {} },
         };
     }
@@ -1607,6 +1702,7 @@ const calculateDemandDetails = async (
         const actualYogdan = Math.max(0, parseFloat(amounts.yogdan) || 0);
         const actualMemFeesSHG = Math.max(0, parseFloat(amounts.memFeesSHG) || 0);
         const actualMemFeesGroup = Math.max(0, parseFloat(amounts.memFeesGroup) || 0);
+        const actualPenalty = Math.max(0, parseFloat(amounts.penalty) || 0);
 
         // Extract charges paid (charges is an object with charge names as keys)
         const actualCharges = amounts.charges || {};
@@ -2268,6 +2364,22 @@ const calculateDemandDetails = async (
         const memFeesSHGUnpaidDemand = Math.max(0, memFeesSHGPrevUnpaid + memFeesSHGTotalDemand - actualMemFeesSHG);
         const memFeesGroupUnpaidDemand = Math.max(0, memFeesGroupPrevUnpaid + memFeesGroupTotalDemand - actualMemFeesGroup);
 
+        // ------------------ PENALTY (from MemberRevenueDemand) ------------------
+        const unpaidPenaltyDemands = await MemberRevenueDemand.find({
+            memberId: member._id,
+            groupId: groupId,
+            revenueType: "penalty",
+            $or: [{ isPaid: false }, { $expr: { $lt: ["$paidAmount", "$amount"] } }],
+        }).lean();
+        let penaltyTotalDemand = 0;
+        let penaltyTotalPaid = 0;
+        unpaidPenaltyDemands.forEach((d) => {
+            penaltyTotalDemand += parseFloat(d.amount) || 0;
+            penaltyTotalPaid += parseFloat(d.paidAmount) || 0;
+        });
+        const penaltyUnpaidBeforeThis = Math.max(0, penaltyTotalDemand - penaltyTotalPaid);
+        const penaltyUnpaidDemand = Math.max(0, penaltyUnpaidBeforeThis - actualPenalty);
+
         // ------------------ CHARGES ------------------
         const chargesDueData = await calculateChargesDue(member, groupDoc, parsedCurrentDate, groupId);
 
@@ -2374,6 +2486,13 @@ const calculateDemandDetails = async (
                 actualPaidTotal: actualChargesTotal,
                 unpaidDemand: chargesUnpaidDemand,
                 unpaidDemandTotal: chargesUnpaidTotal,
+            },
+            penalty: {
+                prevDemand: 0,
+                currDemand: penaltyTotalDemand,
+                totalDemand: penaltyTotalDemand,
+                actualPaid: actualPenalty,
+                unpaidDemand: penaltyUnpaidDemand,
             },
         };
 
@@ -3156,6 +3275,69 @@ export const getMemberRevenueRemaining = async (req, res) => {
     }
 };
 
+// Add penalty demand for a member (decide penalty for member; can be recovered in Demand Recovery)
+export const addPenaltyDemand = async (req, res) => {
+    try {
+        const { groupId, memberId, amount, notes } = req.body || {};
+
+        if (!groupId || !memberId) {
+            return apiResponse.error(res, "groupId and memberId are required", 400);
+        }
+
+        const penaltyAmount = parseFloat(amount);
+        if (isNaN(penaltyAmount) || penaltyAmount <= 0) {
+            return apiResponse.error(res, "Valid penalty amount (greater than 0) is required", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+        }
+
+        const member = await Member.findOne({ _id: memberId, group: groupId }).lean();
+        if (!member) {
+            return apiResponse.error(res, "Member not found", 404);
+        }
+
+        const groupDoc = await GroupMaster.findById(groupId).lean();
+        if (!groupDoc) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        const now = new Date();
+        const currentYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1; // April = start of FY
+        const financialYear = `${currentYear}-${String(currentYear + 1).slice(-2)}`;
+
+        const demand = await MemberRevenueDemand.create({
+            memberId: member._id,
+            groupId: groupId,
+            revenueType: "penalty",
+            amount: penaltyAmount,
+            demandDate: now,
+            year: financialYear,
+            notes: notes || "Penalty (added from Demand Recovery)",
+            isAnnualDemand: false,
+            isPaid: false,
+            paidAmount: 0,
+        });
+
+        return apiResponse.success(res, "Penalty demand added successfully", {
+            _id: demand._id,
+            memberId: demand.memberId,
+            groupId: demand.groupId,
+            revenueType: demand.revenueType,
+            amount: demand.amount,
+            demandDate: demand.demandDate,
+            year: demand.year,
+            notes: demand.notes,
+        });
+    } catch (error) {
+        console.error("Error adding penalty demand:", error);
+        return apiResponse.error(res, error.message || "Failed to add penalty demand", 500);
+    }
+};
+
 // Get loan totals for a member (from LoanMaster and RecoveryMaster)
 // Also includes remaining amounts for yogdan and overdueInterest
 export const getMemberLoanTotals = async (req, res) => {
@@ -3839,6 +4021,32 @@ async function processRecoveryTransactions(recovery, groupDoc, parsedDate, creat
                 memberId: memberId,
                 date: parsedDate,
                 notes: `Member Fee Group - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
+                paymentMode,
+                bankId,
+                referenceModel: "RecoveryMaster",
+                referenceId: recovery._id,
+                createdBy: createdBy,
+            });
+        }
+
+        // Post penalty (income – matches IncomeExpenseHead "PENALTY FROM MEMBERS" / COLLECTION FROM MEMBER)
+        const penaltyAmount = parseFloat(amounts.penalty || 0) || 0;
+        console.log("[processRecoveryTransactions] Penalty check:", { memberCode: memberRecovery.memberCode, amountsPenalty: amounts.penalty, penaltyAmount, willPost: penaltyAmount > 0 });
+        if (penaltyAmount > 0) {
+            const headInfo = await findOrCreateHead(groupDoc._id, "Penalty from members", "income");
+            console.log("[processRecoveryTransactions] Posting penalty:", { amount: penaltyAmount, headInfo: headInfo ? { headId: headInfo.headId, headType: headInfo.headType } : null });
+            await postTransaction({
+                sourceDoc: recovery,
+                headName: "Penalty from members",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "income",
+                amount: penaltyAmount,
+                direction: "in",
+                groupId: groupDoc._id,
+                memberId: memberId,
+                date: parsedDate,
+                notes: `Penalty recovery - Member: ${memberRecovery.memberName} (${memberRecovery.memberCode})`,
                 paymentMode,
                 bankId,
                 referenceModel: "RecoveryMaster",
