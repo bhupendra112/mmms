@@ -50,10 +50,21 @@ export default function MemberRecoveryForm({
   return (
     <div className="bg-white rounded-lg shadow-md p-4 sm:p-5 md:p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
-        <h3 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center gap-2 truncate">
-          <User size={20} className="text-blue-600 shrink-0 w-5 h-5" />
-          <span className="truncate">{currentMember.name} ({currentMember.code})</span>
-        </h3>
+        <div className="min-w-0">
+          <h3 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center gap-2 truncate">
+            <User size={20} className="text-blue-600 shrink-0 w-5 h-5" />
+            <span className="truncate">{currentMember.name} ({currentMember.code})</span>
+          </h3>
+          {(() => {
+            const fh = (currentMember.raw && (currentMember.raw.F_H_Name || currentMember.raw.F_H_FatherName)) || currentMember.fatherOrHusbandName || "";
+            const fhStr = (typeof fh === "string" ? fh : String(fh || "")).trim();
+            return fhStr ? (
+              <p className="text-xs sm:text-sm text-gray-600 mt-1 truncate" title="Father/Husband name helps identify members with the same name">
+                Father/Husband: {fhStr}
+              </p>
+            ) : null;
+          })()}
+        </div>
         <div className="flex flex-wrap gap-2">
           {(() => {
             const currentLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
@@ -105,8 +116,8 @@ export default function MemberRecoveryForm({
         onFullLoanRecovery={onFullLoanRecoveryClick}
       />
 
-      {/* Demand Summary Table */}
-      <DemandSummaryTable currentMemberSummary={currentMemberSummary} />
+      {/* Demand Summary Table (with member basic details above) */}
+      <DemandSummaryTable currentMember={currentMember} currentMemberSummary={currentMemberSummary} />
 
       {/* Attendance Section */}
       <AttendanceSection

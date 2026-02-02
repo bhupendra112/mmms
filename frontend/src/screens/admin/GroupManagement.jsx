@@ -59,6 +59,8 @@ export default function GroupManagement() {
     const [cashTransactions, setCashTransactions] = useState([]);
     const [cashBalance, setCashBalance] = useState(0);
     const [cashTransactionsLoading, setCashTransactionsLoading] = useState(false);
+    const [openingCashBalanceInput, setOpeningCashBalanceInput] = useState("");
+    const [savingOpeningBalance, setSavingOpeningBalance] = useState(false);
     const [financeData, setFinanceData] = useState({
         totalSavings: 0,
         totalLoans: 0,
@@ -152,6 +154,13 @@ export default function GroupManagement() {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, selectedGroup]);
+
+    useEffect(() => {
+        if (activeTab === "cash" && selectedGroupRaw != null) {
+            const val = selectedGroupRaw.opening_cash_balance;
+            setOpeningCashBalanceInput(val !== undefined && val !== null ? String(val) : "");
+        }
+    }, [activeTab, selectedGroupRaw]);
 
     const clusterOptions = useMemo(() => {
         const uniqueClusters = Array.from(
@@ -376,6 +385,28 @@ export default function GroupManagement() {
             alert(error?.response?.data?.message || "Failed to update group");
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleSaveOpeningBalance = async () => {
+        if (!selectedGroup) return;
+        const parsed = parseFloat(openingCashBalanceInput, 10);
+        if (Number.isNaN(parsed) || parsed < 0) {
+            alert("Please enter a valid number (0 or greater).");
+            return;
+        }
+        try {
+            setSavingOpeningBalance(true);
+            await updateGroup(selectedGroup, { opening_cash_balance: parsed });
+            alert("Opening cash balance updated successfully");
+            await loadGroupDetail(selectedGroup);
+            await loadCashTransactions(selectedGroup);
+            setOpeningCashBalanceInput(String(parsed));
+        } catch (error) {
+            console.error("Error updating opening cash balance:", error);
+            alert(error?.response?.data?.message || "Failed to update opening cash balance");
+        } finally {
+            setSavingOpeningBalance(false);
         }
     };
 
@@ -1271,6 +1302,36 @@ export default function GroupManagement() {
                                     <div className="mb-4 md:mb-6">
                                         <h3 className="text-lg md:text-xl font-semibold text-gray-800">Cash Details</h3>
                                     </div>
+
+                                    {/* Opening Cash Balance (admin) */}
+                                    {selectedGroupRaw && (
+                                        <div className="mb-4 md:mb-6 p-4 md:p-6 bg-gray-50 rounded-lg border border-gray-200">
+                                            <p className="text-xs md:text-sm text-gray-600 mb-2">Opening Cash Balance (admin)</p>
+                                            <p className="text-lg font-semibold text-gray-800 mb-3">₹{(selectedGroupRaw?.opening_cash_balance ?? 0).toLocaleString()}</p>
+                                            <div className="flex flex-wrap items-end gap-2">
+                                                <div className="min-w-[120px]">
+                                                    <label className="block text-xs text-gray-600 mb-1">New value</label>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        value={openingCashBalanceInput}
+                                                        onChange={(e) => setOpeningCashBalanceInput(e.target.value)}
+                                                        placeholder="0"
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                                    />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleSaveOpeningBalance}
+                                                    disabled={savingOpeningBalance}
+                                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm"
+                                                >
+                                                    {savingOpeningBalance ? "Saving..." : "Update Opening Balance"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     {/* Current Cash Balance */}
                                     <div className="mb-4 md:mb-6 p-4 md:p-6 bg-green-50 rounded-lg border border-green-200">

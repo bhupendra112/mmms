@@ -32,6 +32,15 @@ export default function MembersList({
               {isAbsent && <X size={14} className="shrink-0 sm:w-4 sm:h-4" />}
             </div>
             <div className="text-[10px] sm:text-xs mt-1 truncate">{member.name}</div>
+            {(() => {
+              const fh = (member.raw && (member.raw.F_H_Name || member.raw.F_H_FatherName)) || member.fatherOrHusbandName || "";
+              const fhStr = (typeof fh === "string" ? fh : String(fh || "")).trim();
+              return fhStr ? (
+                <div className="text-[9px] sm:text-[10px] mt-0.5 truncate text-gray-500 opacity-90" title="Father/Husband">
+                  {fhStr}
+                </div>
+              ) : null;
+            })()}
           </button>
         );
       })}

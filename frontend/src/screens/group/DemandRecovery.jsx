@@ -117,7 +117,8 @@ export default function DemandRecovery() {
   const [activeLoans, setActiveLoans] = useState({});
   const [demandSummaries, setDemandSummaries] = useState({});
 
-  // Add penalty for member (decide penalty; then recover in form below)
+  // Add penalty for member (decide penalty; then recover in form below) – shown only when user clicks "Add penalty"
+  const [showAddPenalty, setShowAddPenalty] = useState(false);
   const [penaltyAmountToAdd, setPenaltyAmountToAdd] = useState("");
   const [penaltyNotesToAdd, setPenaltyNotesToAdd] = useState("");
   const [addPenaltyLoading, setAddPenaltyLoading] = useState(false);
@@ -158,6 +159,7 @@ export default function DemandRecovery() {
     setPenaltyAmountToAdd("");
     setPenaltyNotesToAdd("");
     setAddPenaltyError(null);
+    setShowAddPenalty(false);
   };
 
   // Responsive-safe wrapper demand summary (FIX: always pass required args)
@@ -203,20 +205,27 @@ export default function DemandRecovery() {
     const fetchMembers = isAdminMode ? getMembersByGroup : getMembersByGroupOffline;
     fetchMembers(activeGroup.id)
       .then((res) => {
-        const list = Array.isArray(res?.data) ? res.data : [];
-        setAllMembers(
-          list.map((m) => ({
+        // API returns { success, message, data: members }; support both res.data and res.data.data
+        const list = Array.isArray(res?.data) ? res.data : (Array.isArray(res?.data?.data) ? res.data.data : []);
+        const mapped = list.map((m) => {
+          const fh = (m?.F_H_Name ?? m?.F_H_FatherName ?? "").toString().trim();
+          return {
             id: m._id,
             code: m.Member_Id,
             name: m.Member_Nm,
-            raw: m,
+            fatherOrHusbandName: fh,
+            raw: { ...m, F_H_Name: m?.F_H_Name ?? "", F_H_FatherName: m?.F_H_FatherName ?? "" },
             openingSaving: m.openingSaving || 0,
             loanDetails: m.loanDetails || {},
             fdDetails: m.fdDetails || {},
             openingYogdan: m.openingYogdan || 0,
             isExistingMember: m.isExistingMember || false,
-          }))
+          };
+        });
+        mapped.sort((a, b) =>
+          String(a.code ?? "").localeCompare(String(b.code ?? ""), undefined, { numeric: true })
         );
+        setAllMembers(mapped);
       })
       .catch((e) => {
         console.error("Failed to load members:", e);
@@ -1338,45 +1347,66 @@ export default function DemandRecovery() {
                 {currentMember && currentMemberSummary ? (
                   <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                     <div className="p-2 sm:p-3 md:p-4 space-y-4">
-                      {/* Add penalty: decide penalty for member; recover via form below */}
+                      {/* Add penalty: only show form when user clicks the button (admin and group panel) */}
                       <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 sm:p-4">
-                        <h4 className="text-sm font-semibold text-amber-900 mb-2">Add penalty for this member</h4>
-                        <p className="text-xs text-amber-800 mb-3">Set a penalty amount for the member. It will appear in demand and can be recovered in the form below.</p>
-                        <div className="flex flex-col sm:flex-row sm:items-end gap-2 sm:gap-3">
-                          <div className="flex-1 min-w-0">
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Amount (₹)</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={penaltyAmountToAdd}
-                              onChange={(e) => setPenaltyAmountToAdd(e.target.value)}
-                              placeholder="0.00"
-                              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Notes (optional)</label>
-                            <input
-                              type="text"
-                              value={penaltyNotesToAdd}
-                              onChange={(e) => setPenaltyNotesToAdd(e.target.value)}
-                              placeholder="Reason for penalty"
-                              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                            />
-                          </div>
+                        {!showAddPenalty ? (
                           <button
                             type="button"
-                            onClick={handleAddPenalty}
-                            disabled={addPenaltyLoading || !penaltyAmountToAdd || !(parseFloat(penaltyAmountToAdd) > 0) || (!isOnline && !isAdminMode)}
-                            className="shrink-0 px-4 py-2 rounded-lg font-medium text-sm bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            title={!isOnline && !isAdminMode ? "Add penalty requires connection when in group panel" : undefined}
+                            onClick={() => setShowAddPenalty(true)}
+                            className="w-full sm:w-auto px-4 py-2 rounded-lg font-medium text-sm bg-amber-600 text-white hover:bg-amber-700 transition-colors"
                           >
-                            {addPenaltyLoading ? "Adding…" : "Add penalty"}
+                            Add penalty
                           </button>
-                        </div>
-                        {addPenaltyError && (
-                          <p className="mt-2 text-xs text-red-600">{addPenaltyError}</p>
+                        ) : (
+                          <>
+                            <h4 className="text-sm font-semibold text-amber-900 mb-2">Add penalty for this member</h4>
+                            <p className="text-xs text-amber-800 mb-3">Set a penalty amount for the member. It will appear in demand and can be recovered in the form below.</p>
+                            <div className="flex flex-col sm:flex-row sm:items-end gap-2 sm:gap-3">
+                              <div className="flex-1 min-w-0">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Amount (₹)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={penaltyAmountToAdd}
+                                  onChange={(e) => setPenaltyAmountToAdd(e.target.value)}
+                                  placeholder="0.00"
+                                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                                />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Notes (optional)</label>
+                                <input
+                                  type="text"
+                                  value={penaltyNotesToAdd}
+                                  onChange={(e) => setPenaltyNotesToAdd(e.target.value)}
+                                  placeholder="Reason for penalty"
+                                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                                />
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={handleAddPenalty}
+                                  disabled={addPenaltyLoading || !penaltyAmountToAdd || !(parseFloat(penaltyAmountToAdd) > 0) || (!isOnline && !isAdminMode)}
+                                  className="shrink-0 px-4 py-2 rounded-lg font-medium text-sm bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  title={!isOnline && !isAdminMode ? "Add penalty requires connection when in group panel" : undefined}
+                                >
+                                  {addPenaltyLoading ? "Adding…" : "Add penalty"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setShowAddPenalty(false); setAddPenaltyError(null); }}
+                                  className="shrink-0 px-4 py-2 rounded-lg font-medium text-sm bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                            {addPenaltyError && (
+                              <p className="mt-2 text-xs text-red-600">{addPenaltyError}</p>
+                            )}
+                          </>
                         )}
                       </div>
                       <MemberRecoveryForm

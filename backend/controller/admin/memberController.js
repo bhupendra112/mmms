@@ -499,7 +499,13 @@ export const listMembersByGroup = async (req, res) => {
         })
             .sort({ createdAt: -1 })
             .lean();
-        return apiResponse.success(res, "Members fetched successfully", members);
+        // Ensure F_H_Name and F_H_FatherName are always present in response (for Recovery Management member basic details)
+        const membersWithFH = members.map((m) => ({
+            ...m,
+            F_H_Name: m.F_H_Name != null ? String(m.F_H_Name).trim() : "",
+            F_H_FatherName: m.F_H_FatherName != null ? String(m.F_H_FatherName).trim() : "",
+        }));
+        return apiResponse.success(res, "Members fetched successfully", membersWithFH);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

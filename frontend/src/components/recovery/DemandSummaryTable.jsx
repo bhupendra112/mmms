@@ -1,7 +1,14 @@
-export default function DemandSummaryTable({ currentMemberSummary }) {
+export default function DemandSummaryTable({ currentMember, currentMemberSummary }) {
   if (!currentMemberSummary) {
     return null;
   }
+
+  const fatherOrHusband = (currentMember && (
+    (currentMember.raw && (currentMember.raw.F_H_Name || currentMember.raw.F_H_FatherName)) ||
+    currentMember.fatherOrHusbandName ||
+    ""
+  )) || "";
+  const fatherOrHusbandDisplay = (typeof fatherOrHusband === "string" ? fatherOrHusband : String(fatherOrHusband || "")).trim();
 
   // Map category keys to display names
   const categoryNames = {
@@ -89,6 +96,23 @@ export default function DemandSummaryTable({ currentMemberSummary }) {
 
   return (
     <div className="mb-4 sm:mb-6">
+      {/* Member basic details – shown above Demand Summary so same-name members can be identified */}
+      {currentMember && (
+        <div className="mb-3 p-3 rounded-lg border border-gray-200 bg-gray-50 text-sm">
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Member basic details</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-gray-800">
+            <div>
+              <span className="text-gray-500">Name:</span> <span className="font-medium">{currentMember.name || "—"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Code:</span> <span className="font-medium">{currentMember.code || "—"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Father/Husband:</span> <span className="font-medium">{fatherOrHusbandDisplay || "—"}</span>
+            </div>
+          </div>
+        </div>
+      )}
       <h4 className="text-sm sm:text-base font-semibold text-gray-700 mb-2 sm:mb-3">Demand Summary</h4>
       <div className="w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-[500px] sm:min-w-[600px] w-full border-collapse border border-gray-200 text-[10px] sm:text-xs md:text-sm">
