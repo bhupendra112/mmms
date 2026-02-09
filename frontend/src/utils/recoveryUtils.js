@@ -66,6 +66,8 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         unpaid: dd.interest?.unpaidDemand ?? 0,
         opening: dd.interest?.openingBalance ?? 0,
         closing: dd.interest?.closingBalance ?? 0,
+        previousUnpaidInterestLabel: dd.interest?.previousUnpaidInterestLabel ?? "Previous unpaid interest",
+        previousUnpaidInterest: dd.interest?.previousUnpaidInterest ?? 0,
       },
       fd: {
         prev: 0,
@@ -147,6 +149,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         chargesDue: dd.charges?.chargesDue ?? {},
         actualCharges: dd.charges?.actualPaid ?? {},
       },
+      interestDayDetails: dd._debugInterestDays ?? null,
     };
   }
 
@@ -182,6 +185,8 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         unpaid: dd.interest?.unpaidDemand ?? 0,
         opening: dd.interest?.openingBalance ?? 0,
         closing: dd.interest?.closingBalance ?? 0,
+        previousUnpaidInterestLabel: dd.interest?.previousUnpaidInterestLabel ?? "Previous unpaid interest",
+        previousUnpaidInterest: dd.interest?.previousUnpaidInterest ?? 0,
       },
       fd: {
         prev: 0,
@@ -257,6 +262,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         chargesDue: dd.charges?.chargesDue ?? {},
         actualCharges: recovery?.amounts?.charges ?? {},
       },
+      interestDayDetails: dd._debugInterestDays ?? null,
     };
   }
 
@@ -272,6 +278,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
     memFeesGroup: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 },
     penalty: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 },
     charges: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0, chargesDue: {}, actualCharges: {} },
+    interestDayDetails: null,
   };
 };
 

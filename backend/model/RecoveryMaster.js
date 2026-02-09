@@ -11,6 +11,8 @@ const RecoveryMasterSchema = new mongoose.Schema({
 
     // Recovery session details
     date: { type: Date, required: true },
+    recoveryDate: { type: Date }, // Actual date recovery was done (e.g. 4 Feb when recovered on 4th)
+    MeetingDate: { type: Date }, // Meeting date this recovery is for (e.g. 15 Feb when meeting 1=1, meeting 2=15 and recovered on 4th)
     meetingSequence: { type: Number, default: 1 },
     memberCount: { type: Number, default: 0 },
     groupPhoto: { type: String }, // base64 or URL
@@ -112,7 +114,7 @@ const RecoveryMasterSchema = new mongoose.Schema({
 
     // Status (for admin direct storage, always approved)
     status: { type: String, enum: ["approved", "rejected"], default: "approved" },
-    
+
     // Approval status (for group panel requests)
     approvalStatus: {
         type: String,
@@ -124,7 +126,7 @@ const RecoveryMasterSchema = new mongoose.Schema({
     rejectedBy: { type: String },
     rejectedAt: { type: Date },
     rejectionReason: { type: String },
-    
+
     createdBy: { type: String }, // Admin user ID or "admin"
 
 }, {

@@ -82,6 +82,8 @@ export default function MemberRegistration() {
       overdueInterest: "",
       loanPaid: "",
       time_period: "",
+      time_period_years: 0,
+      time_period_months: 0,
       installment_amount: "",
     },
     openingYogdan: "",
@@ -207,16 +209,14 @@ export default function MemberRegistration() {
     loadGroupSavingRate();
   }, [form.isExistingMember, form.group_id]);
 
-  // Calculate installment amount when loan amount and time period are entered
-  // time_period is now in years, convert to months for calculation
+  // Calculate installment amount when loan amount and time period (years + months) are entered
+  const totalMonthsFromLoanDetails =
+    (Number(form.loanDetails.time_period_years) || 0) * 12 + (Number(form.loanDetails.time_period_months) || 0);
   useEffect(() => {
-    if (form.loanDetails.amount && form.loanDetails.time_period) {
+    if (form.loanDetails.amount && totalMonthsFromLoanDetails > 0) {
       const loanAmount = parseFloat(form.loanDetails.amount || 0);
-      const years = parseFloat(form.loanDetails.time_period || 0);
-
-      if (loanAmount > 0 && years > 0) {
-        const months = years * 12; // Convert years to months
-        const calculatedInstallment = (loanAmount / months).toFixed(2);
+      if (loanAmount > 0) {
+        const calculatedInstallment = (loanAmount / totalMonthsFromLoanDetails).toFixed(2);
         setForm((prev) => ({
           ...prev,
           loanDetails: {
@@ -227,22 +227,16 @@ export default function MemberRegistration() {
       } else {
         setForm((prev) => ({
           ...prev,
-          loanDetails: {
-            ...prev.loanDetails,
-            installment_amount: "",
-          },
+          loanDetails: { ...prev.loanDetails, installment_amount: "" },
         }));
       }
     } else {
       setForm((prev) => ({
         ...prev,
-        loanDetails: {
-          ...prev.loanDetails,
-          installment_amount: "",
-        },
+        loanDetails: { ...prev.loanDetails, installment_amount: "" },
       }));
     }
-  }, [form.loanDetails.amount, form.loanDetails.time_period]);
+  }, [form.loanDetails.amount, form.loanDetails.time_period_years, form.loanDetails.time_period_months, totalMonthsFromLoanDetails]);
 
   const clusterOptions = useMemo(() => {
     const uniqueClusters = Array.from(new Set(groups.map(g => `${g.cluster_name}|${g.cluster_code}`)));
@@ -354,6 +348,17 @@ export default function MemberRegistration() {
         formToUse.group_id = currentGroup.id;
         formToUse.Group_Name = currentGroup.name || formToUse.Group_Name;
       }
+      // For existing member loan: send time_period as total months (years*12 + months)
+      if (formToUse.loanDetails && typeof formToUse.loanDetails === "object") {
+        const years = Number(formToUse.loanDetails.time_period_years ?? 0);
+        const months = Number(formToUse.loanDetails.time_period_months ?? 0);
+        const totalMonths = years * 12 + months;
+        const { time_period_years, time_period_months, ...restLoan } = formToUse.loanDetails;
+        formToUse.loanDetails = { ...restLoan, time_period: totalMonths > 0 ? totalMonths : restLoan.time_period };
+      }
+      // If user did not enter opening yogdan, send 0 (do not omit so backend stores 0)
+      const yogdanNum = Number(formToUse.openingYogdan);
+      formToUse.openingYogdan = (formToUse.openingYogdan !== "" && formToUse.openingYogdan != null && !isNaN(yogdanNum)) ? yogdanNum : 0;
 
       // Add all form fields to FormData
       Object.keys(formToUse).forEach(key => {
@@ -457,7 +462,7 @@ export default function MemberRegistration() {
         isExistingMember: false,
         openingSaving: "",
         fdDetails: { date: "", maturityDate: "", amount: "", interest: "" },
-        loanDetails: { amount: "", loanDate: "", overdueInterest: "", loanPaid: "", time_period: "", installment_amount: "" },
+        loanDetails: { amount: "", loanDate: "", overdueInterest: "", loanPaid: "", time_period: "", time_period_years: 0, time_period_months: 0, installment_amount: "" },
         openingYogdan: "",
         saving_per_member_snapshot: "",
       });
@@ -1062,24 +1067,40 @@ export default function MemberRegistration() {
                 </div>
               </div>
             )}
-            <Input
-              type="number"
-              label="Time Period (Years)"
-              name="loanDetails.time_period"
-              value={form.loanDetails.time_period}
-              handleChange={handleChange}
-              placeholder="Enter loan duration in years"
-              min="0.1"
-              step="0.1"
-            />
-            {form.loanDetails.amount && form.loanDetails.time_period && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">Years</label>
+              <select
+                name="loanDetails.time_period_years"
+                value={form.loanDetails.time_period_years ?? 0}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {Array.from({ length: 31 }, (_, i) => (
+                  <option key={i} value={i}>{i} {i === 1 ? "year" : "years"}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">Months</label>
+              <select
+                name="loanDetails.time_period_months"
+                value={form.loanDetails.time_period_months ?? 0}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {Array.from({ length: 12 }, (_, i) => (
+                  <option key={i} value={i}>{i} {i === 1 ? "month" : "months"}</option>
+                ))}
+              </select>
+            </div>
+            {form.loanDetails.amount && totalMonthsFromLoanDetails > 0 && (
               <div className="md:col-span-2">
                 <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg">
                   <p className="text-sm text-gray-700">
                     <strong>Calculated Installment:</strong> ₹
                     {(
                       parseFloat(form.loanDetails.amount || 0) /
-                      (parseFloat(form.loanDetails.time_period || 1) * 12)
+                      totalMonthsFromLoanDetails
                     ).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
@@ -1088,10 +1109,14 @@ export default function MemberRegistration() {
                   </p>
                   <p className="text-xs text-gray-600 mt-1">
                     Formula: ₹{parseFloat(form.loanDetails.amount || 0).toLocaleString("en-IN")} ÷{" "}
-                    {parseFloat(form.loanDetails.time_period || 1) * 12} months ({form.loanDetails.time_period} {parseFloat(form.loanDetails.time_period) === 1 ? 'year' : 'years'}) = ₹
+                    {totalMonthsFromLoanDetails} months (
+                    {form.loanDetails.time_period_years > 0 && `${form.loanDetails.time_period_years} ${Number(form.loanDetails.time_period_years) === 1 ? "year" : "years"}`}
+                    {form.loanDetails.time_period_years > 0 && form.loanDetails.time_period_months > 0 && " "}
+                    {form.loanDetails.time_period_months > 0 && `${form.loanDetails.time_period_months} ${Number(form.loanDetails.time_period_months) === 1 ? "month" : "months"}`}
+                    ) = ₹
                     {(
                       parseFloat(form.loanDetails.amount || 0) /
-                      (parseFloat(form.loanDetails.time_period || 1) * 12)
+                      totalMonthsFromLoanDetails
                     ).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
@@ -1189,7 +1214,7 @@ export default function MemberRegistration() {
                     isExistingMember: false,
                     openingSaving: "",
                     fdDetails: { date: "", maturityDate: "", amount: "", interest: "" },
-                    loanDetails: { amount: "", loanDate: "", overdueInterest: "", time_period: "", installment_amount: "" },
+                    loanDetails: { amount: "", loanDate: "", overdueInterest: "", time_period: "", time_period_years: 0, time_period_months: 0, installment_amount: "" },
                     openingYogdan: "",
                     saving_per_member_snapshot: "",
                   });

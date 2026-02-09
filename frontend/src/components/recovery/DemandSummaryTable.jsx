@@ -28,6 +28,8 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
   const rows = [];
   Object.entries(currentMemberSummary)
     .filter(([key, data]) => {
+      // Skip non-category keys (e.g. interestDayDetails)
+      if (key === "interestDayDetails") return false;
       // Always show: saving, loan, interest, fd
       if (['saving', 'loan', 'interest', 'fd'].includes(key)) {
         return true;
@@ -135,25 +137,69 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => {
+                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => {
+                  if (k === "interestDayDetails" || !d || Array.isArray(d)) return sum;
                   const val = typeof d.total === 'number' ? d.total : parseFloat(d.total ?? 0) || 0;
                   return sum + val;
                 }, 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => sum + d.actual, 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.actual === "number" ? d.actual : parseFloat(d.actual ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => sum + d.unpaid, 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.unpaid === "number" ? d.unpaid : parseFloat(d.unpaid ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.values(currentMemberSummary).reduce((sum, d) => sum + d.opening, 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.opening === "number" ? d.opening : parseFloat(d.opening ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
             </tr>
           </tbody>
         </table>
       </div>
+
+      {/* Interest calculation (days) – debug/detail from backend */}
+      {Array.isArray(currentMemberSummary.interestDayDetails) && currentMemberSummary.interestDayDetails.length > 0 && (
+        <div className="mt-4 p-3 rounded-lg border border-blue-200 bg-blue-50/50">
+          <h4 className="text-sm font-semibold text-gray-700 mb-2">Interest calculation (days used)</h4>
+          <p className="text-xs text-gray-600 mb-2">Each period shows the start date, end date, number of days, and how interest was calculated.</p>
+          <div className="overflow-x-auto">
+            <table className="min-w-[400px] w-full border-collapse text-xs">
+              <thead>
+                <tr className="bg-blue-100/80">
+                  <th className="border border-blue-200 p-1.5 text-left font-medium text-gray-700">#</th>
+                  <th className="border border-blue-200 p-1.5 text-left font-medium text-gray-700">Start date</th>
+                  <th className="border border-blue-200 p-1.5 text-left font-medium text-gray-700">End date</th>
+                  <th className="border border-blue-200 p-1.5 text-center font-medium text-gray-700">Days</th>
+                  <th className="border border-blue-200 p-1.5 text-right font-medium text-gray-700">Principal</th>
+                  <th className="border border-blue-200 p-1.5 text-center font-medium text-gray-700">Rate %</th>
+                  <th className="border border-blue-200 p-1.5 text-right font-medium text-gray-700">Interest (₹)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentMemberSummary.interestDayDetails.map((period, idx) => {
+                  const isLabelOnly = period.label && (period.startDate == null && period.endDate == null);
+                  const startStr = period.startDate ? new Date(period.startDate).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+                  const endStr = period.endDate ? new Date(period.endDate).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+                  return (
+                    <tr key={idx} className="hover:bg-blue-50/50">
+                      <td className="border border-blue-200 p-1.5 text-gray-800">{idx + 1}</td>
+                      <td className="border border-blue-200 p-1.5 text-gray-700" colSpan={isLabelOnly ? 2 : 1}>
+                        {isLabelOnly ? period.label : startStr}
+                      </td>
+                      {!isLabelOnly && <td className="border border-blue-200 p-1.5 text-gray-700">{endStr}</td>}
+                      <td className="border border-blue-200 p-1.5 text-center text-gray-700">{isLabelOnly ? "—" : (period.days ?? "—")}</td>
+                      <td className="border border-blue-200 p-1.5 text-right text-gray-700">{isLabelOnly ? "—" : `₹${Number(period.principal ?? 0).toLocaleString("en-IN")}`}</td>
+                      <td className="border border-blue-200 p-1.5 text-center text-gray-700">{isLabelOnly ? "—" : `${period.rate ?? "—"}%`}</td>
+                      <td className="border border-blue-200 p-1.5 text-right font-medium text-gray-800">₹{(Number(period.interest ?? 0)).toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

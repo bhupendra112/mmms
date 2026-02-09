@@ -68,6 +68,13 @@ export const registerMember = async (req, res) => {
                 }
             }
         });
+        // If openingYogdan missing or invalid, store 0 (do not auto-add yogdan for existing members)
+        const yogdanVal = payload.openingYogdan;
+        if (yogdanVal === undefined || yogdanVal === null || yogdanVal === '' || isNaN(Number(yogdanVal))) {
+            payload.openingYogdan = 0;
+        } else {
+            payload.openingYogdan = Number(yogdanVal);
+        }
 
         // Parse date fields that come as strings from FormData
         const dateFields = ['Member_Dt', 'Dt_Join', 'dt_birth', 'dt_birth_pati'];
@@ -183,12 +190,16 @@ export const registerMember = async (req, res) => {
         }
 
         // Parse loanDetails time_period and installment_amount if they exist
-        // Convert time_period from years to months
+        // If time_period is integer >= 12 treat as months; else treat as years and convert to months
         if (payload.loanDetails && typeof payload.loanDetails === 'object') {
             if (payload.loanDetails.time_period !== undefined && payload.loanDetails.time_period !== null && payload.loanDetails.time_period !== '') {
-                const timePeriodYears = Number(payload.loanDetails.time_period);
-                if (!isNaN(timePeriodYears) && timePeriodYears > 0) {
-                    payload.loanDetails.time_period = Math.round(timePeriodYears * 12); // Convert years to months
+                const raw = Number(payload.loanDetails.time_period);
+                if (!isNaN(raw) && raw > 0) {
+                    if (Number.isInteger(raw) && raw >= 12) {
+                        payload.loanDetails.time_period = raw; // already in months
+                    } else {
+                        payload.loanDetails.time_period = Math.round(raw * 12); // years to months (legacy)
+                    }
                 }
             }
             if (payload.loanDetails.installment_amount !== undefined && payload.loanDetails.installment_amount !== null && payload.loanDetails.installment_amount !== '') {

@@ -90,13 +90,13 @@ export const registerLoan = async (req, res) => {
             const match = payload.date.match(ddmmyyyyPattern);
 
             if (match) {
-                // Convert DD/MM/YYYY to Date object
+                // Convert DD/MM/YYYY to Date: store as UTC midnight so calendar day is correct in all timezones
                 const day = parseInt(match[1], 10);
                 const month = parseInt(match[2], 10) - 1; // Month is 0-indexed
                 const year = parseInt(match[3], 10);
-                dateValue = new Date(year, month, day);
+                dateValue = new Date(Date.UTC(year, month, day));
             } else {
-                // Try to parse as ISO string or other formats
+                // Try to parse as ISO string (YYYY-MM-DD = UTC midnight) or other formats
                 dateValue = new Date(payload.date);
             }
 
