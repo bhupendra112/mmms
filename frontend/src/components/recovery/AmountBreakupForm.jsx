@@ -37,9 +37,9 @@ export default function AmountBreakupForm({
           )}
         </div>
 
-        {/* Individual Amount Fields - Only show fields with values > 0 */}
+        {/* Individual Amount Fields - Only show fields where demand total > 0 */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          {(parseFloat(amountBreakup.saving) || 0) > 0 && (
+          {(parseFloat(currentMemberSummary?.saving?.total ?? 0) || 0) > 0 && (
             <Input
               label="Saving"
               name="saving"
@@ -54,16 +54,14 @@ export default function AmountBreakupForm({
             />
           )}
           {(() => {
-            const hasLoanAmount = (parseFloat(amountBreakup.loan) || 0) > 0;
-            const hasLoanDue = (currentMemberSummary?.loan?.total ?? 0) > 0 ||
-              (currentMemberSummary?.loan?.unpaid ?? 0) > 0 ||
-              (currentMemberSummary?.loan?.curr ?? 0) > 0;
+            const loanTotal = parseFloat(currentMemberSummary?.loan?.total ?? 0) || 0;
+            const loanUnpaid = parseFloat(currentMemberSummary?.loan?.unpaid ?? 0) || 0;
+            const loanCurr = parseFloat(currentMemberSummary?.loan?.curr ?? 0) || 0;
             const currentLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
             const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
-            const hasRemainingLoan = remainingLoanAmount > 0;
-            const shouldShowLoan = hasLoanAmount || hasLoanDue || hasRemainingLoan;
-
-            return shouldShowLoan && (
+            const hasLoanDemand = loanTotal > 0 || loanUnpaid > 0 || loanCurr > 0 || remainingLoanAmount > 0;
+            if (!hasLoanDemand) return null;
+            return (
               <div className="relative">
                 <Input
                   label="Loan"
@@ -75,7 +73,7 @@ export default function AmountBreakupForm({
                   step="1"
                   max={remainingLoanAmount > 0 ? remainingLoanAmount : (currentMemberSummary?.loan?.total || undefined)}
                 />
-                {hasRemainingLoan && (
+                {remainingLoanAmount > 0 && (
                   <button
                     type="button"
                     onClick={() => {
@@ -92,7 +90,7 @@ export default function AmountBreakupForm({
               </div>
             );
           })()}
-          {(parseFloat(amountBreakup.interest) || 0) > 0 && (
+          {(parseFloat(currentMemberSummary?.interest?.total ?? 0) || 0) > 0 && (
             <Input
               label="Interest on Loan"
               name="interest"
@@ -104,7 +102,7 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.interest?.total || undefined}
             />
           )}
-          {((parseFloat(amountBreakup.yogdan ?? 0) || 0) > 0 || (currentMemberSummary?.yogdan?.unpaid ?? 0) > 0) && (
+          {((parseFloat(currentMemberSummary?.yogdan?.total ?? 0) || 0) > 0 || (parseFloat(currentMemberSummary?.yogdan?.unpaid ?? 0) || 0) > 0) && (
             <Input
               label="Yogdan (when loan is given)"
               name="yogdan"
@@ -116,27 +114,19 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.yogdan?.total || undefined}
             />
           )}
-          {(() => {
-            const hasMemFeesSHGAmount = (parseFloat(amountBreakup.memFeesSHG) || 0) > 0;
-            const hasMemFeesSHGRemaining = (currentMemberSummary?.memFeesSHG?.total ?? 0) > 0 ||
-              (currentMemberSummary?.memFeesSHG?.unpaid ?? 0) > 0 ||
-              (currentMemberSummary?.memFeesSHG?.curr ?? 0) > 0;
-            const shouldShowMemFeesSHG = hasMemFeesSHGAmount || hasMemFeesSHGRemaining;
-
-            return shouldShowMemFeesSHG && (
-              <Input
-                label="Member Fees SHG (Yearly)"
-                name="memFeesSHG"
-                type="number"
-                value={amountBreakup.memFeesSHG}
-                handleChange={(e) => onAmountChange('memFeesSHG', e.target.value)}
-                placeholder="Enter SHG fees"
-                step="1"
-                max={currentMemberSummary?.memFeesSHG?.total || undefined}
-              />
-            );
-          })()}
-          {(parseFloat(amountBreakup.memFeesSamiti) || 0) > 0 && (
+          {((parseFloat(currentMemberSummary?.memFeesSHG?.total ?? 0) || 0) > 0 || (parseFloat(currentMemberSummary?.memFeesSHG?.unpaid ?? 0) || 0) > 0 || (parseFloat(currentMemberSummary?.memFeesSHG?.curr ?? 0) || 0) > 0) && (
+            <Input
+              label="Member Fees SHG (Yearly)"
+              name="memFeesSHG"
+              type="number"
+              value={amountBreakup.memFeesSHG}
+              handleChange={(e) => onAmountChange('memFeesSHG', e.target.value)}
+              placeholder="Enter SHG fees"
+              step="1"
+              max={currentMemberSummary?.memFeesSHG?.total || undefined}
+            />
+          )}
+          {(parseFloat(currentMemberSummary?.memFeesSamiti?.total ?? 0) || 0) > 0 && (
             <Input
               label="Member Fees Samiti (Yearly)"
               name="memFeesSamiti"
@@ -148,38 +138,32 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.memFeesSamiti?.total || undefined}
             />
           )}
-          {(() => {
-            const hasMemFeesGroupAmount = (parseFloat(amountBreakup.memFeesGroup) || 0) > 0;
-            const hasMemFeesGroupRemaining = (currentMemberSummary?.memFeesGroup?.total ?? 0) > 0 ||
-              (currentMemberSummary?.memFeesGroup?.unpaid ?? 0) > 0 ||
-              (currentMemberSummary?.memFeesGroup?.curr ?? 0) > 0;
-            const shouldShowMemFeesGroup = hasMemFeesGroupAmount || hasMemFeesGroupRemaining;
-
-            return shouldShowMemFeesGroup && (
-              <Input
-                label="Membership Group (Yearly)"
-                name="memFeesGroup"
-                type="number"
-                value={amountBreakup.memFeesGroup}
-                handleChange={(e) => onAmountChange('memFeesGroup', e.target.value)}
-                placeholder="Enter Membership Group fees"
-                step="1"
-                max={currentMemberSummary?.memFeesGroup?.total || undefined}
-              />
-            );
-          })()}
-          <Input
-            label="Penalty (optional)"
-            name="penalty"
-            type="number"
-            value={amountBreakup.penalty}
-            handleChange={(e) => onAmountChange('penalty', e.target.value)}
-            placeholder="Enter penalty amount if applicable"
-            step="1"
-            min="0"
-            max={currentMemberSummary?.penalty?.total ?? undefined}
-          />
-          {(parseFloat(amountBreakup.other) || 0) > 0 && (
+          {((parseFloat(currentMemberSummary?.memFeesGroup?.total ?? 0) || 0) > 0 || (parseFloat(currentMemberSummary?.memFeesGroup?.unpaid ?? 0) || 0) > 0 || (parseFloat(currentMemberSummary?.memFeesGroup?.curr ?? 0) || 0) > 0) && (
+            <Input
+              label="Membership Group (Yearly)"
+              name="memFeesGroup"
+              type="number"
+              value={amountBreakup.memFeesGroup}
+              handleChange={(e) => onAmountChange('memFeesGroup', e.target.value)}
+              placeholder="Enter Membership Group fees"
+              step="1"
+              max={currentMemberSummary?.memFeesGroup?.total || undefined}
+            />
+          )}
+          {(parseFloat(currentMemberSummary?.penalty?.total ?? 0) || 0) > 0 && (
+            <Input
+              label="Penalty (optional)"
+              name="penalty"
+              type="number"
+              value={amountBreakup.penalty}
+              handleChange={(e) => onAmountChange('penalty', e.target.value)}
+              placeholder="Enter penalty amount if applicable"
+              step="1"
+              min="0"
+              max={currentMemberSummary?.penalty?.total ?? undefined}
+            />
+          )}
+          {(parseFloat(currentMemberSummary?.other?.total ?? 0) || 0) > 0 && (
             <Input
               label="Other"
               name="other"
@@ -191,59 +175,56 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.other?.total || undefined}
             />
           )}
-          {/* Dynamic Charges Input Fields */}
+          {/* Dynamic Charges - show only when charge due > 0 */}
           {currentMemberSummary?.charges?.chargesDue && Object.keys(currentMemberSummary.charges.chargesDue).length > 0 && (
             <>
               {Object.keys(currentMemberSummary.charges.chargesDue).map((chargeName) => {
-                const chargeDue = currentMemberSummary.charges.chargesDue[chargeName] || 0;
-                const chargePaid = parseFloat(amountBreakup.charges?.[chargeName] ?? 0) || 0;
-                if (chargeDue > 0 || chargePaid > 0) {
-                  return (
-                    <Input
-                      key={chargeName}
-                      label={`${chargeName} (Due: ₹${chargeDue})`}
-                      name={`charge-${chargeName}`}
-                      type="number"
-                      value={amountBreakup.charges?.[chargeName] || ""}
-                      handleChange={(e) => {
-                        const numValue = parseFloat(e.target.value) || 0;
-                        if (e.target.value === '' || e.target.value === null || e.target.value === undefined) {
-                          onAmountBreakupChange({
-                            ...amountBreakup,
-                            charges: {
-                              ...amountBreakup.charges,
-                              [chargeName]: e.target.value,
-                            },
-                          });
-                          onSetAutoCalculated(false);
-                        } else if (numValue <= chargeDue) {
-                          onAmountBreakupChange({
-                            ...amountBreakup,
-                            charges: {
-                              ...amountBreakup.charges,
-                              [chargeName]: e.target.value,
-                            },
-                          });
-                          onSetAutoCalculated(false);
-                        } else {
-                          alert(`Amount cannot exceed the due amount of ₹${chargeDue.toLocaleString()}`);
-                          onAmountBreakupChange({
-                            ...amountBreakup,
-                            charges: {
-                              ...amountBreakup.charges,
-                              [chargeName]: chargeDue.toString(),
-                            },
-                          });
-                          onSetAutoCalculated(false);
-                        }
-                      }}
-                      placeholder={`Enter ${chargeName} amount`}
-                      step="1"
-                      max={chargeDue}
-                    />
-                  );
-                }
-                return null;
+                const chargeDue = parseFloat(currentMemberSummary.charges.chargesDue[chargeName] ?? 0) || 0;
+                if (chargeDue <= 0) return null;
+                return (
+                  <Input
+                    key={chargeName}
+                    label={`${chargeName} (Due: ₹${chargeDue})`}
+                    name={`charge-${chargeName}`}
+                    type="number"
+                    value={amountBreakup.charges?.[chargeName] || ""}
+                    handleChange={(e) => {
+                      const numValue = parseFloat(e.target.value) || 0;
+                      if (e.target.value === '' || e.target.value === null || e.target.value === undefined) {
+                        onAmountBreakupChange({
+                          ...amountBreakup,
+                          charges: {
+                            ...amountBreakup.charges,
+                            [chargeName]: e.target.value,
+                          },
+                        });
+                        onSetAutoCalculated(false);
+                      } else if (numValue <= chargeDue) {
+                        onAmountBreakupChange({
+                          ...amountBreakup,
+                          charges: {
+                            ...amountBreakup.charges,
+                            [chargeName]: e.target.value,
+                          },
+                        });
+                        onSetAutoCalculated(false);
+                      } else {
+                        alert(`Amount cannot exceed the due amount of ₹${chargeDue.toLocaleString()}`);
+                        onAmountBreakupChange({
+                          ...amountBreakup,
+                          charges: {
+                            ...amountBreakup.charges,
+                            [chargeName]: chargeDue.toString(),
+                          },
+                        });
+                        onSetAutoCalculated(false);
+                      }
+                    }}
+                    placeholder={`Enter ${chargeName} amount`}
+                    step="1"
+                    max={chargeDue}
+                  />
+                );
               })}
             </>
           )}
