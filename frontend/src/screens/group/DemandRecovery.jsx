@@ -537,8 +537,8 @@ export default function DemandRecovery() {
 
     const chargesDue = summary?.charges?.chargesDue || {};
 
-    // Priority: Yogdan -> MemFeesGroup -> MemFeesSHG -> MemFeesSamiti -> Charges -> Interest -> Loan -> Saving -> FD -> Penalty
-    // Loan comes before Saving to ensure loan repayment is prioritized
+    // Priority: Yogdan -> MemFeesGroup -> MemFeesSHG -> MemFeesSamiti -> Charges -> Interest -> Saving -> Loan
+    // Any extra after loan also goes to Saving (no auto FD/penalty from total)
     if (yogdanDue > 0 && remaining > 0) {
       const v = Math.min(yogdanDue, remaining);
       calculated.yogdan = v.toFixed(2);
@@ -582,7 +582,14 @@ export default function DemandRecovery() {
       remaining -= v;
     }
 
-    // Calculate loan BEFORE saving to prioritize loan repayment
+    // NEW: Calculate saving BEFORE loan
+    if (savingDue > 0 && remaining > 0) {
+      const v = Math.min(savingDue, remaining);
+      calculated.saving = v.toFixed(2);
+      remaining -= v;
+    }
+
+    // Then calculate loan
     const currentLoanTotals = memberLoanTotals[currentMember.id];
     const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
     // Only consider loan fully paid if we have loan totals AND remaining amount is 0 or fully recovered
@@ -628,27 +635,7 @@ export default function DemandRecovery() {
       }
     }
 
-    // Calculate saving AFTER loan to ensure loan gets priority
-    if (savingDue > 0 && remaining > 0) {
-      const v = Math.min(savingDue, remaining);
-      calculated.saving = v.toFixed(2);
-      remaining -= v;
-    }
-
-    const fdDue = parseFloat(summary?.fd?.total ?? 0) || 0;
-    if (fdDue > 0 && remaining > 0) {
-      const v = Math.min(fdDue, remaining);
-      calculated.fd = v.toFixed(2);
-      remaining -= v;
-    }
-
-    const penaltyDue = parseFloat(summary?.penalty?.total ?? 0) || 0;
-    if (penaltyDue > 0 && remaining > 0) {
-      const v = Math.min(penaltyDue, remaining);
-      calculated.penalty = v.toFixed(2);
-      remaining -= v;
-    }
-
+    // Any remaining extra after loan goes to Saving (not FD or penalty)
     if (remaining > 0) {
       const cur = parseFloat(calculated.saving ?? 0) || 0;
       calculated.saving = (cur + remaining).toFixed(2);
