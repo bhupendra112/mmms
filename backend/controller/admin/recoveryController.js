@@ -16,22 +16,6 @@ export const registerRecovery = async (req, res) => {
     try {
         const payload = req.body || {};
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:15', message: 'registerRecovery called - payload received', data: { hasGroupId: !!payload.groupId, hasRecoveries: !!payload.recoveries, recoveriesCount: payload.recoveries?.length || 0, requireApproval: payload.requireApproval, source: payload.source, date: payload.date, payloadKeys: Object.keys(payload) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => { });
-        // #endregion
-
-        // #region agent log
-        console.log('[RECOVERY_DEBUG] registerRecovery called', {
-            hasGroupId: !!payload.groupId,
-            hasRecoveries: !!payload.recoveries,
-            recoveriesCount: payload.recoveries?.length || 0,
-            requireApproval: payload.requireApproval,
-            source: payload.source,
-            date: payload.date,
-            timestamp: Date.now()
-        });
-        // #endregion
-
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
 
@@ -72,7 +56,64 @@ export const registerRecovery = async (req, res) => {
         // Get date range for checking existing recoveries
         const { start: dateStart, end: dateEnd } = getDateRange(parsedDate);
 
-        // Check if any member in the recoveries array already has a recovery for this date
+        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+        const meetingSequence = 1;
+
+        // When syncing from group panel: if a recovery session already exists for this group+date, update it instead of creating a duplicate
+        const existingSessionForDate = await RecoveryMaster.findOne({
+            groupId: groupDoc._id,
+            date: { $gte: dateStart, $lte: dateEnd },
+        }).sort({ meetingSequence: -1 });
+
+        if (existingSessionForDate && requireApproval && payload.recoveries && Array.isArray(payload.recoveries) && payload.recoveries.length > 0) {
+            const nextMeetingDate = getNextMeetingDate(parsedDate, groupDoc);
+            const enrichOne = async (rec) => {
+                const isPresent = rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther);
+                let demandDetails = rec.demandDetails;
+                let total = rec.total;
+                if (isPresent) {
+                    const hasValid = demandDetails && typeof demandDetails === 'object' && (demandDetails.loan?.totalDemand != null || demandDetails.saving?.totalDemand != null);
+                    if (!hasValid) {
+                        try {
+                            demandDetails = await calculateDemandDetails(groupDoc._id, rec.memberId, rec, parsedDate, groupDoc, meetingSequence);
+                        } catch (err) {
+                            console.error('[registerRecovery] calculateDemandDetails failed for member', rec.memberId, err);
+                            demandDetails = rec.demandDetails || {};
+                        }
+                    }
+                    const sum = (rec.amounts?.saving || 0) + (rec.amounts?.loan || 0) + (rec.amounts?.fd || 0) + (rec.amounts?.interest || 0) + (rec.amounts?.yogdan || 0) + (rec.amounts?.memFeesSHG || 0) + (rec.amounts?.memFeesSamiti || 0) + (rec.amounts?.memFeesGroup || 0) + (rec.amounts?.penalty || 0) + (rec.amounts?.other || 0) + (rec.amounts?.other1 || 0) + (rec.amounts?.other2 || 0);
+                    if (total == null || total === 0) total = sum;
+                }
+                return { ...rec, demandDetails: demandDetails || {}, total: total ?? 0 };
+            };
+            const existingRecoveries = existingSessionForDate.recoveries || [];
+            const existingByMember = new Map(existingRecoveries.map((r) => [String(r.memberId), r]));
+            for (const rec of payload.recoveries) {
+                const enriched = await enrichOne(rec);
+                existingByMember.set(String(rec.memberId), enriched);
+            }
+            const mergedRecoveries = Array.from(existingByMember.values());
+            let totalCash = 0, totalOnline = 0, totalAmount = 0;
+            for (const rec of mergedRecoveries) {
+                if (rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther)) {
+                    const t = rec.total ?? 0;
+                    totalAmount += t;
+                    if (rec.paymentMode?.cash) totalCash += t;
+                    if (rec.paymentMode?.online) totalOnline += t;
+                }
+            }
+            existingSessionForDate.recoveries = mergedRecoveries;
+            existingSessionForDate.memberCount = mergedRecoveries.length;
+            existingSessionForDate.totals = { totalCash, totalOnline, totalAmount };
+            if (payload.groupPhoto != null) existingSessionForDate.groupPhoto = payload.groupPhoto;
+            if (payload.cashDenominations) existingSessionForDate.cashDenominations = payload.cashDenominations;
+            if (nextMeetingDate) existingSessionForDate.nextMeetingDate = nextMeetingDate;
+            await existingSessionForDate.save();
+            const msg = requireApproval ? "Recovery session updated and pending admin approval" : "Recovery session updated successfully";
+            return apiResponse.success(res, msg, existingSessionForDate);
+        }
+
+        // Check if any member in the recoveries array already has a recovery for this date (when not updating existing session)
         if (payload.recoveries && Array.isArray(payload.recoveries) && payload.recoveries.length > 0) {
             const memberIds = payload.recoveries
                 .map(r => r.memberId)
@@ -114,9 +155,6 @@ export const registerRecovery = async (req, res) => {
                 }
             }
         }
-
-        // Check if approval is required (from group panel) - do this early to skip validations
-        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
 
         // Validate meeting day - recovery can only be done on scheduled meeting days
         // Skip this validation for group panel recoveries that require approval - let admin decide during approval
@@ -164,9 +202,6 @@ export const registerRecovery = async (req, res) => {
             }
         }
 
-        // Meeting sequence is always 1 (no same-day meetings allowed)
-        const meetingSequence = 1;
-
         // Validate cash denominations if provided
         if (payload.cashDenominations) {
             const { note200 = 0, note500 = 0, note100 = 0, note50 = 0, note20 = 0, note10 = 0, note5 = 0, note2 = 0, note1 = 0 } = payload.cashDenominations;
@@ -208,64 +243,186 @@ export const registerRecovery = async (req, res) => {
         // Approval status determined earlier (requireApproval already checked above)
         const approvalStatus = requireApproval ? 'pending' : 'approved';
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:201', message: 'Approval check in backend', data: { requireApproval, hasRequireApproval: payload.requireApproval === true, source: payload.source, sourceMatches: payload.source === 'group_sync', approvalStatus, groupId: groupDoc._id.toString(), recoveriesCount: payload.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => { });
-        // #endregion
+        // Helper: enrich a single member recovery with demandDetails and total
+        const enrichRecovery = async (rec) => {
+            const isPresent = rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther);
+            let demandDetails = rec.demandDetails;
+            let total = rec.total;
+            if (isPresent) {
+                const hasValidDemandDetails = demandDetails && typeof demandDetails === 'object' && (demandDetails.loan?.totalDemand != null || demandDetails.saving?.totalDemand != null);
+                if (!hasValidDemandDetails) {
+                    try {
+                        demandDetails = await calculateDemandDetails(
+                            groupDoc._id,
+                            rec.memberId,
+                            rec,
+                            parsedDate,
+                            groupDoc,
+                            meetingSequence
+                        );
+                    } catch (err) {
+                        console.error('[registerRecovery] calculateDemandDetails failed for member', rec.memberId, err);
+                        demandDetails = rec.demandDetails || {};
+                    }
+                }
+                const sum = (rec.amounts?.saving || 0) + (rec.amounts?.loan || 0) + (rec.amounts?.fd || 0) + (rec.amounts?.interest || 0) + (rec.amounts?.yogdan || 0) + (rec.amounts?.memFeesSHG || 0) + (rec.amounts?.memFeesSamiti || 0) + (rec.amounts?.memFeesGroup || 0) + (rec.amounts?.penalty || 0) + (rec.amounts?.other || 0) + (rec.amounts?.other1 || 0) + (rec.amounts?.other2 || 0);
+                if (total == null || total === 0) total = sum;
+            }
+            return { ...rec, demandDetails: demandDetails || {}, total: total ?? 0 };
+        };
 
-        // #region agent log
-        console.log('[RECOVERY_DEBUG] Approval check', {
-            requireApproval,
-            source: payload.source,
-            approvalStatus,
-            groupId: groupDoc._id.toString(),
-            recoveriesCount: payload.recoveries?.length || 0,
-            timestamp: Date.now()
-        });
-        // #endregion
-
-        // Create recovery session (store recovery date and next meeting date for reporting)
+        // Create new recovery session (store recovery date and next meeting date for reporting)
         const nextMeetingDate = getNextMeetingDate(parsedDate, groupDoc);
         const recoveryData = {
             ...payload,
             date: parsedDate,
-            recoveryDate: parsedDate, // Actual date recovery was done (e.g. 4 Feb)
-            nextMeetingDate: nextMeetingDate || undefined, // Meeting this recovery is for (e.g. 15 Feb)
+            recoveryDate: parsedDate,
+            nextMeetingDate: nextMeetingDate || undefined,
             meetingSequence: meetingSequence,
             groupId: groupDoc._id,
             groupName: payload.groupName || groupDoc.group_name,
             groupCode: payload.groupCode || groupDoc.group_code,
-            status: "approved", // Keep status for backward compatibility
+            status: "approved",
             approvalStatus: approvalStatus,
             createdBy: req.user?.id || payload.createdBy || "admin",
         };
 
-        // #region agent log
-        console.log('[RECOVERY_DEBUG] Creating recovery in database', {
-            groupId: recoveryData.groupId.toString(),
-            date: recoveryData.date,
-            approvalStatus: recoveryData.approvalStatus,
-            recoveriesCount: recoveryData.recoveries?.length || 0,
-            hasRecoveries: !!recoveryData.recoveries,
-            timestamp: Date.now()
-        });
-        // #endregion
+        // Enrich each member recovery with demandDetails and total when syncing from group panel
+        if (payload.recoveries && Array.isArray(payload.recoveries) && payload.recoveries.length > 0) {
+            const enrichedRecoveries = [];
+            let totalCash = 0;
+            let totalOnline = 0;
+            let totalAmount = 0;
+            for (const rec of payload.recoveries) {
+                const enriched = await enrichRecovery(rec);
+                enrichedRecoveries.push(enriched);
+                if (enriched.attendance === 'present' || (enriched.attendance === 'absent' && enriched.recoveryByOther)) {
+                    const t = enriched.total ?? 0;
+                    totalAmount += t;
+                    if (enriched.paymentMode?.cash) totalCash += t;
+                    if (enriched.paymentMode?.online) totalOnline += t;
+                }
+            }
+            recoveryData.recoveries = enrichedRecoveries;
+            recoveryData.totals = payload.totals && (payload.totals.totalAmount != null || payload.totals.totalCash != null) ? payload.totals : { totalCash, totalOnline, totalAmount };
+        }
 
-        const recovery = await RecoveryMaster.create(recoveryData);
+        // Second check right before create: another request may have created the session (e.g. concurrent syncs)
+        if (requireApproval && payload.recoveries?.length > 0) {
+            const again = await RecoveryMaster.findOne({
+                groupId: groupDoc._id,
+                date: { $gte: dateStart, $lte: dateEnd },
+            }).sort({ meetingSequence: -1 });
+            if (again) {
+                const nextMeetingDate = getNextMeetingDate(parsedDate, groupDoc);
+                const enrichOne = async (rec) => {
+                    const isPresent = rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther);
+                    let demandDetails = rec.demandDetails;
+                    let total = rec.total;
+                    if (isPresent) {
+                        const hasValid = demandDetails && typeof demandDetails === 'object' && (demandDetails.loan?.totalDemand != null || demandDetails.saving?.totalDemand != null);
+                        if (!hasValid) {
+                            try {
+                                demandDetails = await calculateDemandDetails(groupDoc._id, rec.memberId, rec, parsedDate, groupDoc, meetingSequence);
+                            } catch (err) {
+                                console.error('[registerRecovery] calculateDemandDetails failed for member', rec.memberId, err);
+                                demandDetails = rec.demandDetails || {};
+                            }
+                        }
+                        const sum = (rec.amounts?.saving || 0) + (rec.amounts?.loan || 0) + (rec.amounts?.fd || 0) + (rec.amounts?.interest || 0) + (rec.amounts?.yogdan || 0) + (rec.amounts?.memFeesSHG || 0) + (rec.amounts?.memFeesSamiti || 0) + (rec.amounts?.memFeesGroup || 0) + (rec.amounts?.penalty || 0) + (rec.amounts?.other || 0) + (rec.amounts?.other1 || 0) + (rec.amounts?.other2 || 0);
+                        if (total == null || total === 0) total = sum;
+                    }
+                    return { ...rec, demandDetails: demandDetails || {}, total: total ?? 0 };
+                };
+                const existingRecoveries = again.recoveries || [];
+                const existingByMember = new Map(existingRecoveries.map((r) => [String(r.memberId), r]));
+                for (const rec of payload.recoveries) {
+                    const enriched = await enrichOne(rec);
+                    existingByMember.set(String(rec.memberId), enriched);
+                }
+                const mergedRecoveries = Array.from(existingByMember.values());
+                let totalCash = 0, totalOnline = 0, totalAmount = 0;
+                for (const rec of mergedRecoveries) {
+                    if (rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther)) {
+                        const t = rec.total ?? 0;
+                        totalAmount += t;
+                        if (rec.paymentMode?.cash) totalCash += t;
+                        if (rec.paymentMode?.online) totalOnline += t;
+                    }
+                }
+                again.recoveries = mergedRecoveries;
+                again.memberCount = mergedRecoveries.length;
+                again.totals = { totalCash, totalOnline, totalAmount };
+                if (payload.groupPhoto != null) again.groupPhoto = payload.groupPhoto;
+                if (payload.cashDenominations) again.cashDenominations = payload.cashDenominations;
+                if (nextMeetingDate) again.nextMeetingDate = nextMeetingDate;
+                await again.save();
+                const msg = requireApproval ? "Recovery session updated and pending admin approval" : "Recovery session updated successfully";
+                return apiResponse.success(res, msg, again);
+            }
+        }
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:239', message: 'Recovery created in database', data: { recoveryId: recovery._id.toString(), approvalStatus: recovery.approvalStatus, groupId: recovery.groupId.toString(), date: recovery.date, recoveriesCount: recovery.recoveries?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H2' }) }).catch(() => { });
-        // #endregion
-
-        // #region agent log
-        console.log('[RECOVERY_DEBUG] Recovery created successfully', {
-            recoveryId: recovery._id.toString(),
-            approvalStatus: recovery.approvalStatus,
-            groupId: recovery.groupId.toString(),
-            date: recovery.date,
-            recoveriesCount: recovery.recoveries?.length || 0,
-            timestamp: Date.now()
-        });
-        // #endregion
+        let recovery;
+        try {
+            recovery = await RecoveryMaster.create(recoveryData);
+        } catch (createErr) {
+            // Duplicate key: another request created the same (groupId, date); find and update instead
+            const isDupKey = createErr.code === 11000 || (createErr.message && String(createErr.message).includes('E11000'));
+            if (isDupKey && requireApproval && payload.recoveries?.length > 0) {
+                const existing = await RecoveryMaster.findOne({
+                    groupId: groupDoc._id,
+                    date: { $gte: dateStart, $lte: dateEnd },
+                }).sort({ meetingSequence: -1 });
+                if (existing) {
+                    const nextMeetingDate = getNextMeetingDate(parsedDate, groupDoc);
+                    const enrichOne = async (rec) => {
+                        const isPresent = rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther);
+                        let demandDetails = rec.demandDetails;
+                        let total = rec.total;
+                        if (isPresent) {
+                            const hasValid = demandDetails && typeof demandDetails === 'object' && (demandDetails.loan?.totalDemand != null || demandDetails.saving?.totalDemand != null);
+                            if (!hasValid) {
+                                try {
+                                    demandDetails = await calculateDemandDetails(groupDoc._id, rec.memberId, rec, parsedDate, groupDoc, meetingSequence);
+                                } catch (err) {
+                                    console.error('[registerRecovery] calculateDemandDetails failed for member', rec.memberId, err);
+                                    demandDetails = rec.demandDetails || {};
+                                }
+                            }
+                            const sum = (rec.amounts?.saving || 0) + (rec.amounts?.loan || 0) + (rec.amounts?.fd || 0) + (rec.amounts?.interest || 0) + (rec.amounts?.yogdan || 0) + (rec.amounts?.memFeesSHG || 0) + (rec.amounts?.memFeesSamiti || 0) + (rec.amounts?.memFeesGroup || 0) + (rec.amounts?.penalty || 0) + (rec.amounts?.other || 0) + (rec.amounts?.other1 || 0) + (rec.amounts?.other2 || 0);
+                            if (total == null || total === 0) total = sum;
+                        }
+                        return { ...rec, demandDetails: demandDetails || {}, total: total ?? 0 };
+                    };
+                    const existingRecoveries = existing.recoveries || [];
+                    const existingByMember = new Map(existingRecoveries.map((r) => [String(r.memberId), r]));
+                    for (const rec of payload.recoveries) {
+                        const enriched = await enrichOne(rec);
+                        existingByMember.set(String(rec.memberId), enriched);
+                    }
+                    const mergedRecoveries = Array.from(existingByMember.values());
+                    let totalCash = 0, totalOnline = 0, totalAmount = 0;
+                    for (const rec of mergedRecoveries) {
+                        if (rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther)) {
+                            const t = rec.total ?? 0;
+                            totalAmount += t;
+                            if (rec.paymentMode?.cash) totalCash += t;
+                            if (rec.paymentMode?.online) totalOnline += t;
+                        }
+                    }
+                    existing.recoveries = mergedRecoveries;
+                    existing.memberCount = mergedRecoveries.length;
+                    existing.totals = { totalCash, totalOnline, totalAmount };
+                    if (payload.groupPhoto != null) existing.groupPhoto = payload.groupPhoto;
+                    if (payload.cashDenominations) existing.cashDenominations = payload.cashDenominations;
+                    if (nextMeetingDate) existing.nextMeetingDate = nextMeetingDate;
+                    await existing.save();
+                    const msg = requireApproval ? "Recovery session updated and pending admin approval" : "Recovery session updated successfully";
+                    return apiResponse.success(res, msg, existing);
+                }
+            }
+            throw createErr;
+        }
 
         // Only process transactions and updates if approved (admin panel)
         // For pending approvals (group panel), these will be processed on approval
@@ -1736,30 +1893,14 @@ const calculateInterestForPeriod = (principal, rate, startDate, endDate, debugCo
 
     const interest = (principal * rate * days) / (100 * daysInYear);
     const interestRounded = Math.max(0, interest);
-
-    // #region agent log — debug only: interest day calculation (date-only for UI/timezone clarity)
-    const toDateOnly = (d) => {
-        const x = new Date(d);
-        const y = x.getFullYear(), m = String(x.getMonth() + 1).padStart(2, "0"), day = String(x.getDate()).padStart(2, "0");
-        return `${y}-${m}-${day}`;
-    };
-    const dayDetail = {
-        startDate: toDateOnly(start),
-        endDate: toDateOnly(end),
-        days,
-        daysInYear,
-        principal,
-        rate,
-        interest: interestRounded,
-        formula: `(principal * rate * days) / (100 * daysInYear) = (${principal} * ${rate} * ${days}) / (100 * ${daysInYear})`,
-    };
-    if (typeof console !== "undefined" && console.log) {
-        console.log("[DEBUG INTEREST DAYS]", dayDetail);
+    if (Array.isArray(debugCollector)) {
+        const toDateOnly = (d) => {
+            const x = new Date(d);
+            const y = x.getFullYear(), m = String(x.getMonth() + 1).padStart(2, "0"), day = String(x.getDate()).padStart(2, "0");
+            return `${y}-${m}-${day}`;
+        };
+        debugCollector.push({ startDate: toDateOnly(start), endDate: toDateOnly(end), days, daysInYear, principal, rate, interest: interestRounded });
     }
-    fetch("http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "recoveryController.js:calculateInterestForPeriod", message: "interest day calculation", data: dayDetail, timestamp: Date.now(), hypothesisId: "interestDays" }) }).catch(() => {});
-    if (Array.isArray(debugCollector)) debugCollector.push(dayDetail);
-    // #endregion
-
     return interestRounded;
 };
 
@@ -2765,38 +2906,20 @@ export const getPreviousRecoveryData = async (req, res) => {
 
 // API endpoint to get demand details for a member (without requiring a recovery session)
 export const getDemandDetails = async (req, res) => {
-    // #region agent log
-    const _debugEndpoint = 'http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22';
-    fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:entry', message: 'getDemandDetails called', data: { query: req.query }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'A' }) }).catch(() => { });
-    // #endregion
-    console.log("[DEBUG getDemandDetails] entry", { groupId: req.query.groupId, memberId: req.query.memberId, date: req.query.date });
     try {
         const { groupId, memberId, date } = req.query;
 
         if (!groupId || !memberId) {
-            // #region agent log
-            fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:validation', message: 'validation failed missing params', data: { groupId: !!groupId, memberId: !!memberId }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'B' }) }).catch(() => { });
-            // #endregion
-            console.log("[DEBUG getDemandDetails] validation failed - missing groupId or memberId");
             return apiResponse.error(res, "groupId and memberId are required", 400);
         }
 
-        // Get group document
-        // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
-
-        // Verify group exists and belongs to admin's place
         const accessCheck = await verifyGroupAccess(groupId, adminPlace);
         if (!accessCheck.valid) {
-            // #region agent log
-            fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:accessCheck', message: 'access check failed', data: { error: accessCheck.error }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'C' }) }).catch(() => { });
-            // #endregion
-            console.log("[DEBUG getDemandDetails] access check failed", accessCheck.error);
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
         const groupDoc = accessCheck.group;
 
-        // Parse date
         let parsedDate = date ? new Date(date) : new Date();
         if (typeof date === 'string' && date.includes('/')) {
             const parts = date.split('/');
@@ -2808,20 +2931,10 @@ export const getDemandDetails = async (req, res) => {
             }
         }
         parsedDate.setHours(0, 0, 0, 0);
-        // #region agent log
-        fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:parsedDate', message: 'parsedDate', data: { parsedDate: parsedDate?.toISOString?.() }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'D' }) }).catch(() => { });
-        // #endregion
-        console.log("[DEBUG getDemandDetails] parsedDate", parsedDate?.toISOString?.());
 
-        // Meeting sequence is always 1 (no same-day meetings allowed)
         const meetingSequence = 1;
+        const emptyMemberRecovery = { amounts: {} };
 
-        // Create empty memberRecovery object for calculation
-        const emptyMemberRecovery = {
-            amounts: {}
-        };
-
-        // Calculate demand details (always include interest day breakdown for frontend demand summary)
         const demandDetails = await calculateDemandDetails(
             groupDoc._id,
             memberId,
@@ -2832,18 +2945,9 @@ export const getDemandDetails = async (req, res) => {
             null,
             { includeInterestDayDebug: true }
         );
-        // #region agent log
-        fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:result', message: 'demandDetails result', data: { interest: demandDetails?.interest, hasInterest: !!demandDetails?.interest }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E' }) }).catch(() => { });
-        // #endregion
-        console.log("[DEBUG getDemandDetails] result interest", demandDetails?.interest);
-        console.log("[DEBUG getDemandDetails] full demandDetails", JSON.stringify(demandDetails, null, 2));
 
         return apiResponse.success(res, "Demand details calculated successfully", demandDetails);
     } catch (error) {
-        // #region agent log
-        fetch(_debugEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'recoveryController.js:getDemandDetails:catch', message: 'getDemandDetails error', data: { message: error?.message }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'F' }) }).catch(() => { });
-        // #endregion
-        console.log("[DEBUG getDemandDetails] error", error?.message, error);
         return apiResponse.error(res, error.message, 500);
     }
 };

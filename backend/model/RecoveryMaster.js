@@ -133,8 +133,9 @@ const RecoveryMasterSchema = new mongoose.Schema({
     timestamps: true,
 });
 
-// Add indexes for performance
-RecoveryMasterSchema.index({ groupId: 1, date: 1 });
+// Add indexes for performance. Unique on (groupId, date) prevents duplicate sessions (e.g. concurrent syncs).
+// If the collection already has duplicates, remove them before deploying or index creation will fail.
+RecoveryMasterSchema.index({ groupId: 1, date: 1 }, { unique: true });
 RecoveryMasterSchema.index({ 'recoveries.memberId': 1, date: 1 });
 RecoveryMasterSchema.index({ groupId: 1, date: 1, 'recoveries.memberId': 1 });
 

@@ -131,12 +131,27 @@ export const registerLoan = async (req, res) => {
             yogdanAmount = Math.round((loanAmount * 0.01) * 100) / 100; // 1% of loan amount, rounded to 2 decimals
         }
 
-        // Determine status based on user type
-        // Check if the user is a group (type === "group") or an admin
-        // Group loans must go through approval workflow (pending status)
-        // Admin loans are immediately approved
-        const isAdmin = req.admin?.type !== "group";
+        // Determine status based on user type and payload
+        // Group/offline loans with requireApproval or source 'group_sync'
+        // must remain pending even if synced with an admin token.
+        const requiresApproval =
+            payload.requireApproval === true || payload.source === "group_sync";
+        const isAdmin = req.admin?.type !== "group" && !requiresApproval;
         const loanStatus = isAdmin ? "approved" : "pending";
+
+        // Idempotency: for group-sync requests, avoid duplicate loans when the same request is sent twice (e.g. multi-tab or retry)
+        if (requiresApproval && payload.groupId && payload.memberId && payload.amount != null && dateValue != null) {
+            const existing = await LoanMaster.findOne({
+                groupId: groupDoc._id,
+                memberId: payload.memberId,
+                amount: loanAmount,
+                status: "pending",
+                date: dateValue,
+            }).lean();
+            if (existing) {
+                return apiResponse.success(res, "Loan request already submitted; awaiting approval.", existing);
+            }
+        }
 
         // Create loan transaction
         const loan = await LoanMaster.create({

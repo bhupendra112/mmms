@@ -175,6 +175,52 @@ function sanitizePaymentPayloadForSync(payload) {
     return out;
 }
 
+/**
+ * Sanitize loan payload for sync: remove sync metadata but preserve
+ * requireApproval/source flags so backend can set correct approval status.
+ */
+function sanitizeLoanPayloadForSync(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    const out = { ...payload };
+
+    // Remove local/sync metadata fields
+    delete out._uuid;
+    delete out._id;
+    delete out._syncStatus;
+    delete out._operation;
+    delete out._isLocal;
+    delete out._deleted;
+    delete out._repositoryUuid;
+
+    // Intentionally keep requireApproval and source
+    return out;
+}
+
+/**
+ * Sanitize expense payload for sync: remove sync metadata but preserve
+ * requireApproval/source so backend creates pending expense and does not create
+ * cash/bank transactions until admin approves.
+ */
+function sanitizeExpensePayloadForSync(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    const out = { ...payload };
+
+    delete out._uuid;
+    delete out._id;
+    delete out._syncStatus;
+    delete out._operation;
+    delete out._isLocal;
+    delete out._deleted;
+
+    // Ensure groupId is a string for backend (ObjectId string)
+    if (out.groupId != null) out.groupId = String(out.groupId);
+    // Omit empty bankId so backend doesn't receive invalid ObjectId when paymentMode is Cash
+    if (out.paymentMode !== 'Bank' || !out.bankId) delete out.bankId;
+    else if (out.bankId != null) out.bankId = String(out.bankId);
+
+    return out;
+}
+
 async function syncRecord(record, queueItem) {
     const { entityType, operation, payload, uuid } = record;
 
@@ -197,6 +243,10 @@ async function syncRecord(record, queueItem) {
                 requestPayload = sanitizeMemberPayloadForSync(payload);
             } else if (entityType === 'payment') {
                 requestPayload = sanitizePaymentPayloadForSync(payload);
+            } else if (entityType === 'loan') {
+                requestPayload = sanitizeLoanPayloadForSync(payload);
+            } else if (entityType === 'expense') {
+                requestPayload = sanitizeExpensePayloadForSync(payload);
             }
             break;
         case 'update':
@@ -344,6 +394,12 @@ async function processSyncItem(queueItem) {
         const result = await syncRecord(record, queueItem);
 
         await db.sync_queue.delete(queueItem.id);
+
+        // After successful loan create sync, remove from local transactions so the loan
+        // only appears from master data (no duplicate in merged list)
+        if (entityType === 'loan' && operation === 'create' && result?.success) {
+            await db.transactions.delete(uuid);
+        }
 
         return result;
     } catch (error) {

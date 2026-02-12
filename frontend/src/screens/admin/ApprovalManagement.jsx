@@ -201,10 +201,6 @@ export default function ApprovalManagement() {
             try {
                 const recoveriesRes = await getRecoveries();
 
-                // #region agent log
-                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'ApprovalManagement.jsx:201', message: 'Loading recoveries for approval', data: { success: recoveriesRes?.success, isArray: Array.isArray(recoveriesRes?.data), totalCount: recoveriesRes?.data?.length || 0, pendingCount: recoveriesRes?.data?.filter((r) => r.approvalStatus === 'pending')?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H3' }) }).catch(() => { });
-                // #endregion
-
                 if (recoveriesRes?.success && Array.isArray(recoveriesRes.data)) {
                     const recoveryApprovals = recoveriesRes.data
                         .filter((recovery) => recovery.approvalStatus === "pending") // Only show pending recoveries
@@ -226,34 +222,46 @@ export default function ApprovalManagement() {
                     // Merge with existing approvals
                     allApprovals = [...allApprovals, ...recoveryApprovals];
 
-                    // Deduplicate recovery approvals: same session can appear as local (approvalDB) + backend (getRecoveries). Keep one per (groupId, date), prefer backend.
+                    // Normalize date to YYYY-MM-DD for consistent dedupe key (handles "11/02/2026" vs ISO from backend)
+                    const toRecoveryDateKey = (dateVal) => {
+                        if (!dateVal) return "";
+                        let d;
+                        if (typeof dateVal === "string" && dateVal.includes("/")) {
+                            const parts = dateVal.split("/");
+                            if (parts.length === 3) d = new Date(+parts[2], +parts[1] - 1, +parts[0]);
+                            else d = new Date(dateVal);
+                        } else {
+                            d = new Date(dateVal);
+                        }
+                        return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+                    };
+
+                    // Deduplicate recovery approvals: same session can appear as local + backend, or same recovery twice. Keep one per (groupId, date) and one per recovery id.
                     const recoveryByKey = new Map();
+                    const recoveryById = new Map();
                     allApprovals.forEach((a) => {
                         if (a.type !== "recovery") return;
+                        const rid = (a.data?._id ?? a.data?.id ?? a.id ?? "").toString();
                         const gid = (a.groupId?._id ?? a.groupId ?? "").toString();
-                        const dateStr = a.data?.date ? (typeof a.data.date === "string" ? a.data.date : new Date(a.data.date).toISOString().slice(0, 10)) : "";
+                        const dateStr = toRecoveryDateKey(a.data?.date);
                         const key = `${gid}|${dateStr}`;
-                        const existing = recoveryByKey.get(key);
-                        if (!existing || (a._isBackendApproval && !existing._isBackendApproval)) {
-                            recoveryByKey.set(key, a);
-                        }
+                        const existingByKey = recoveryByKey.get(key);
+                        const existingById = recoveryById.get(rid);
+                        const preferThis = a._isBackendApproval && (!existingByKey?._isBackendApproval || !existingById?._isBackendApproval);
+                        if (!existingByKey || preferThis) recoveryByKey.set(key, a);
+                        if (!existingById || preferThis) recoveryById.set(rid, a);
                     });
                     allApprovals = allApprovals.filter((a) => {
                         if (a.type !== "recovery") return true;
+                        const rid = (a.data?._id ?? a.data?.id ?? a.id ?? "").toString();
                         const gid = (a.groupId?._id ?? a.groupId ?? "").toString();
-                        const dateStr = a.data?.date ? (typeof a.data.date === "string" ? a.data.date : new Date(a.data.date).toISOString().slice(0, 10)) : "";
-                        return recoveryByKey.get(`${gid}|${dateStr}`) === a;
+                        const dateStr = toRecoveryDateKey(a.data?.date);
+                        const key = `${gid}|${dateStr}`;
+                        return (recoveryByKey.get(key) === a) && (recoveryById.get(rid) === a);
                     });
-
-                    // #region agent log
-                    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'ApprovalManagement.jsx:221', message: 'Recovery approvals processed', data: { recoveryApprovalsCount: recoveryApprovals.length, totalApprovalsCount: allApprovals.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H3' }) }).catch(() => { });
-                    // #endregion
                 }
             } catch (error) {
                 console.error("Error loading recoveries:", error);
-                // #region agent log
-                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'ApprovalManagement.jsx:224', message: 'Error loading recoveries', data: { error: error.message, stack: error.stack }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H3' }) }).catch(() => { });
-                // #endregion
                 // Continue with other approvals even if backend fails
             }
 

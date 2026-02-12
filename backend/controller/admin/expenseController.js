@@ -5,7 +5,7 @@ import LoanMaster from "../../model/LoanMaster.js";
 import { GroupMaster, BankMaster } from "../../model/index.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
-import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
+import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName, getAdminPlace } from "../../utility/groupAccessHelper.js";
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead, findOrCreateExpenseHead } from "../../utility/headMappingHelper.js";
 
@@ -13,24 +13,36 @@ export const createExpense = async (req, res) => {
     try {
         const payload = req.body || {};
 
-        // Get admin's place from token
-        const adminPlace = req.user?.place || req.admin?.place;
+        // Ensure place is populated for group tokens (from DB if not in token)
+        const adminPlace = await getAdminPlace(req);
 
-        // Verify group exists and belongs to admin's place
+        const isGroupToken = req.user?.type === "group" || req.admin?.type === "group";
+        const tokenGroupId = req.user?.id || req.admin?.id;
+
         let groupId = null;
-        if (payload.groupId) {
+
+        // Group panel: allow group token to create expense for their own group without requiring place
+        if (isGroupToken && payload.groupId && tokenGroupId && String(payload.groupId) === String(tokenGroupId)) {
+            const group = await GroupMaster.findById(payload.groupId).lean();
+            if (!group) {
+                return apiResponse.error(res, "Group not found", 404);
+            }
+            groupId = group._id;
+        }
+
+        if (!groupId && payload.groupId) {
             const accessCheck = await verifyGroupAccess(payload.groupId, adminPlace);
             if (!accessCheck.valid) {
                 return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
             }
             groupId = accessCheck.group._id;
-        } else if (payload.groupCode) {
+        } else if (!groupId && payload.groupCode) {
             const accessCheck = await verifyGroupAccessByCode(payload.groupCode, adminPlace);
             if (!accessCheck.valid) {
                 return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
             }
             groupId = accessCheck.group._id;
-        } else if (payload.groupName) {
+        } else if (!groupId && payload.groupName) {
             const accessCheck = await verifyGroupAccessByName(payload.groupName, adminPlace);
             if (!accessCheck.valid) {
                 return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
@@ -69,24 +81,27 @@ export const createExpense = async (req, res) => {
             return apiResponse.error(res, "Valid amount (> 0) is required", 400);
         }
 
-        // Validate balance based on payment mode
-        if (payload.paymentMode === "Cash") {
-            // Check cash balance
-            await groupDoc.recalculateCashBalance();
-            const cashBalance = groupDoc.current_cash_balance || 0;
-            if (cashBalance < expenseAmount) {
-                return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${expenseAmount.toFixed(2)}`, 400);
-            }
-        } else if (payload.paymentMode === "Bank" && payload.bankId) {
-            // Check bank balance
-            const bank = await BankMaster.findById(payload.bankId);
-            if (!bank) {
-                return apiResponse.error(res, "Bank account not found", 404);
-            }
-            const balanceInfo = await BankMaster.calculateAvailableBalance(payload.bankId);
-            const availableBalance = balanceInfo.availableBalance || 0;
-            if (availableBalance < expenseAmount) {
-                return apiResponse.error(res, `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${expenseAmount.toFixed(2)}`, 400);
+        // Check if approval is required (from group panel) - used to skip balance check and defer transactions
+        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
+
+        // Validate balance only for immediate (admin) creates; group_sync expenses are validated on approval
+        if (!requireApproval) {
+            if (payload.paymentMode === "Cash") {
+                await groupDoc.recalculateCashBalance();
+                const cashBalance = groupDoc.current_cash_balance || 0;
+                if (cashBalance < expenseAmount) {
+                    return apiResponse.error(res, `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${expenseAmount.toFixed(2)}`, 400);
+                }
+            } else if (payload.paymentMode === "Bank" && payload.bankId) {
+                const bank = await BankMaster.findById(payload.bankId);
+                if (!bank) {
+                    return apiResponse.error(res, "Bank account not found", 404);
+                }
+                const balanceInfo = await BankMaster.calculateAvailableBalance(payload.bankId);
+                const availableBalance = balanceInfo.availableBalance || 0;
+                if (availableBalance < expenseAmount) {
+                    return apiResponse.error(res, `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${expenseAmount.toFixed(2)}`, 400);
+                }
             }
         }
 
@@ -126,8 +141,6 @@ export const createExpense = async (req, res) => {
             }
         }
 
-        // Check if approval is required (from group panel)
-        const requireApproval = payload.requireApproval === true || payload.source === 'group_sync';
         const approvalStatus = requireApproval ? 'pending' : 'approved';
 
         // Create expense
@@ -148,17 +161,6 @@ export const createExpense = async (req, res) => {
             // Create bank transaction record if payment mode is Bank
             // NOTE: Expense is a DEBIT transaction - group pays money, so bank balance decreases
             if (payload.paymentMode === "Bank" && payload.bankId) {
-                console.log("[EXPENSE_CONTROLLER] Creating bank transaction for expense (DEBIT - will REMOVE from bank balance):", {
-                    bankId: payload.bankId,
-                    groupId: groupDoc._id.toString(),
-                    amount: payload.amount || 0,
-                    transactionType: "expense"
-                });
-
-                // #region agent log
-                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:109', message: 'Creating bank transaction for expense (should be DEBIT)', data: { bankId: payload.bankId, groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Bank' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-                // #endregion
-
                 const bankTxResult = await createBankTransactionRecord({
                     bankId: payload.bankId,
                     groupId: groupDoc._id,
@@ -169,27 +171,11 @@ export const createExpense = async (req, res) => {
                     expenseId: expense._id,
                     createdBy: req.user?.id || "admin",
                 });
-
-                console.log("[EXPENSE_CONTROLLER] Bank transaction result:", bankTxResult ? "SUCCESS" : "FAILED");
-
-                // #region agent log
-                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:125', message: 'Bank transaction created for expense', data: { success: !!bankTxResult, bankTransactionId: bankTxResult?._id?.toString(), status: bankTxResult?.status }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-                // #endregion
             }
 
             // Create cash transaction record if payment mode is Cash
             // NOTE: Expense is a DEBIT transaction - group pays money, so cash balance decreases
             if (payload.paymentMode === "Cash") {
-                console.log("[EXPENSE_CONTROLLER] Creating cash transaction for expense (DEBIT - will REMOVE from cash balance):", {
-                    groupId: groupDoc._id.toString(),
-                    amount: payload.amount || 0,
-                    transactionType: "expense"
-                });
-
-                // #region agent log
-                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:133', message: 'Creating cash transaction for expense (should be DEBIT)', data: { groupId: groupDoc._id.toString(), amount: payload.amount || 0, transactionType: 'expense', paymentMode: 'Cash' }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-                // #endregion
-
                 const cashTxResult = await createCashTransactionRecord({
                     groupId: groupDoc._id,
                     transactionType: "expense",
@@ -199,12 +185,6 @@ export const createExpense = async (req, res) => {
                     expenseId: expense._id,
                     createdBy: req.user?.id || "admin",
                 });
-
-                console.log("[EXPENSE_CONTROLLER] Cash transaction result:", cashTxResult ? "SUCCESS" : "FAILED");
-
-                // #region agent log
-                fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'expenseController.js:149', message: 'Cash transaction created for expense', data: { success: !!cashTxResult, cashTransactionId: cashTxResult?._id?.toString() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-                // #endregion
             }
 
             // Post ledger entry for expense

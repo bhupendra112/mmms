@@ -4,7 +4,7 @@ import Dexie from "dexie"; // Use the same Dexie instance
 
 let approvalDB = null;
 
-// Approval Schema
+// Approval Schema (version 0; "already queued" is stored in data._repositoryUuid to avoid schema migration)
 const approvalSchema = {
     version: 0,
     primaryKey: "id",
@@ -27,7 +27,7 @@ const approvalSchema = {
             type: "string",
         },
         data: {
-            type: "object", // The actual data to be approved
+            type: "object", // The actual data to be approved (may include _repositoryUuid for duplicate prevention)
         },
         submittedAt: {
             type: "number",
@@ -71,7 +71,7 @@ export const initApprovalDB = async () => {
         } catch (addError) {
             // Collections might already exist, check if they're accessible
             if (import.meta.env.DEV) {
-            console.warn("Collections might already exist:", addError.message);
+                console.warn("Collections might already exist:", addError.message);
             }
         }
 
@@ -151,7 +151,7 @@ export const getAllApprovals = async (groupId = null) => {
 
         if (!approvalDB || !approvalDB.approvals) {
             if (import.meta.env.DEV) {
-            console.warn("Approval database not ready, returning empty array");
+                console.warn("Approval database not ready, returning empty array");
             }
             return [];
         }
@@ -255,7 +255,7 @@ export const getUnsyncedApprovals = async () => {
 
         if (!approvalDB || !approvalDB.approvals) {
             if (import.meta.env.DEV) {
-            console.warn("Approval database not ready, returning empty array");
+                console.warn("Approval database not ready, returning empty array");
             }
             return [];
         }
@@ -273,59 +273,80 @@ export const getUnsyncedApprovals = async () => {
     }
 };
 
+// Lock so only one sync run executes at a time (prevents duplicate loans when called concurrently)
+let syncPendingLoanApprovalsLock = null;
+
 // Sync pending loan approvals to repository (so they get added to sync_queue)
 export const syncPendingLoanApprovals = async () => {
-    try {
-        if (!approvalDB || !approvalDB.approvals) {
-            await initApprovalDB();
-        }
-
-        if (!approvalDB || !approvalDB.approvals) {
-            return { synced: 0, errors: [] };
-        }
-
-        // Get unsynced pending loan approvals
-        const approvals = await approvalDB.approvals.find({
-            selector: {
-                type: "loan",
-                status: "pending",
-                synced: false,
-            },
-        }).exec();
-
-        const approvalDocs = approvals.map((doc) => doc.toJSON());
-        let synced = 0;
-        const errors = [];
-
-        // Import registerLoan dynamically to avoid circular dependency
-        const { registerLoan } = await import('./loanServiceOffline');
-
-        for (const approval of approvalDocs) {
-            try {
-                // Convert approval request to repository record
-                // This will add it to sync_queue automatically
-                await registerLoan(approval.data);
-
-                // Mark approval as synced (converted to repository)
-                const approvalDoc = await approvalDB.approvals.findOne(approval.id).exec();
-                if (approvalDoc) {
-                    await approvalDoc.incrementalModify((doc) => {
-                        doc.synced = true;
-                        return doc;
-                    });
-                    synced++;
-                }
-            } catch (error) {
-                console.error(`Error syncing approval ${approval.id}:`, error);
-                errors.push({ approvalId: approval.id, error: error.message });
-            }
-        }
-
-        return { synced, errors };
-    } catch (error) {
-        console.error("Error syncing pending loan approvals:", error);
-        return { synced: 0, errors: [{ error: error.message }] };
+    if (syncPendingLoanApprovalsLock) {
+        return syncPendingLoanApprovalsLock;
     }
+    const run = async () => {
+        try {
+            if (!approvalDB || !approvalDB.approvals) {
+                await initApprovalDB();
+            }
+
+            if (!approvalDB || !approvalDB.approvals) {
+                return { synced: 0, errors: [] };
+            }
+
+            const approvals = await approvalDB.approvals.find({
+                selector: {
+                    type: "loan",
+                    status: "pending",
+                    synced: false,
+                },
+            }).exec();
+
+            const approvalDocs = approvals.map((doc) => doc.toJSON());
+            let synced = 0;
+            const errors = [];
+
+            const { registerLoan } = await import('./loanServiceOffline');
+
+            for (const approval of approvalDocs) {
+                try {
+                    const data = approval.data || {};
+                    if (data._repositoryUuid) {
+                        continue;
+                    }
+
+                    const { _repositoryUuid: _skip, ...loanData } = data;
+                    const result = await registerLoan({
+                        ...loanData,
+                        requireApproval: true,
+                        source: "group_sync",
+                    });
+
+                    const recordUuid =
+                        result?.data?._id ||
+                        result?.data?._uuid ||
+                        result?.data?.id;
+
+                    if (!recordUuid) {
+                        throw new Error("registerLoan did not return record uuid");
+                    }
+
+                    await updateApprovalData(approval.id, { _repositoryUuid: recordUuid });
+                    await markAsSynced(approval.id);
+                    synced++;
+                } catch (error) {
+                    console.error(`Error syncing approval ${approval.id}:`, error);
+                    errors.push({ approvalId: approval.id, error: error.message });
+                }
+            }
+
+            return { synced, errors };
+        } catch (error) {
+            console.error("Error syncing pending loan approvals:", error);
+            return { synced: 0, errors: [{ error: error.message }] };
+        } finally {
+            syncPendingLoanApprovalsLock = null;
+        }
+    };
+    syncPendingLoanApprovalsLock = run();
+    return syncPendingLoanApprovalsLock;
 };
 
 // Sync pending FD approvals to repository (so they get added to sync_queue)

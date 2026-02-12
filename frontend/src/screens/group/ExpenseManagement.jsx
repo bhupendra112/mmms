@@ -119,10 +119,11 @@ export default function ExpenseManagement() {
     };
 
     const loadExpenses = async () => {
-        if (!currentGroup?.id) return;
+        const groupId = currentGroup?.id != null ? String(currentGroup.id) : null;
+        if (!groupId) return;
         try {
             setExpensesLoading(true);
-            const response = await getExpenses({ groupId: currentGroup.id });
+            const response = await getExpenses({ groupId });
             const expensesList = Array.isArray(response?.data) ? response.data : [];
             setExpenses(expensesList);
         } catch (e) {
@@ -264,9 +265,10 @@ export default function ExpenseManagement() {
         }
 
         try {
+            const groupId = currentGroup?.id != null ? String(currentGroup.id) : undefined;
             const expenseData = {
                 ...form,
-                groupId: currentGroup.id,
+                groupId,
                 amount: expenseAmount, // normalize to number
             };
 

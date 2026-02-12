@@ -22,9 +22,11 @@ export const createExpense = async (data) => {
     // Check if we're in group panel context
     const isGroupPanel = typeof window !== 'undefined' && window.location?.pathname?.includes('/group');
     
-    // Add requireApproval flag for group panel requests
+    // Normalize groupId to string for consistent filtering in repository
+    const groupId = data.groupId != null ? String(data.groupId) : data.groupId;
     const payload = {
         ...data,
+        ...(groupId !== undefined ? { groupId } : {}),
         ...(isGroupPanel ? { requireApproval: true, source: 'group_sync' } : {}),
     };
     
