@@ -63,6 +63,17 @@ export const getMemberFinancialLedger = async (memberId, filters = {}) => {
   return res.data;
 };
 
+export const getMemberExitSummary = async (memberId) => {
+  const res = await httpMember.get("/exit-summary", { params: { memberId } });
+  return res.data;
+};
+
+export const createMemberExitSettlement = async (payload) => {
+  const sanitized = sanitizePayload(payload);
+  const res = await httpMember.post("/exit-settlement", sanitized);
+  return res.data;
+};
+
 export const exportMemberLedger = async (filters = {}) => {
   const params = {};
   if (filters.memberId) params.memberId = filters.memberId;

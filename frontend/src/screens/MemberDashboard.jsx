@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useParams, useLocation } from "react-router-dom";
+import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { DollarSign } from "lucide-react";
 import { exportToExcel, exportToPDF, exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
 import * as XLSX from "xlsx";
@@ -10,10 +10,12 @@ import {
   getMemberDetail,
   exportMemberLedger,
   getMemberFinancialLedger,
+  getMembersByGroup as getMembersByGroupAdmin,
 } from "../services/memberService";
 import {
   getMemberDetail as getMemberDetailOffline,
   getMemberFinancialLedger as getMemberFinancialLedgerOffline,
+  getMembersByGroup as getMembersByGroupOffline,
 } from "../services/memberServiceOffline";
 import { getLoans } from "../services/loanService";
 import { getRecoveries } from "../services/recoveryService";
@@ -37,6 +39,7 @@ import FinancialLedger from "../components/member/FinancialLedger";
 export default function MemberDashboard() {
   const { id } = useParams();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const isGroupRoute = pathname.startsWith("/group");
 
   const [loading, setLoading] = useState(false);
@@ -53,6 +56,9 @@ export default function MemberDashboard() {
   const [ledgerData, setLedgerData] = useState([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerError, setLedgerError] = useState("");
+
+  const [nextMemberId, setNextMemberId] = useState(null);
+  const [prevMemberId, setPrevMemberId] = useState(null);
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -81,6 +87,7 @@ export default function MemberDashboard() {
         setMemberDoc(res?.data || null);
 
         if (res?.data) {
+          computePrevAndNextMember(res.data);
           loadMemberTransactions(res.data);
           loadFinancialLedger(id, fromDate, toDate);
         }
@@ -93,6 +100,85 @@ export default function MemberDashboard() {
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isGroupRoute]);
+
+  const computePrevAndNextMember = async (memberData) => {
+    try {
+      const groupId =
+        memberData?.group_id ||
+        memberData?.group?._id ||
+        memberData?.group ||
+        memberData?.groupId;
+      if (!groupId || !id) {
+        setNextMemberId(null);
+        setPrevMemberId(null);
+        return;
+      }
+
+      const fetchMembers = isGroupRoute
+        ? getMembersByGroupOffline
+        : getMembersByGroupAdmin;
+
+      const response = await fetchMembers(groupId);
+      const list = Array.isArray(response?.data) ? response.data : [];
+      if (!list.length) {
+        setNextMemberId(null);
+        setPrevMemberId(null);
+        return;
+      }
+
+      const normalizeId = (m) => {
+        if (isGroupRoute) {
+          return m._uuid || m._id || m.Member_Id;
+        }
+        return m._id;
+      };
+
+      const ids = list.map((m) => String(normalizeId(m)));
+      const currentIndex = ids.findIndex((mid) => mid === String(id));
+
+      if (currentIndex === -1) {
+        setNextMemberId(null);
+        setPrevMemberId(null);
+      } else {
+        // previous
+        if (currentIndex > 0) {
+          setPrevMemberId(ids[currentIndex - 1]);
+        } else {
+          setPrevMemberId(null);
+        }
+        // next
+        if (currentIndex < ids.length - 1) {
+          setNextMemberId(ids[currentIndex + 1]);
+        } else {
+          setNextMemberId(null);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to compute next member:", e);
+      setNextMemberId(null);
+      setPrevMemberId(null);
+    }
+  };
+
+  const handleGoToNextMember = () => {
+    if (!nextMemberId) return;
+    if (isGroupRoute) {
+      navigate(`/group/members/${nextMemberId}`);
+    } else {
+      navigate(`/admin/members/${nextMemberId}`);
+    }
+  };
+
+  const handleExitMember = () => {
+    if (!id || !member) return;
+    navigate(`${isGroupRoute ? "/group" : "/admin"}/members/${id}/exit`, {
+      state: {
+        exitState: {
+          summary: null,
+        },
+      },
+    });
+  };
 
   // reload ledger when filters change
   useEffect(() => {
@@ -587,7 +673,21 @@ export default function MemberDashboard() {
       <div className="w-full max-w-full min-w-0 overflow-x-hidden px-2 sm:px-4">
         {/* ✅ INNER WRAPPER: LEFT ALIGNED + CONTROL WIDTH (THIS FIXES YOUR ISSUE) */}
         <div className="w-full max-w-[380px] sm:max-w-[720px] md:max-w-[920px] lg:max-w-[1200px] mr-auto mx-0 min-w-0 flex flex-col gap-4">
-          <MemberDashboardHeader member={member} />
+          <MemberDashboardHeader
+            member={member}
+            onNextMember={handleGoToNextMember}
+            hasNext={!!nextMemberId}
+            onPrevMember={() => {
+              if (!prevMemberId) return;
+              if (isGroupRoute) {
+                navigate(`/group/members/${prevMemberId}`);
+              } else {
+                navigate(`/admin/members/${prevMemberId}`);
+              }
+            }}
+            hasPrev={!!prevMemberId}
+            onExitMember={handleExitMember}
+          />
 
           {loading && (
             <p className="text-sm md:text-base text-gray-600 mb-1">Loading member…</p>

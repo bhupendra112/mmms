@@ -1,6 +1,6 @@
 import express from "express";
 import { registerMemberSchema, updateMemberSchema } from "../../validation/adminValidation.js";
-import { getMemberDetail, listMembers, listMembersByGroup, registerMember, getAutoMemberCode, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember, getPendingMembers, approveMember, rejectMember } from "../../controller/admin/memberController.js";
+import { getMemberDetail, listMembers, listMembersByGroup, registerMember, getAutoMemberCode, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember, getPendingMembers, approveMember, rejectMember, getMemberExitSummary, createMemberExitSettlement } from "../../controller/admin/memberController.js";
 import upload from "../../config/multerConfig.js";
 import authAdmin from "../../middleware/authorization.js";
 import compressImages from "../../middleware/compressImages.js";
@@ -56,6 +56,14 @@ router.get("/financial-ledger", authAdmin, (req, res) => {
 
 router.get("/export-ledger", authAdmin, (req, res) => {
     return exportMemberLedger(req, res);
+});
+
+router.get("/exit-summary", authAdmin, (req, res) => {
+    return getMemberExitSummary(req, res);
+});
+
+router.post("/exit-settlement", authAdmin, (req, res) => {
+    return createMemberExitSettlement(req, res);
 });
 
 // Handle file uploads with multer - using fields to handle multiple optional files

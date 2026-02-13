@@ -1,7 +1,10 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
-import { GroupMaster, Member, LoanMaster, RecoveryMaster, FDMaster, PaymentMaster, MemberRevenueDemand } from "../../model/index.js";
+import { GroupMaster, Member, LoanMaster, RecoveryMaster, FDMaster, PaymentMaster, MemberRevenueDemand, MemberExitSettlement, BankMaster } from "../../model/index.js";
 import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
+import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
+import { postTransaction } from "../../service/ledgerPostingService.js";
+import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 
 export const registerMember = async (req, res) => {
     try {
@@ -585,6 +588,247 @@ export const getMemberDetail = async (req, res) => {
         return apiResponse.success(res, "Member detail fetched successfully", member);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
+    }
+};
+
+/**
+ * GET /api/admin/member/exit-summary?memberId=...
+ * Computes per-head balances for a member at the time of exit and returns
+ * a normalized summary used by the frontend settlement UI.
+ */
+export const getMemberExitSummary = async (req, res) => {
+    try {
+        const { memberId } = req.query;
+
+        if (!memberId) {
+            return apiResponse.error(res, "memberId is required", 400);
+        }
+
+        const member = await Member.findById(memberId).populate("group").lean();
+        if (!member) {
+            return apiResponse.error(res, "Member not found", 404);
+        }
+
+        const groupId = member.group?._id || member.group;
+        if (!groupId) {
+            return apiResponse.error(res, "Member group not found", 400);
+        }
+
+        // Reuse existing ledger calculation so exit logic stays consistent
+        const { summary } = await calculateMemberLedger(member, null, null);
+
+        // ---- Asset heads: amounts payable to member (focus on closing balance) ----
+        const savingHead = {
+            key: "saving",
+            label: "Saving",
+            opening: summary.openingSavings || 0,
+            closing: summary.closingSavings || 0,
+            // For exit, only closing balance matters for payout
+            prev: 0,
+            curr: 0,
+            total: 0,
+            actual: summary.closingSavings || 0,
+            unpaid: 0,
+        };
+
+        const fdHead = {
+            key: "fd",
+            label: "FD",
+            opening: summary.openingFD || 0,
+            closing: summary.closingFD || 0,
+            prev: 0,
+            curr: 0,
+            total: 0,
+            actual: summary.closingFD || 0,
+            unpaid: 0,
+        };
+
+        // ---- Liability heads: amounts payable by member to group (focus on closing dues) ----
+        const loanHead = {
+            key: "loan",
+            label: "Loan",
+            opening: summary.openingLoan || 0,
+            closing: summary.closingLoan || 0,
+            prev: 0,
+            curr: 0,
+            total: 0,
+            // For exit, treat full closing loan as due
+            actual: summary.closingLoan || 0,
+            unpaid: summary.closingLoan || 0,
+        };
+
+        const interestHead = {
+            key: "interest",
+            label: "Interest",
+            opening: summary.openingInterest || 0,
+            closing: summary.closingInterest || 0,
+            prev: 0,
+            curr: 0,
+            total: 0,
+            actual: summary.closingInterest || 0,
+            unpaid: summary.closingInterest || 0,
+        };
+
+        const yogdanHead = {
+            key: "yogdan",
+            label: "Yogdan",
+            opening: summary.openingYogdan || 0,
+            closing: summary.closingYogdanDue || 0,
+            prev: 0,
+            curr: 0,
+            total: 0,
+            actual: summary.closingYogdanDue || 0,
+            unpaid: Math.max(0, summary.closingYogdanDue || 0),
+        };
+
+        // Membership, group fees and charges come from MemberRevenueDemand
+        const revenueDemands = await MemberRevenueDemand.find({ memberId, groupId }).lean();
+
+        const aggregateRevenue = (type) => {
+            const docs = revenueDemands.filter((d) => d.revenueType === type);
+            const total = docs.reduce((sum, d) => sum + (d.amount || 0), 0);
+            const paid = docs.reduce((sum, d) => sum + (d.paidAmount || 0), 0);
+            const unpaid = Math.max(0, total - paid);
+            return { total, paid, unpaid };
+        };
+
+        const membershipShg = aggregateRevenue("membership_fees_shg");
+        const membershipGroup = aggregateRevenue("membership_fees_group");
+        const penalty = aggregateRevenue("penalty");
+
+        const membershipFeeHead = {
+            key: "membership_fee",
+            label: "Membership Fee (SHG)",
+            opening: 0,
+            closing: membershipShg.unpaid,
+            prev: 0,
+            curr: 0,
+            total: 0,
+            actual: membershipShg.unpaid,
+            unpaid: membershipShg.unpaid,
+        };
+
+        const groupFeeHead = {
+            key: "group_fee",
+            label: "Group Fee",
+            opening: 0,
+            closing: membershipGroup.unpaid,
+            prev: 0,
+            curr: 0,
+            total: 0,
+            actual: membershipGroup.unpaid,
+            unpaid: membershipGroup.unpaid,
+        };
+
+        const chargesHead = {
+            key: "charges",
+            label: "Other Charges / Penalty",
+            opening: 0,
+            closing: penalty.unpaid,
+            prev: 0,
+            curr: 0,
+            total: 0,
+            actual: penalty.unpaid,
+            unpaid: penalty.unpaid,
+        };
+
+        // Build heads map
+        const rawHeads = {
+            saving: savingHead,
+            loan: loanHead,
+            fd: fdHead,
+            interest: interestHead,
+            yogdan: yogdanHead,
+            membershipFee: membershipFeeHead,
+            groupFee: groupFeeHead,
+            charges: chargesHead,
+        };
+
+        // Totals based on raw heads
+        let totalPayoutToMember =
+            (savingHead.actual || 0) +
+            (fdHead.actual || 0);
+
+        let totalDuesFromMember =
+            (loanHead.unpaid || 0) +
+            (interestHead.unpaid || 0) +
+            (yogdanHead.unpaid || 0) +
+            (membershipFeeHead.unpaid || 0) +
+            (groupFeeHead.unpaid || 0) +
+            (chargesHead.unpaid || 0);
+
+        let netAmount = Math.round((totalDuesFromMember - totalPayoutToMember) * 100) / 100;
+
+        let direction = "SETTLED";
+        if (netAmount > 0) direction = "MEMBER_PAYS";
+        else if (netAmount < 0) direction = "GROUP_PAYS";
+
+        // If a member exit settlement already exists, treat this member as fully settled:
+        // override head-wise closing/actual/unpaid to 0 so the UI shows no pending amounts.
+        const latestExit = await MemberExitSettlement.findOne({ memberId, groupId }).sort({ createdAt: -1 }).lean();
+
+        const heads = { ...rawHeads };
+        if (latestExit) {
+            Object.keys(heads).forEach((key) => {
+                const h = heads[key];
+                if (!h) return;
+                h.opening = 0;
+                h.prev = 0;
+                h.curr = 0;
+                h.total = 0;
+                h.actual = 0;
+                h.unpaid = 0;
+                h.closing = 0;
+            });
+
+            totalPayoutToMember = 0;
+            totalDuesFromMember = 0;
+            netAmount = 0;
+            direction = "SETTLED";
+        }
+
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                location: 'memberController.js:getMemberExitSummary',
+                message: 'Computed member exit summary',
+                data: {
+                    memberId,
+                    groupId,
+                    heads,
+                    totals: {
+                        totalPayoutToMember,
+                        totalDuesFromMember,
+                        netAmount,
+                        direction,
+                    },
+                },
+                timestamp: Date.now(),
+            }),
+        }).catch(() => { });
+        // #endregion agent log
+
+        return apiResponse.success(res, "Member exit summary computed successfully", {
+            member: {
+                id: member._id,
+                code: member.Member_Id,
+                name: member.Member_Nm,
+                groupId,
+                groupName: member.group?.group_name || member.Group_Name,
+            },
+            heads,
+            totals: {
+                totalPayoutToMember,
+                totalDuesFromMember,
+                netAmount,
+                direction,
+            },
+        });
+    } catch (error) {
+        console.error("Error computing member exit summary:", error);
+        return apiResponse.error(res, error.message || "Failed to compute member exit summary", 500);
     }
 };
 
@@ -1514,4 +1758,503 @@ export const exportMemberLedger = async (req, res) => {
         console.error("Error exporting member ledger:", error);
         return apiResponse.error(res, error.message, 500);
     }
+};
+
+/**
+ * POST /api/admin/member/exit-settlement
+ * Finalizes an exit settlement by re-computing the summary, validating the net amount,
+ * storing a snapshot in MemberExitSettlement, and (for GROUP_PAYS) creating a PaymentMaster
+ * payout that updates bank/cash balances and ledger entries.
+ */
+export const createMemberExitSettlement = async (req, res) => {
+    try {
+        const {
+            memberId,
+            confirmedNetAmount,
+            direction,
+            payoutPaymentMode, // "Cash" | "Bank"
+            bankId, // required when payoutPaymentMode === "Bank"
+            paymentReference,
+            paymentDate,
+            notes,
+        } = req.body || {};
+
+        if (!memberId) {
+            return apiResponse.error(res, "memberId is required", 400);
+        }
+
+        // Reuse exit-summary calculation to prevent tampering
+        const fakeReq = { query: { memberId } };
+        const summaryResult = await (async () => {
+            let body;
+            const fakeRes = {
+                status: () => fakeRes,
+                json: (payload) => {
+                    body = payload;
+                },
+            };
+            await getMemberExitSummary(fakeReq, fakeRes);
+            if (!body || body.success === false) {
+                throw new Error(body?.message || "Failed to compute exit summary");
+            }
+            return body.data;
+        })();
+
+        const backendNet = summaryResult?.totals?.netAmount ?? 0;
+        const backendDirection = summaryResult?.totals?.direction ?? "SETTLED";
+
+        const clientNet = Number(confirmedNetAmount);
+        if (Number.isNaN(clientNet)) {
+            return apiResponse.error(res, "confirmedNetAmount must be a valid number", 400);
+        }
+
+        if (Math.round(backendNet * 100) !== Math.round(clientNet * 100)) {
+            return apiResponse.error(
+                res,
+                `Net amount mismatch. Expected ${backendNet}, received ${clientNet}`,
+                400
+            );
+        }
+
+        if (direction && direction !== backendDirection) {
+            return apiResponse.error(
+                res,
+                `Direction mismatch. Expected ${backendDirection}, received ${direction}`,
+                400
+            );
+        }
+
+        const member = await Member.findById(memberId).populate("group");
+        if (!member) {
+            return apiResponse.error(res, "Member not found", 404);
+        }
+
+        const groupId = summaryResult.member.groupId;
+        const adminPlace = req.user?.place || req.admin?.place;
+        const createdBy = req.user?.id || req.admin?.id || "system";
+
+        let payment = null;
+
+        // If group pays member, create a PaymentMaster payout and update cash/bank + ledger
+        if (backendDirection === "GROUP_PAYS" && backendNet < 0) {
+            const payoutAmount = Math.abs(backendNet);
+            const normalizedMode = payoutPaymentMode === "Bank" ? "Bank" : "Cash";
+
+            // Verify group access
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+            }
+
+            // Load group as Mongoose document (for recalculateCashBalance)
+            const group = await GroupMaster.findById(groupId);
+            if (!group) {
+                return apiResponse.error(res, "Group not found", 404);
+            }
+
+            // Validate balances based on payout mode
+            let bank = null;
+            if (normalizedMode === "Bank") {
+                if (!bankId) {
+                    return apiResponse.error(res, "bankId is required when payoutPaymentMode is Bank", 400);
+                }
+
+                bank = await BankMaster.findById(bankId);
+                if (!bank) {
+                    return apiResponse.error(res, "Bank not found", 404);
+                }
+
+                if (bank.group_id && bank.group_id.toString() !== groupId.toString()) {
+                    return apiResponse.error(res, "Bank does not belong to the specified group", 400);
+                }
+
+                const balanceInfo = await BankMaster.calculateAvailableBalance(bankId);
+                const availableBalance = balanceInfo.availableBalance || 0;
+                if (availableBalance < payoutAmount) {
+                    return apiResponse.error(
+                        res,
+                        `Insufficient bank balance. Available: ₹${availableBalance.toFixed(2)}, Required: ₹${payoutAmount.toFixed(2)}`,
+                        400
+                    );
+                }
+            } else {
+                await group.recalculateCashBalance();
+                const cashBalance = group.current_cash_balance || 0;
+                if (cashBalance < payoutAmount) {
+                    return apiResponse.error(
+                        res,
+                        `Insufficient cash balance. Available: ₹${cashBalance.toFixed(2)}, Required: ₹${payoutAmount.toFixed(2)}`,
+                        400
+                    );
+                }
+            }
+
+            const effectivePaymentDate = paymentDate ? new Date(paymentDate) : new Date();
+
+            // Create PaymentMaster entry for exit payout
+            payment = await PaymentMaster.create({
+                memberId: member._id,
+                memberCode: member.Member_Id,
+                memberName: member.Member_Nm,
+                groupId,
+                groupName: member.group?.group_name || member.Group_Name,
+                groupCode: member.group?.group_code,
+                paymentType: "member_exit_payout",
+                amount: payoutAmount,
+                paymentMode: normalizedMode,
+                bankId: normalizedMode === "Bank" && bank ? bank._id : null,
+                status: "approved",
+                paymentDate: effectivePaymentDate,
+                createdBy,
+                remarks: notes || paymentReference || "Member exit settlement payout",
+            });
+
+            // Update bank/cash balances and transaction records
+            if (normalizedMode === "Bank" && bank) {
+                const paymentAmount = payoutAmount;
+                const balanceBefore = bank.current_balance || 0;
+                bank.current_balance = Math.max(0, balanceBefore - paymentAmount);
+                await bank.save();
+
+                try {
+                    const { createBankTransactionRecord } = await import("../../utility/bankTransactionHelper.js");
+                    await createBankTransactionRecord({
+                        bankId: bank._id,
+                        groupId,
+                        transactionType: "payment",
+                        amount: paymentAmount,
+                        date: effectivePaymentDate,
+                        description: `Payment - member_exit_payout: ${member.Member_Nm} (${member.Member_Id})`,
+                        paymentId: payment._id,
+                        memberId: payment.memberId,
+                        memberCode: payment.memberCode,
+                        memberName: payment.memberName,
+                        createdBy,
+                        status: "verified",
+                    });
+                } catch (err) {
+                    console.error("[EXIT_PAYOUT] Error creating bank transaction record:", err);
+                }
+            } else if (normalizedMode === "Cash") {
+                const paymentAmount = payoutAmount;
+                await group.recalculateCashBalance();
+                const cashBalanceBefore = group.current_cash_balance || 0;
+                group.current_cash_balance = Math.max(0, cashBalanceBefore - paymentAmount);
+                await group.save();
+
+                await createCashTransactionRecord({
+                    groupId,
+                    transactionType: "payment",
+                    amount: paymentAmount,
+                    date: effectivePaymentDate,
+                    description: `Payment - member_exit_payout: ${member.Member_Nm} (${member.Member_Id})`,
+                    paymentId: payment._id,
+                    memberId: payment.memberId,
+                    memberCode: payment.memberCode,
+                    memberName: payment.memberName,
+                    createdBy,
+                });
+            }
+
+            // Post ledger entry for exit payout
+            const headInfo = await findOrCreateHead(groupId, "Member Exit Settlement", "liability");
+            await postTransaction({
+                sourceDoc: payment,
+                headName: "Member Exit Settlement",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "liability",
+                amount: payoutAmount,
+                direction: "out",
+                groupId,
+                memberId: payment.memberId,
+                date: effectivePaymentDate,
+                notes: `Member exit settlement payout - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                paymentMode: normalizedMode,
+                bankId: normalizedMode === "Bank" ? bankId : undefined,
+                referenceModel: "PaymentMaster",
+                referenceId: payment._id,
+                createdBy,
+            });
+        }
+
+        // If member pays group, record an incoming PaymentMaster and update cash/bank + ledger
+        if (backendDirection === "MEMBER_PAYS" && backendNet > 0) {
+            const incomingAmount = backendNet;
+            const normalizedMode = payoutPaymentMode === "Bank" ? "Bank" : "Cash";
+
+            // Verify group access
+            const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+            if (!accessCheck.valid) {
+                return apiResponse.error(
+                    res,
+                    accessCheck.error || "Group not found or you don't have access to this group",
+                    403
+                );
+            }
+
+            // Load group as Mongoose document (for recalculateCashBalance)
+            const group = await GroupMaster.findById(groupId);
+            if (!group) {
+                return apiResponse.error(res, "Group not found", 404);
+            }
+
+            let bank = null;
+            if (normalizedMode === "Bank") {
+                if (!bankId) {
+                    return apiResponse.error(res, "bankId is required when payoutPaymentMode is Bank", 400);
+                }
+
+                bank = await BankMaster.findById(bankId);
+                if (!bank) {
+                    return apiResponse.error(res, "Bank not found", 404);
+                }
+
+                if (bank.group_id && bank.group_id.toString() !== groupId.toString()) {
+                    return apiResponse.error(
+                        res,
+                        "Bank does not belong to the specified group",
+                        400
+                    );
+                }
+            }
+
+            const effectivePaymentDate = paymentDate ? new Date(paymentDate) : new Date();
+
+            // Create PaymentMaster entry for exit inflow from member
+            payment = await PaymentMaster.create({
+                memberId: member._id,
+                memberCode: member.Member_Id,
+                memberName: member.Member_Nm,
+                groupId,
+                groupName: member.group?.group_name || member.Group_Name,
+                groupCode: member.group?.group_code,
+                paymentType: "member_exit_recovery",
+                amount: incomingAmount,
+                paymentMode: normalizedMode,
+                bankId: normalizedMode === "Bank" && bank ? bank._id : null,
+                status: "approved",
+                paymentDate: effectivePaymentDate,
+                createdBy,
+                remarks: notes || paymentReference || "Member exit settlement – member pays group",
+            });
+
+            // Update bank/cash balances and transaction records (inflow)
+            if (normalizedMode === "Bank" && bank) {
+                const paymentAmount = incomingAmount;
+                const balanceBefore = bank.current_balance || 0;
+                bank.current_balance = balanceBefore + paymentAmount;
+                await bank.save();
+
+                try {
+                    const { createBankTransactionRecord } = await import("../../utility/bankTransactionHelper.js");
+                    await createBankTransactionRecord({
+                        bankId: bank._id,
+                        groupId,
+                        transactionType: "member_exit_recovery",
+                        amount: paymentAmount,
+                        date: effectivePaymentDate,
+                        description: `Member exit recovery (bank): ${member.Member_Nm} (${member.Member_Id})`,
+                        paymentId: payment._id,
+                        memberId: payment.memberId,
+                        memberCode: payment.memberCode,
+                        memberName: payment.memberName,
+                        createdBy,
+                        status: "verified",
+                    });
+                } catch (err) {
+                    console.error("[EXIT_RECOVERY] Error creating bank transaction record:", err);
+                }
+            } else if (normalizedMode === "Cash") {
+                const paymentAmount = incomingAmount;
+                await group.recalculateCashBalance();
+                const cashBalanceBefore = group.current_cash_balance || 0;
+                group.current_cash_balance = cashBalanceBefore + paymentAmount;
+                await group.save();
+
+                await createCashTransactionRecord({
+                    groupId,
+                    transactionType: "member_exit_recovery",
+                    amount: paymentAmount,
+                    date: effectivePaymentDate,
+                    description: `Member exit recovery (cash): ${member.Member_Nm} (${member.Member_Id})`,
+                    paymentId: payment._id,
+                    memberId: payment.memberId,
+                    memberCode: payment.memberCode,
+                    memberName: payment.memberName,
+                    createdBy,
+                });
+            }
+
+            // Post ledger entry for exit recovery
+            const headInfo = await findOrCreateHead(groupId, "Member Exit Settlement", "asset");
+            await postTransaction({
+                sourceDoc: payment,
+                headName: "Member Exit Settlement",
+                headType: headInfo?.headType || "groupMaster",
+                headId: headInfo?.headId,
+                section: "asset",
+                amount: incomingAmount,
+                direction: "in",
+                groupId,
+                memberId: payment.memberId,
+                date: effectivePaymentDate,
+                notes: `Member exit settlement recovery - Member: ${member.Member_Nm} (${member.Member_Id})`,
+                paymentMode: normalizedMode,
+                bankId: normalizedMode === "Bank" ? bankId : undefined,
+                referenceModel: "PaymentMaster",
+                referenceId: payment._id,
+                createdBy,
+            });
+        }
+
+        const settlement = await MemberExitSettlement.create({
+            memberId,
+            groupId,
+            heads: summaryResult.heads,
+            totalPayoutToMember: summaryResult.totals.totalPayoutToMember,
+            totalDuesFromMember: summaryResult.totals.totalDuesFromMember,
+            netAmount: backendNet,
+            direction: backendDirection,
+            paymentMode:
+                backendDirection === "SETTLED" || summaryResult.totals.netAmount === 0
+                    ? "NONE"
+                    : payoutPaymentMode || "Cash",
+            paymentReference: paymentReference || "",
+            paymentDate: paymentDate ? new Date(paymentDate) : undefined,
+            paymentId: payment?._id || undefined,
+            notes: notes || "",
+            createdBy,
+        });
+
+        // After successful settlement, mark member's remaining demands as paid
+        // and close any FD records linked to this member/group so that future
+        // demand/recovery flows and summaries show zero outstanding.
+        try {
+            const effectiveDate = paymentDate ? new Date(paymentDate) : new Date();
+            await finalizeMemberExitObligations(member._id, groupId, effectiveDate);
+        } catch (cleanupError) {
+            console.error("[MemberExit] finalizeMemberExitObligations failed:", cleanupError);
+            // Do not fail the main response if cleanup has issues.
+        }
+
+        return apiResponse.success(res, "Member exit settlement recorded successfully", settlement);
+    } catch (error) {
+        console.error("Error creating member exit settlement:", error);
+        return apiResponse.error(res, error.message || "Failed to create member exit settlement", 500);
+    }
+};
+
+// Helper: after a member's exit settlement is completed, clear any remaining
+// demand records and mark FD entries as closed so that subsequent Demand & Recovery
+// flows no longer show outstanding amounts for this member.
+const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate) => {
+    const ts = effectiveDate || new Date();
+
+    // 1) Mark all open MemberRevenueDemand records for this member/group as fully paid
+    const openDemands = await MemberRevenueDemand.find({
+        memberId,
+        groupId,
+        isPaid: false,
+    });
+
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            location: 'memberController.js:finalizeMemberExitObligations:beforeUpdateDemands',
+            message: 'Finalizing member exit obligations (demands)',
+            data: {
+                memberId: memberId?.toString?.() || String(memberId),
+                groupId: groupId?.toString?.() || String(groupId),
+                openDemandCount: openDemands.length,
+                sampleDemand: openDemands[0]
+                    ? {
+                          id: openDemands[0]._id,
+                          revenueType: openDemands[0].revenueType,
+                          amount: openDemands[0].amount,
+                          paidAmount: openDemands[0].paidAmount,
+                          isPaid: openDemands[0].isPaid,
+                      }
+                    : null,
+            },
+            timestamp: Date.now(),
+        }),
+    }).catch(() => {});
+    // #endregion agent log
+
+    for (const demand of openDemands) {
+        demand.paidAmount = demand.amount || 0;
+        demand.paidDate = ts;
+        demand.isPaid = true;
+        await demand.save();
+    }
+
+    // 2) Zero out demandDetails in RecoveryMaster for this member so summaries show 0
+    const memberIdStr = memberId.toString();
+    const sessions = await RecoveryMaster.find({
+        groupId,
+        "recoveries.memberId": memberIdStr,
+    });
+
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            location: 'memberController.js:finalizeMemberExitObligations:beforeUpdateRecovery',
+            message: 'Finalizing member exit obligations (recovery sessions)',
+            data: {
+                memberId: memberIdStr,
+                groupId: groupId?.toString?.() || String(groupId),
+                sessionCount: sessions.length,
+            },
+            timestamp: Date.now(),
+        }),
+    }).catch(() => {});
+    // #endregion agent log
+
+    for (const session of sessions) {
+        let changed = false;
+        session.recoveries.forEach((rec) => {
+            if (
+                rec.memberId === memberIdStr ||
+                (rec.memberId && rec.memberId.toString && rec.memberId.toString() === memberIdStr)
+            ) {
+                if (rec.demandDetails) {
+                    const keys = ["loan", "interest", "saving", "fd"];
+                    keys.forEach((k) => {
+                        const d = rec.demandDetails[k];
+                        if (d) {
+                            d.prevDemand = 0;
+                            d.currDemand = 0;
+                            d.totalDemand = 0;
+                            d.actualPaid = 0;
+                            d.unpaidDemand = 0;
+                            d.openingBalance = 0;
+                            d.closingBalance = 0;
+                        }
+                    });
+                }
+                changed = true;
+            }
+        });
+        if (changed) {
+            session.markModified("recoveries");
+            await session.save();
+        }
+    }
+
+    // 3) Mark all FDMaster records for this member/group as closed
+    await FDMaster.updateMany(
+        {
+            memberId,
+            groupId,
+            status: { $ne: "closed" },
+        },
+        {
+            $set: { status: "closed" },
+        }
+    );
 };

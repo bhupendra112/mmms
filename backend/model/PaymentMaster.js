@@ -20,7 +20,13 @@ const PaymentMasterSchema = new mongoose.Schema({
     // Payment details
     paymentType: {
         type: String,
-        enum: ["fd_maturity", "saving_withdrawal"],
+        enum: [
+            "fd_maturity",
+            "saving_withdrawal",
+            // Member exit flows
+            "member_exit_payout",
+            "member_exit_recovery",
+        ],
         required: true,
     },
     amount: { type: Number, required: true, min: 0 },

@@ -11,6 +11,7 @@ import BankTransaction from "./BankTransaction.js";
 import CashTransaction from "./CashTransaction.js";
 import CashAmount from "./CashAmount.js";
 import MemberRevenueDemand from "./MemberRevenueDemand.js";
+import MemberExitSettlement from "./MemberExitSettlement.js";
 import GroupLedger from "./GroupLedger.js";
 import IncomeExpenseHead from "./IncomeExpenseHead.js";
 
@@ -29,5 +30,6 @@ export {
     CashAmount,
     MemberRevenueDemand,
     GroupLedger,
-    IncomeExpenseHead
+    IncomeExpenseHead,
+    MemberExitSettlement
 };

@@ -34,6 +34,7 @@ import DemandRecovery from "./screens/group/DemandRecovery";
 import GroupDashboard from "./screens/group/GroupDashboard";
 import Members from "./screens/Members";
 import MemberDashboard from "./screens/MemberDashboard";
+import MemberExitSettlement from "./screens/MemberExitSettlement";
 import MemberRegistration from "./screens/MemberRegistration";
 import GroupDemandRecovery from "./screens/group/DemandRecovery";
 import LoanTaking from "./screens/group/LoanTaking";
@@ -67,6 +68,7 @@ function App() {
                 <Route path="dashboard" element={<AdminDashboard />} />
                 <Route path="members" element={<AdminMembers />} />
                 <Route path="members/:id" element={<MemberDashboard />} />
+                <Route path="members/:id/exit" element={<MemberExitSettlement />} />
                 <Route path="member-registration" element={<MemberRegistration />} />
                 <Route path="groups" element={<GroupManagement />} />
                 <Route path="group-management" element={<GroupManagement />} />
@@ -101,6 +103,7 @@ function App() {
                 <Route path="dashboard" element={<GroupDashboard />} />
                 <Route path="members" element={<Members />} />
                 <Route path="members/:id" element={<MemberDashboard />} />
+                <Route path="members/:id/exit" element={<MemberExitSettlement />} />
                 <Route path="member-registration" element={<MemberRegistration />} />
                 <Route path="demand-recovery" element={<GroupDemandRecovery />} />
                 <Route path="loans" element={<GroupLoanManagement />} />
