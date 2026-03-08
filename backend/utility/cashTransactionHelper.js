@@ -47,6 +47,7 @@ export const createCashTransactionRecord = async (options) => {
             memberId,
             memberCode,
             memberName,
+            session,
         } = options;
 
         // Validate required fields
@@ -62,6 +63,7 @@ export const createCashTransactionRecord = async (options) => {
 
         // Create cash transaction record first
         const transactionAmount = parseFloat(amount);
+        const createOptions = session ? { session } : {};
         const cashTransaction = await CashTransaction.create({
             groupId: group._id,
             groupName: group.group_name,
@@ -86,7 +88,12 @@ export const createCashTransactionRecord = async (options) => {
             createdBy: createdBy || "admin",
             verifiedBy: createdBy || "admin",
             verifiedAt: new Date(),
-        });
+        }, createOptions);
+
+        // When session is provided (e.g. exit settlement), balance was already updated by controller; skip internal updates
+        if (session) {
+            return cashTransaction;
+        }
 
         // Determine if transaction is credit (money in) or debit (money out)
         // Credits: recovery (money collected from members), fd (FD created - member gives money to group), bank_to_cash (bank converted to cash)

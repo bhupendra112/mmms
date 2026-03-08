@@ -53,6 +53,7 @@ export const createBankTransactionRecord = async (options) => {
             memberName,
             status: overrideStatus,
             isDebit,
+            session,
         } = options;
 
         // Validate required fields
@@ -95,6 +96,7 @@ export const createBankTransactionRecord = async (options) => {
         );
 
         // Create bank transaction record
+        const createOptions = session ? { session } : {};
         const bankTransaction = await BankTransaction.create({
             bankId: bank._id,
             bankName: bank.bank_name,
@@ -125,7 +127,7 @@ export const createBankTransactionRecord = async (options) => {
             // Auto-verify FD and recovery transactions
             verifiedBy: defaultStatus === "verified" ? (createdBy || "admin") : null,
             verifiedAt: defaultStatus === "verified" ? new Date() : null,
-        });
+        }, createOptions);
 
         // Update bank balance if transaction is verified
         // FD, recovery, expense, and loan are verified immediately, so balance updates right away

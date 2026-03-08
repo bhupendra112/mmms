@@ -113,6 +113,14 @@ export const updateMemberSchema = Joi.object({
 }).min(1); // At least one field is required for update
 
 // ======================
+// UPDATE OPENING SAVING (admin only)
+// ======================
+export const updateOpeningSavingSchema = Joi.object({
+    newOpeningSaving: Joi.number().min(0).required(),
+    reason: Joi.string().allow("").optional(),
+});
+
+// ======================
 // GROUP REGISTER VALIDATION
 // ======================
 export const registerGroupSchema = Joi.object({
@@ -141,7 +149,18 @@ export const registerGroupSchema = Joi.object({
     bankmaster: Joi.string().optional(),
     saving_rate: Joi.number().min(0).max(100).optional(),
     fd_rate: Joi.number().min(0).max(100).optional(),
-    loan_rate: Joi.number().min(0).max(100).optional()
+    loan_rate: Joi.number().min(0).max(100).optional(),
+    // Supervisor and password-based login
+    password: Joi.string().min(1).optional(),
+    supervisorId: Joi.string().optional(),
+    supervisorName: Joi.string().optional(),
+}).custom((value, helpers) => {
+    const { supervisorId, supervisorName } = value;
+    // If both provided, prefer supervisorId
+    if (supervisorId && supervisorName) {
+        delete value.supervisorName;
+    }
+    return value;
 });
 
 
@@ -239,5 +258,5 @@ export const updateBankValidationSchema = Joi.object({
 // ======================
 export const groupLoginSchema = Joi.object({
     groupCode: Joi.string().required(),
-    place: Joi.string().required(),
+    password: Joi.string().required(),
 });

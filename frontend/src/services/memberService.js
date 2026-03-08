@@ -74,6 +74,11 @@ export const createMemberExitSettlement = async (payload) => {
   return res.data;
 };
 
+export const voidMemberExitSettlement = async (memberId) => {
+  const res = await httpMember.delete("/exit-settlement", { params: { memberId } });
+  return res.data;
+};
+
 export const exportMemberLedger = async (filters = {}) => {
   const params = {};
   if (filters.memberId) params.memberId = filters.memberId;
@@ -88,6 +93,14 @@ export const exportMemberLedger = async (filters = {}) => {
 export const updateMember = async (memberId, data) => {
   const payload = sanitizePayload(data);
   const res = await httpMember.put(`/update/${memberId}`, payload);
+  return res.data;
+};
+
+export const updateOpeningSaving = async (memberId, newOpeningSaving, reason = "") => {
+  const res = await httpMember.put(`/${memberId}/update-opening-saving`, {
+    newOpeningSaving: Number(newOpeningSaving),
+    reason: String(reason || "").trim(),
+  });
   return res.data;
 };
 

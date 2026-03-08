@@ -98,9 +98,9 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
 
   return (
     <div className="mb-4 sm:mb-6">
-      {/* Member basic details – shown above Demand Summary so same-name members can be identified */}
+      {/* Member basic details – sticky so admin always sees which member they are filling for */}
       {currentMember && (
-        <div className="mb-3 p-3 rounded-lg border border-gray-200 bg-gray-50 text-sm">
+        <div className="sticky top-20 z-10 mb-3 p-3 rounded-lg border border-gray-200 bg-gray-50 text-sm shadow-sm">
           <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Member basic details</h4>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-gray-800">
             <div>
@@ -191,7 +191,7 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
                       <td className="border border-blue-200 p-1.5 text-center text-gray-700">{isLabelOnly ? "—" : (period.days ?? "—")}</td>
                       <td className="border border-blue-200 p-1.5 text-right text-gray-700">{isLabelOnly ? "—" : `₹${Number(period.principal ?? 0).toLocaleString("en-IN")}`}</td>
                       <td className="border border-blue-200 p-1.5 text-center text-gray-700">{isLabelOnly ? "—" : `${period.rate ?? "—"}%`}</td>
-                      <td className="border border-blue-200 p-1.5 text-right font-medium text-gray-800">₹{(Number(period.interest ?? 0)).toFixed(2)}</td>
+                      <td className="border border-blue-200 p-1.5 text-right font-medium text-gray-800">₹{Math.round(Number(period.interest ?? 0)).toLocaleString()}</td>
                     </tr>
                   );
                 })}

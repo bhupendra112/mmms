@@ -1,12 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2, Calendar, Receipt } from "lucide-react";
-import { Link } from "react-router-dom";
-import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges } from "../../services/groupService";
-import { getMembersByGroup, exportMemberLedger, updateMember, deleteMember } from "../../services/memberService";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2, Calendar, Receipt, UserPlus, Lock } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, changeSupervisor, changePassword } from "../../services/groupService";
+import { getMembersByGroup, getMembers, exportMemberLedger, updateMember, deleteMember, updateOpeningSaving } from "../../services/memberService";
 import { getLoans } from "../../services/loanService";
 import { getRecoveries, getGroupRecoveryDetails } from "../../services/recoveryService";
 import { getFDsByGroup } from "../../services/fdService";
-import { exportMemberLedgerToExcel, exportMemberLedgerToPDF, exportRecoveryDetailsToExcel, exportRecoveryDetailsToPDF } from "../../utils/exportUtils";
+import { exportMemberSummaryToExcel, exportMemberSummaryToPDF, exportRecoveryDetailsToExcel, exportRecoveryDetailsToPDF } from "../../utils/exportUtils";
 
 // Helper function to get full image URL
 const getImageUrl = (imagePath) => {
@@ -38,7 +38,15 @@ const getImageUrl = (imagePath) => {
     return fullUrl;
 };
 
+const STORAGE_KEY_CLUSTER = "groupManagement_selectedCluster";
+const STORAGE_KEY_GROUP = "groupManagement_selectedGroup";
+const STORAGE_KEY_TAB = "groupManagement_activeTab";
+const VALID_TAB_IDS = new Set(["overview", "members", "bank", "cash", "finance", "charges", "recovery-details"]);
+
 export default function GroupManagement() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const hasRestoredRef = useRef(false);
+
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGroup, setSelectedGroup] = useState(null);
     const [selectedClusterKey, setSelectedClusterKey] = useState("");
@@ -97,6 +105,17 @@ export default function GroupManagement() {
     const [recoveryDetails, setRecoveryDetails] = useState([]);
     const [recoveryDetailsLoading, setRecoveryDetailsLoading] = useState(false);
     const [selectedRecovery, setSelectedRecovery] = useState(null);
+    const [showChangeSupervisorModal, setShowChangeSupervisorModal] = useState(false);
+    const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+    const [changeSupervisorForm, setChangeSupervisorForm] = useState({ supervisorId: "", supervisorName: "" });
+    const [useExistingForSupervisor, setUseExistingForSupervisor] = useState(true);
+    const [allMembersForSupervisor, setAllMembersForSupervisor] = useState([]);
+    const [changePasswordNew, setChangePasswordNew] = useState("");
+    const [savingSupervisor, setSavingSupervisor] = useState(false);
+    const [savingPassword, setSavingPassword] = useState(false);
+    const [openingSavingNewVal, setOpeningSavingNewVal] = useState("");
+    const [openingSavingReason, setOpeningSavingReason] = useState("");
+    const [savingOpeningSaving, setSavingOpeningSaving] = useState(false);
 
     const mapGroupToUI = (g) => {
         if (!g) return null;
@@ -268,6 +287,53 @@ export default function GroupManagement() {
         }
     };
 
+    // Load all members when Change Supervisor modal opens (for dropdown)
+    useEffect(() => {
+        if (!showChangeSupervisorModal) return;
+        getMembers()
+            .then((res) => setAllMembersForSupervisor(Array.isArray(res?.data) ? res.data : []))
+            .catch(() => setAllMembersForSupervisor([]));
+    }, [showChangeSupervisorModal]);
+
+    // Restore cluster/group from URL or sessionStorage when returning to the page (e.g. after Back)
+    useEffect(() => {
+        if (groups.length === 0 || hasRestoredRef.current) return;
+        hasRestoredRef.current = true;
+        const clusterFromUrl = searchParams.get("cluster") || "";
+        const groupFromUrl = searchParams.get("group") || "";
+        let cluster = clusterFromUrl;
+        let groupId = groupFromUrl;
+        let tabFromUrl = searchParams.get("tab") || "";
+        if (!cluster && !groupId) {
+            cluster = sessionStorage.getItem(STORAGE_KEY_CLUSTER) || "";
+            groupId = sessionStorage.getItem(STORAGE_KEY_GROUP) || "";
+            if (!tabFromUrl) tabFromUrl = sessionStorage.getItem(STORAGE_KEY_TAB) || "";
+            if (cluster || groupId) {
+                const next = {};
+                if (cluster) next.cluster = cluster;
+                if (groupId) next.group = groupId;
+                if (VALID_TAB_IDS.has(tabFromUrl)) next.tab = tabFromUrl;
+                setSearchParams(next, { replace: true });
+            }
+        } else if (!tabFromUrl) {
+            tabFromUrl = sessionStorage.getItem(STORAGE_KEY_TAB) || "";
+        }
+        if (cluster) setSelectedClusterKey(cluster);
+        if (groupId) {
+            setSelectedGroup(groupId);
+            const groupInList = groups.find((g) => g.id === groupId);
+            if (groupInList) setSelectedGroupData(groupInList);
+            const tabToRestore = VALID_TAB_IDS.has(tabFromUrl) ? tabFromUrl : "overview";
+            setActiveTab(tabToRestore);
+            loadGroupDetail(groupId);
+            loadGroupMembers(groupId);
+            loadBanks(groupId);
+            calculateFinance(groupId);
+            loadGroupCharges(groupId);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [groups]);
+
     const handleViewBank = async (bankId) => {
         try {
             setBankDetailLoading(true);
@@ -321,9 +387,9 @@ export default function GroupManagement() {
             if (response?.success && response?.data && response.data.length > 0) {
                 const groupName = selectedGroupData?.name || "Group";
                 if (format === 'excel') {
-                    exportMemberLedgerToExcel(response.data, `${groupName}_All_Members_Ledger`);
+                    exportMemberSummaryToExcel(response.data, `${groupName}_All_Members_Summary`);
                 } else {
-                    exportMemberLedgerToPDF(response.data, `${groupName}_All_Members_Ledger`);
+                    exportMemberSummaryToPDF(response.data, `${groupName}_All_Members_Summary`);
                 }
             } else {
                 alert("No ledger data found to export");
@@ -459,7 +525,10 @@ export default function GroupManagement() {
             res_add1: member.res_add1 || "",
             res_add2: member.res_add2 || "",
             Village: member.Village || "",
+            openingSaving: member.openingSaving ?? "",
         });
+        setOpeningSavingNewVal(member.openingSaving != null ? String(member.openingSaving) : "");
+        setOpeningSavingReason("");
         setShowEditMemberModal(true);
     };
 
@@ -799,10 +868,22 @@ export default function GroupManagement() {
                         <select
                             value={selectedClusterKey}
                             onChange={(e) => {
-                                setSelectedClusterKey(e.target.value);
+                                const val = e.target.value;
+                                setSelectedClusterKey(val);
                                 setSelectedGroup(null);
                                 setSelectedGroupData(null);
                                 setSelectedGroupRaw(null);
+                                if (val) {
+                                    setSearchParams({ cluster: val }, { replace: true });
+                                    sessionStorage.setItem(STORAGE_KEY_CLUSTER, val);
+                                    sessionStorage.removeItem(STORAGE_KEY_GROUP);
+                                    sessionStorage.removeItem(STORAGE_KEY_TAB);
+                                } else {
+                                    setSearchParams({}, { replace: true });
+                                    sessionStorage.removeItem(STORAGE_KEY_CLUSTER);
+                                    sessionStorage.removeItem(STORAGE_KEY_GROUP);
+                                    sessionStorage.removeItem(STORAGE_KEY_TAB);
+                                }
                             }}
                             className="w-full mb-3 md:mb-4 px-3 md:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                         >
@@ -856,6 +937,12 @@ export default function GroupManagement() {
                                             loadBanks(group.id);
                                             calculateFinance(group.id);
                                             loadGroupCharges(group.id);
+                                            if (selectedClusterKey) {
+                                                setSearchParams({ cluster: selectedClusterKey, group: group.id, tab: "overview" }, { replace: true });
+                                                sessionStorage.setItem(STORAGE_KEY_CLUSTER, selectedClusterKey);
+                                                sessionStorage.setItem(STORAGE_KEY_GROUP, group.id);
+                                                sessionStorage.setItem(STORAGE_KEY_TAB, "overview");
+                                            }
                                         }}
                                         className={`p-3 md:p-4 border-b cursor-pointer transition-colors ${selectedGroup === group.id
                                             ? "bg-blue-50 border-l-4 border-l-blue-600"
@@ -897,14 +984,32 @@ export default function GroupManagement() {
                                         <h2 className="text-xl md:text-2xl font-bold text-gray-800 break-words">{selectedGroupData.name}</h2>
                                         <p className="text-sm md:text-base text-gray-600 mt-1 break-words">Code: {selectedGroupData.code} | Village: {selectedGroupData.village}</p>
                                     </div>
-                                    <button
-                                        onClick={handleEditGroup}
-                                        className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm shrink-0"
-                                    >
-                                        <Edit size={16} />
-                                        <span className="hidden sm:inline">Edit Group</span>
-                                        <span className="sm:hidden">Edit</span>
-                                    </button>
+                                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowChangeSupervisorModal(true)}
+                                            className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 text-sm"
+                                        >
+                                            <UserPlus size={16} />
+                                            <span className="hidden sm:inline">Change Supervisor</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setChangePasswordNew(""); setShowChangePasswordModal(true); }}
+                                            className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 text-sm"
+                                        >
+                                            <Lock size={16} />
+                                            <span className="hidden sm:inline">Change Password</span>
+                                        </button>
+                                        <button
+                                            onClick={handleEditGroup}
+                                            className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                        >
+                                            <Edit size={16} />
+                                            <span className="hidden sm:inline">Edit Group</span>
+                                            <span className="sm:hidden">Edit</span>
+                                        </button>
+                                    </div>
                                 </div>
                                 {detailLoading && (
                                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
@@ -928,7 +1033,13 @@ export default function GroupManagement() {
                                             return (
                                                 <button
                                                     key={tab.id}
-                                                    onClick={() => setActiveTab(tab.id)}
+                                                    onClick={() => {
+                                                        setActiveTab(tab.id);
+                                                        if (selectedClusterKey && selectedGroup) {
+                                                            setSearchParams({ cluster: selectedClusterKey, group: selectedGroup, tab: tab.id }, { replace: true });
+                                                            sessionStorage.setItem(STORAGE_KEY_TAB, tab.id);
+                                                        }
+                                                    }}
                                                     className={`flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 font-medium text-xs md:text-sm transition-colors whitespace-nowrap shrink-0 ${activeTab === tab.id
                                                         ? "text-blue-600 border-b-2 border-blue-600"
                                                         : "text-gray-600 hover:text-gray-800"
@@ -2542,6 +2653,137 @@ export default function GroupManagement() {
                 </div>
             )}
 
+            {/* Change Supervisor Modal */}
+            {showChangeSupervisorModal && selectedGroup && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">Change Supervisor</h3>
+                            <button onClick={() => setShowChangeSupervisorModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div className="flex gap-4">
+                                <label className="inline-flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" checked={useExistingForSupervisor} onChange={() => setUseExistingForSupervisor(true)} className="rounded border-gray-300 text-blue-600" />
+                                    <span className="text-sm font-medium">Existing member</span>
+                                </label>
+                                <label className="inline-flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" checked={!useExistingForSupervisor} onChange={() => setUseExistingForSupervisor(false)} className="rounded border-gray-300 text-blue-600" />
+                                    <span className="text-sm font-medium">New supervisor name</span>
+                                </label>
+                            </div>
+                            {useExistingForSupervisor ? (
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Member</label>
+                                    <select
+                                        value={changeSupervisorForm.supervisorId || ""}
+                                        onChange={(e) => setChangeSupervisorForm({ ...changeSupervisorForm, supervisorId: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="">— Select member —</option>
+                                        {(allMembersForSupervisor.length ? allMembersForSupervisor : groupMembers).map((m) => (
+                                            <option key={m._id} value={m._id}>{m.Member_Nm || m.Member_Id} {m.Member_Id ? `(${m.Member_Id})` : ""}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Supervisor name</label>
+                                    <input
+                                        type="text"
+                                        value={changeSupervisorForm.supervisorName || ""}
+                                        onChange={(e) => setChangeSupervisorForm({ ...changeSupervisorForm, supervisorName: e.target.value })}
+                                        placeholder="Enter name"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        <div className="flex gap-2 mt-6">
+                            <button
+                                type="button"
+                                disabled={savingSupervisor}
+                                onClick={async () => {
+                                    const id = useExistingForSupervisor ? changeSupervisorForm.supervisorId : null;
+                                    const name = !useExistingForSupervisor ? changeSupervisorForm.supervisorName?.trim() : null;
+                                    if (!id && !name) return;
+                                    setSavingSupervisor(true);
+                                    try {
+                                        const res = await changeSupervisor(selectedGroup, id ? { supervisorId: id } : { supervisorName: name });
+                                        if (res?.success) {
+                                            setShowChangeSupervisorModal(false);
+                                            setChangeSupervisorForm({ supervisorId: "", supervisorName: "" });
+                                            await loadGroupDetail(selectedGroup);
+                                        }
+                                    } catch (e) {
+                                        console.error(e);
+                                        alert(e?.message || "Failed to update supervisor");
+                                    } finally {
+                                        setSavingSupervisor(false);
+                                    }
+                                }}
+                                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                            >
+                                {savingSupervisor ? "Saving..." : "Save"}
+                            </button>
+                            <button type="button" onClick={() => setShowChangeSupervisorModal(false)} className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Change Password Modal */}
+            {showChangePasswordModal && selectedGroup && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">Change Group Password</h3>
+                            <button onClick={() => setShowChangePasswordModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">New password</label>
+                            <input
+                                type="password"
+                                value={changePasswordNew}
+                                onChange={(e) => setChangePasswordNew(e.target.value)}
+                                placeholder="Enter new password"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div className="flex gap-2 mt-6">
+                            <button
+                                type="button"
+                                disabled={savingPassword || !changePasswordNew.trim()}
+                                onClick={async () => {
+                                    if (!changePasswordNew.trim()) return;
+                                    setSavingPassword(true);
+                                    try {
+                                        const res = await changePassword(selectedGroup, changePasswordNew);
+                                        if (res?.success) {
+                                            setShowChangePasswordModal(false);
+                                            setChangePasswordNew("");
+                                        }
+                                    } catch (e) {
+                                        console.error(e);
+                                        alert(e?.message || "Failed to update password");
+                                    } finally {
+                                        setSavingPassword(false);
+                                    }
+                                }}
+                                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                            >
+                                {savingPassword ? "Saving..." : "Save"}
+                            </button>
+                            <button type="button" onClick={() => setShowChangePasswordModal(false)} className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Edit Member Modal */}
             {showEditMemberModal && editingMember && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -2841,6 +3083,65 @@ export default function GroupManagement() {
                                     />
                                 </div>
                             </div>
+                            {/* Opening Saving (existing members) - admin only */}
+                            {editingMember?.isExistingMember && (
+                                <div className="border-t pt-4 mt-4 space-y-2">
+                                    <h4 className="text-sm font-semibold text-gray-800">Opening Saving</h4>
+                                    <p className="text-xs text-gray-600">Current: ₹{editingMember?.openingSaving ?? 0}</p>
+                                    <div className="flex flex-wrap gap-3 items-end">
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-600 mb-1">New value (₹)</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                value={openingSavingNewVal}
+                                                onChange={(e) => setOpeningSavingNewVal(e.target.value)}
+                                                placeholder="0"
+                                                className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                            />
+                                        </div>
+                                        <div className="flex-1 min-w-[160px]">
+                                            <label className="block text-xs font-medium text-gray-600 mb-1">Reason (optional)</label>
+                                            <input
+                                                type="text"
+                                                value={openingSavingReason}
+                                                onChange={(e) => setOpeningSavingReason(e.target.value)}
+                                                placeholder="e.g. Correction after verification"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            disabled={savingOpeningSaving || openingSavingNewVal === ""}
+                                            onClick={async () => {
+                                                const val = parseFloat(openingSavingNewVal);
+                                                if (isNaN(val) || val < 0) {
+                                                    alert("Enter a valid amount ≥ 0");
+                                                    return;
+                                                }
+                                                setSavingOpeningSaving(true);
+                                                try {
+                                                    const res = await updateOpeningSaving(editingMember._id, val, openingSavingReason);
+                                                    if (res?.success) {
+                                                        setEditingMember((m) => m ? { ...m, openingSaving: val } : m);
+                                                        setEditMemberForm((f) => ({ ...f, openingSaving: val }));
+                                                        setOpeningSavingNewVal(String(val));
+                                                        alert("Opening saving updated. Ledger will show an adjustment entry.");
+                                                    }
+                                                } catch (e) {
+                                                    alert(e?.response?.data?.message || "Failed to update opening saving");
+                                                } finally {
+                                                    setSavingOpeningSaving(false);
+                                                }
+                                            }}
+                                            className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 text-sm font-medium"
+                                        >
+                                            {savingOpeningSaving ? "Updating..." : "Update Opening Saving"}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                             <div className="flex gap-4">
                                 <button
                                     onClick={handleSaveMember}

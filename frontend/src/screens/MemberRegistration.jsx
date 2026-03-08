@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { User, IdCard, Building2, DollarSign, GraduationCap, MapPin, Users } from "lucide-react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { User, IdCard, Building2, DollarSign, GraduationCap, MapPin, Users, List } from "lucide-react";
+import BackButton from "../components/admin/BackButton";
 import { Input, Select, TextArea, FormSection, FileInput } from "../components/forms/FormComponents";
 import { useGroup } from "../contexts/GroupContext";
 import { getGroups, getGroupDetail } from "../services/groupService";
-import { registerMember as registerMemberApi, getAutoMemberCode } from "../services/memberService";
+import { registerMember as registerMemberApi, getAutoMemberCode, getMembersByGroup } from "../services/memberService";
 import { registerMember as registerMemberOffline, getAutoMemberCode as getAutoMemberCodeOffline } from "../services/memberServiceOffline";
 
 export default function MemberRegistration() {
   const { currentGroup, isGroupPanel, isGroupLoading } = useGroup();
+  const { pathname } = useLocation();
   const isAdminMode = !isGroupPanel;
   const [searchParams] = useSearchParams();
   const preselectGroupId = searchParams.get("groupId") || "";
@@ -17,6 +19,8 @@ export default function MemberRegistration() {
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [selectedClusterKey, setSelectedClusterKey] = useState("");
   const [autoCodeLoading, setAutoCodeLoading] = useState(false);
+  const [membersList, setMembersList] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(false);
   const [form, setForm] = useState({
     Member_Id: "",
     Member_Nm: "",
@@ -161,6 +165,7 @@ export default function MemberRegistration() {
         if (preselectGroupId) {
           const selected = list.find((g) => g._id === preselectGroupId);
           if (selected) {
+            setSelectedClusterKey(`${selected.cluster_name || ""}|${selected.cluster_code || ""}`);
             setForm((prev) => ({
               ...prev,
               group_id: selected._id,
@@ -175,6 +180,23 @@ export default function MemberRegistration() {
       })
       .finally(() => setGroupsLoading(false));
   }, [isAdminMode, preselectGroupId]);
+
+  // Load registered members for selected group (admin mode)
+  const effectiveGroupId = form.group_id || (isGroupPanel ? currentGroup?.id : null);
+  useEffect(() => {
+    if (!isAdminMode || !effectiveGroupId) {
+      setMembersList([]);
+      return;
+    }
+    setMembersLoading(true);
+    getMembersByGroup(effectiveGroupId)
+      .then((res) => {
+        const list = Array.isArray(res?.data) ? res.data : [];
+        setMembersList(list);
+      })
+      .catch(() => setMembersList([]))
+      .finally(() => setMembersLoading(false));
+  }, [isAdminMode, effectiveGroupId]);
 
   // In group panel, lock the group automatically
   useEffect(() => {
@@ -500,6 +522,7 @@ export default function MemberRegistration() {
 
   return (
     <div className="max-w-6xl mx-auto">
+      <BackButton fallback={pathname.startsWith("/group") ? "/group/members" : "/admin/members"} label="Back to members" className="mb-4" />
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
           <User size={32} />
@@ -573,6 +596,50 @@ export default function MemberRegistration() {
             </>
           )}
         </FormSection>
+
+        {/* Registered members list (admin: when a group is selected) */}
+        {isAdminMode && effectiveGroupId && (
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                <List size={20} className="text-blue-600" />
+                Registered members
+              </h2>
+              <Link
+                to={`/admin/members?cluster=${encodeURIComponent(selectedClusterKey)}&group=${effectiveGroupId}`}
+                className="text-sm font-medium text-blue-600 hover:text-blue-800"
+              >
+                View in Members →
+              </Link>
+            </div>
+            {membersLoading ? (
+              <p className="text-gray-500 text-sm">Loading members…</p>
+            ) : membersList.length === 0 ? (
+              <p className="text-gray-500 text-sm">No members registered for this group yet.</p>
+            ) : (
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Member ID</th>
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Name</th>
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Designation</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {membersList.map((m) => (
+                      <tr key={m._id} className="hover:bg-gray-50">
+                        <td className="py-2 px-3 text-gray-800">{m.Member_Id || "—"}</td>
+                        <td className="py-2 px-3 text-gray-800">{m.Member_Nm || "—"}</td>
+                        <td className="py-2 px-3 text-gray-600">{m.Desg || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Basic Member Information */}
         <FormSection title="Basic Member Information" icon={User}>

@@ -209,7 +209,85 @@ const formatCurrency = (amount) => {
     });
 };
 
-// Export member ledger to Excel
+/**
+ * Export member summary to Excel: single sheet, one row per member, no transaction details.
+ * Uses same ledgerData from exportMemberLedger API (memberInfo + summary per member).
+ */
+export const exportMemberSummaryToExcel = (ledgerData, filename = 'Member_Summary') => {
+    if (!ledgerData || ledgerData.length === 0) {
+        return;
+    }
+    const headers = [
+        'Member Code',
+        'Member Name',
+        'Father/Husband Name',
+        'Village',
+        'Group Name',
+        'Group Code',
+        'Joining Date',
+        'Existing Member',
+        'Opening Savings',
+        'Closing Savings',
+        'Opening Loan',
+        'Closing Loan',
+        'Opening FD',
+        'Closing FD',
+        'Opening Interest',
+        'Closing Interest',
+        'Opening Yogdan',
+        'Closing Yogdan Due',
+        'Total Savings Deposit',
+        'Total Savings Withdraw',
+        'Total Loan Paid',
+        'Total Loan Recovered',
+        'Total FD Deposit',
+        'Total FD Withdraw',
+        'Total Interest Paid',
+        'Total Yogdan Due',
+        'Total Yogdan Paid',
+        'Total Other',
+    ];
+    const rows = ledgerData.map(({ memberInfo, summary }) => [
+        memberInfo.code || '',
+        memberInfo.name || '',
+        memberInfo.fatherName || '',
+        memberInfo.village || '',
+        memberInfo.groupName || '',
+        memberInfo.groupCode || '',
+        formatDate(memberInfo.joiningDate),
+        memberInfo.isExistingMember ? 'Yes' : 'No',
+        formatCurrency(summary?.openingSavings),
+        formatCurrency(summary?.closingSavings),
+        formatCurrency(summary?.openingLoan),
+        formatCurrency(summary?.closingLoan),
+        formatCurrency(summary?.openingFD),
+        formatCurrency(summary?.closingFD),
+        formatCurrency(summary?.openingInterest),
+        formatCurrency(summary?.closingInterest),
+        formatCurrency(summary?.openingYogdan),
+        formatCurrency(summary?.closingYogdanDue),
+        formatCurrency(summary?.totalSavingsDeposit),
+        formatCurrency(summary?.totalSavingsWithdraw),
+        formatCurrency(summary?.totalLoanPaid),
+        formatCurrency(summary?.totalLoanRecovered),
+        formatCurrency(summary?.totalFdDeposit),
+        formatCurrency(summary?.totalFdWithdraw),
+        formatCurrency(summary?.totalInterestPaid),
+        formatCurrency(summary?.totalYogdanDue),
+        formatCurrency(summary?.totalYogdanPaid),
+        formatCurrency(summary?.totalOther),
+    ]);
+    const allRows = [headers, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(allRows);
+    const colWidths = headers.map((_, i) => ({ wch: Math.min(18, Math.max(12, (headers[i] || '').length + 2)) }));
+    ws['!cols'] = colWidths;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Members');
+    const finalFilename = `${filename}_${new Date().toISOString().split('T')[0]}`;
+    XLSX.writeFile(wb, `${finalFilename}.xlsx`);
+};
+
+// Export member ledger to Excel (multiple sheets, one per member, with full transaction table - kept for backward compatibility)
 export const exportMemberLedgerToExcel = (ledgerData, filename = 'Member_Ledger') => {
     const wb = XLSX.utils.book_new();
 
@@ -339,24 +417,106 @@ export const exportMemberLedgerToExcel = (ledgerData, filename = 'Member_Ledger'
     XLSX.writeFile(wb, `${finalFilename}.xlsx`);
 };
 
-// Export member ledger to PDF
+/**
+ * Export member summary to PDF: single document, one row per member, same format as Excel summary.
+ * No transaction details.
+ */
+export const exportMemberSummaryToPDF = (ledgerData, filename = 'Member_Summary') => {
+    if (!ledgerData || ledgerData.length === 0) return;
+    const doc = new jsPDF('landscape', 'mm', 'a4');
+    const headers = [
+        'Code',
+        'Name',
+        'F/H Name',
+        'Village',
+        'Group',
+        'Grp Code',
+        'Join Date',
+        'Existing',
+        'Op Sav',
+        'Cl Sav',
+        'Op Loan',
+        'Cl Loan',
+        'Op FD',
+        'Cl FD',
+        'Op Int',
+        'Cl Int',
+        'Op Yog',
+        'Cl Yog',
+        'Tot Sav Dep',
+        'Tot Sav W/D',
+        'Tot Loan Paid',
+        'Tot Loan Rec',
+        'Tot FD Dep',
+        'Tot FD W/D',
+        'Tot Int Paid',
+        'Tot Yog Due',
+        'Tot Yog Paid',
+        'Other',
+    ];
+    const rows = ledgerData.map(({ memberInfo, summary }) => [
+        String(memberInfo.code || '').substring(0, 12),
+        String(memberInfo.name || '').substring(0, 15),
+        String(memberInfo.fatherName || '').substring(0, 12),
+        String(memberInfo.village || '').substring(0, 10),
+        String(memberInfo.groupName || '').substring(0, 12),
+        String(memberInfo.groupCode || '').substring(0, 8),
+        formatDate(memberInfo.joiningDate) || '',
+        memberInfo.isExistingMember ? 'Y' : 'N',
+        formatCurrency(summary?.openingSavings),
+        formatCurrency(summary?.closingSavings),
+        formatCurrency(summary?.openingLoan),
+        formatCurrency(summary?.closingLoan),
+        formatCurrency(summary?.openingFD),
+        formatCurrency(summary?.closingFD),
+        formatCurrency(summary?.openingInterest),
+        formatCurrency(summary?.closingInterest),
+        formatCurrency(summary?.openingYogdan),
+        formatCurrency(summary?.closingYogdanDue),
+        formatCurrency(summary?.totalSavingsDeposit),
+        formatCurrency(summary?.totalSavingsWithdraw),
+        formatCurrency(summary?.totalLoanPaid),
+        formatCurrency(summary?.totalLoanRecovered),
+        formatCurrency(summary?.totalFdDeposit),
+        formatCurrency(summary?.totalFdWithdraw),
+        formatCurrency(summary?.totalInterestPaid),
+        formatCurrency(summary?.totalYogdanDue),
+        formatCurrency(summary?.totalYogdanPaid),
+        formatCurrency(summary?.totalOther),
+    ]);
+    doc.setFontSize(14);
+    doc.text('Member Summary', 14, 12);
+    doc.setFontSize(9);
+    doc.text(`Generated: ${new Date().toLocaleDateString()} | ${ledgerData.length} member(s)`, 14, 18);
+    autoTable(doc, {
+        head: [headers],
+        body: rows,
+        startY: 22,
+        styles: { fontSize: 6 },
+        headStyles: { fillColor: [66, 139, 202] },
+        margin: { left: 14, right: 14 },
+        showHead: 'everyPage',
+    });
+    doc.setFontSize(8);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, doc.internal.pageSize.height - 10);
+    const finalFilename = `${filename}_${new Date().toISOString().split('T')[0]}`;
+    doc.save(`${finalFilename}.pdf`);
+};
+
+// Export member ledger to PDF (legacy: one PDF per member with full transaction table - kept for backward compatibility)
 export const exportMemberLedgerToPDF = (ledgerData, filename = 'Member_Ledger') => {
     ledgerData.forEach((memberData, index) => {
         const { memberInfo, ledger, summary } = memberData;
         const doc = new jsPDF('landscape', 'mm', 'a4');
         let yPos = 15;
 
-        // Title
         doc.setFontSize(18);
         doc.text('Member Finance Ledger', 14, yPos);
         yPos += 10;
-
-        // Member Information
         doc.setFontSize(12);
         doc.text('Member Information', 14, yPos);
         yPos += 7;
         doc.setFontSize(10);
-
         const memberInfoText = [
             `Member Code: ${memberInfo.code || ''}`,
             `Member Name: ${memberInfo.name || ''}`,
@@ -366,67 +526,36 @@ export const exportMemberLedgerToPDF = (ledgerData, filename = 'Member_Ledger') 
             `Joining Date: ${formatDate(memberInfo.joiningDate)}`,
             `Existing Member: ${memberInfo.isExistingMember ? 'Yes' : 'No'}`
         ];
-
         memberInfoText.forEach(text => {
             doc.text(text, 14, yPos);
             yPos += 6;
         });
-
         yPos += 5;
-
-        // Opening Balances
         doc.setFontSize(12);
         doc.text('Opening Balances', 14, yPos);
         yPos += 7;
         doc.setFontSize(10);
-
-        const openingBalances = [
-            `Savings: ${formatCurrency(summary.openingSavings)}`,
-            `Loan: ${formatCurrency(summary.openingLoan)}`,
-            `FD: ${formatCurrency(summary.openingFD)}`,
-            `Interest: ${formatCurrency(summary.openingInterest)}`,
-            `Yogdan: ${formatCurrency(summary.openingYogdan)}`
-        ];
-
-        openingBalances.forEach(text => {
-            doc.text(text, 14, yPos);
+        ['Savings', 'Loan', 'FD', 'Interest', 'Yogdan'].forEach((label, i) => {
+            const val = [summary.openingSavings, summary.openingLoan, summary.openingFD, summary.openingInterest, summary.openingYogdan][i];
+            doc.text(`${label}: ${formatCurrency(val)}`, 14, yPos);
             yPos += 6;
         });
-
         yPos += 5;
-
-        // Transaction Table
-        const headers = [
-            'Date',
-            'Receipt',
-            'Sav Dep',
-            'Sav W/D',
-            'Sav Bal',
-            'Loan Paid',
-            'Loan Bal',
-            'FD Dep',
-            'FD Bal',
-            'Int Paid',
-            'Yogdan',
-            'Other'
-        ];
-
+        const headers = ['Date', 'Receipt', 'Sav Dep', 'Sav W/D', 'Sav Bal', 'Loan Paid', 'Loan Bal', 'FD Dep', 'FD Bal', 'Int Paid', 'Yogdan', 'Other'];
         const rows = ledger.map(entry => [
             formatDate(entry.date),
             (entry.receipt || '').substring(0, 15),
-            `${formatCurrency(entry.savingsDeposit || 0)}`,
-            `${formatCurrency(entry.savingsWithdraw || 0)}`,
-            `${formatCurrency(entry.savingsBalance || 0)}`,
-            `${formatCurrency(entry.loanPaid || 0)}`,
-            `${formatCurrency(entry.loanBalance || 0)}`,
-            `${formatCurrency(entry.fdDeposit || 0)}`,
-            `${formatCurrency(entry.fdBalance || 0)}`,
-            `${formatCurrency(entry.interestPaid || 0)}`,
-            `${formatCurrency(entry.yogdan || 0)}`,
-            `${formatCurrency(entry.other || 0)}`
+            formatCurrency(entry.savingsDeposit || 0),
+            formatCurrency(entry.savingsWithdraw || 0),
+            formatCurrency(entry.savingsBalance || 0),
+            formatCurrency(entry.loanPaid || 0),
+            formatCurrency(entry.loanBalance || 0),
+            formatCurrency(entry.fdDeposit || 0),
+            formatCurrency(entry.fdBalance || 0),
+            formatCurrency(entry.interestPaid || 0),
+            formatCurrency(entry.yogdan || 0),
+            formatCurrency(entry.other || 0)
         ]);
-
-        // Add table using autoTable function
         autoTable(doc, {
             head: [headers],
             body: rows,
@@ -435,21 +564,16 @@ export const exportMemberLedgerToPDF = (ledgerData, filename = 'Member_Ledger') 
             headStyles: { fillColor: [66, 139, 202] },
             margin: { left: 14, right: 14 },
         });
-
         yPos = doc.lastAutoTable.finalY + 10;
-
-        // Summary Section
         if (yPos > 180) {
             doc.addPage();
             yPos = 15;
         }
-
         doc.setFontSize(12);
         doc.text('Summary', 14, yPos);
         yPos += 7;
         doc.setFontSize(10);
-
-        const summaryText = [
+        [
             `Total Savings Deposit: ${formatCurrency(summary.totalSavingsDeposit)}`,
             `Total Savings Withdraw: ${formatCurrency(summary.totalSavingsWithdraw)}`,
             `Total Loan Paid: ${formatCurrency(summary.totalLoanPaid)}`,
@@ -457,38 +581,27 @@ export const exportMemberLedgerToPDF = (ledgerData, filename = 'Member_Ledger') 
             `Total Interest Paid: ${formatCurrency(summary.totalInterestPaid)}`,
             `Total Yogdan: ${formatCurrency(summary.totalYogdan)}`,
             `Total Other: ${formatCurrency(summary.totalOther)}`
-        ];
-
-        summaryText.forEach(text => {
+        ].forEach(text => {
             doc.text(text, 14, yPos);
             yPos += 6;
         });
-
         yPos += 5;
-
-        // Closing Balances
         doc.setFontSize(12);
         doc.text('Closing Balances', 14, yPos);
         yPos += 7;
         doc.setFontSize(10);
-
-        const closingBalances = [
+        [
             `Savings: ${formatCurrency(summary.closingSavings)}`,
             `Loan: ${formatCurrency(summary.closingLoan)}`,
             `FD: ${formatCurrency(summary.closingFD)}`,
             `Interest: ${formatCurrency(summary.closingInterest)}`,
             `Yogdan: ${formatCurrency(summary.closingYogdan)}`
-        ];
-
-        closingBalances.forEach(text => {
+        ].forEach(text => {
             doc.text(text, 14, yPos);
             yPos += 6;
         });
-
-        // Footer
         doc.setFontSize(8);
         doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, doc.internal.pageSize.height - 10);
-
         const memberFilename = `${filename}_${memberInfo.code || `Member_${index + 1}`}_${new Date().toISOString().split('T')[0]}`;
         doc.save(`${memberFilename}.pdf`);
     });

@@ -26,6 +26,8 @@ const PaymentMasterSchema = new mongoose.Schema({
             // Member exit flows
             "member_exit_payout",
             "member_exit_recovery",
+            // Loan edit: overpayment refund
+            "loan_refund",
         ],
         required: true,
     },

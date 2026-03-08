@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { createGroup, getClusters } from "../../services/groupService";
-import { PlusCircle, Building2, Users, Calendar, DollarSign, FileText, LayoutGrid } from "lucide-react";
+import { getMembers } from "../../services/memberService";
+import { PlusCircle, Building2, Users, Calendar, DollarSign, FileText, LayoutGrid, UserPlus, Lock } from "lucide-react";
+import BackButton from "../../components/admin/BackButton";
 import { Input, Select, TextArea, FormSection } from "../../components/forms/FormComponents";
 import Loader, { OverlayLoader } from "../../components/common/Loader";
 import ErrorMessage from "../../components/common/ErrorMessage";
@@ -34,14 +36,32 @@ export default function CreateGroup() {
         saving_rate: "",
         fd_rate: "",
         loan_rate: "",
+        password: "",
+        supervisorId: "",
+        supervisorName: "",
     });
 
     const [clusters, setClusters] = useState([]);
     const [selectedClusterId, setSelectedClusterId] = useState("");
     const [isNewCluster, setIsNewCluster] = useState(false);
+    const [useExistingSupervisor, setUseExistingSupervisor] = useState(true);
+    const [existingMembers, setExistingMembers] = useState([]);
 
     useEffect(() => {
         fetchClusters();
+    }, []);
+
+    useEffect(() => {
+        const load = async () => {
+            try {
+                const res = await getMembers();
+                const list = Array.isArray(res?.data) ? res.data : [];
+                setExistingMembers(list);
+            } catch (err) {
+                console.error("Failed to load members for supervisor dropdown:", err);
+            }
+        };
+        load();
     }, []);
 
     const fetchClusters = async () => {
@@ -83,7 +103,19 @@ export default function CreateGroup() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const result = await execute(() => createGroup(form));
+        const payload = { ...form };
+        if (useExistingSupervisor && form.supervisorId) {
+            payload.supervisorId = form.supervisorId;
+            delete payload.supervisorName;
+        } else if (!useExistingSupervisor && form.supervisorName?.trim()) {
+            payload.supervisorName = form.supervisorName.trim();
+            delete payload.supervisorId;
+        } else {
+            delete payload.supervisorId;
+            delete payload.supervisorName;
+        }
+        if (!payload.password?.trim()) delete payload.password;
+        const result = await execute(() => createGroup(payload));
         
         if (result.success) {
             alert("Group created successfully! You can add bank details later from 'Bank for Group' section.");
@@ -112,6 +144,9 @@ export default function CreateGroup() {
                 saving_rate: "",
                 fd_rate: "",
                 loan_rate: "",
+                password: "",
+                supervisorId: "",
+                supervisorName: "",
             });
             setSelectedClusterId("");
             setIsNewCluster(false);
@@ -129,6 +164,7 @@ export default function CreateGroup() {
 
     return (
         <div className="max-w-6xl mx-auto">
+            <BackButton fallback="/admin/group-management" label="Back to group management" className="mb-4" />
             <div className="mb-6">
                 <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
                     <PlusCircle size={32} />
@@ -292,6 +328,72 @@ export default function CreateGroup() {
                     />
                 </FormSection>
 
+                {/* Supervisor & Group Login */}
+                <FormSection title="Supervisor & Group Panel Login" icon={UserPlus}>
+                    <div className="space-y-4">
+                        <div className="flex flex-wrap gap-4">
+                            <label className="inline-flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="supervisorMode"
+                                    checked={useExistingSupervisor}
+                                    onChange={() => setUseExistingSupervisor(true)}
+                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm font-medium text-gray-700">Select existing member</span>
+                            </label>
+                            <label className="inline-flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="supervisorMode"
+                                    checked={!useExistingSupervisor}
+                                    onChange={() => setUseExistingSupervisor(false)}
+                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm font-medium text-gray-700">Create new supervisor</span>
+                            </label>
+                        </div>
+                        {useExistingSupervisor ? (
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Existing member</label>
+                                <select
+                                    name="supervisorId"
+                                    value={form.supervisorId || ""}
+                                    onChange={handleChange}
+                                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                >
+                                    <option value="">— Select member —</option>
+                                    {existingMembers.map((m) => (
+                                        <option key={m._id} value={m._id}>
+                                            {m.Member_Nm || m.Member_Id || m._id}
+                                            {m.Member_Id ? ` (${m.Member_Id})` : ""}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        ) : (
+                            <Input
+                                label="Supervisor name"
+                                name="supervisorName"
+                                value={form.supervisorName}
+                                handleChange={handleChange}
+                                placeholder="Enter name for new supervisor"
+                            />
+                        )}
+                    </div>
+                </FormSection>
+
+                <FormSection title="Group panel password" icon={Lock}>
+                    <Input
+                        type="password"
+                        label="Password (for group login)"
+                        name="password"
+                        value={form.password}
+                        handleChange={handleChange}
+                        placeholder="Leave blank to set later from Group Management"
+                    />
+                </FormSection>
+
                 {/* Financial Information */}
                 <FormSection title="Financial Information" icon={DollarSign}>
                     <Input
@@ -441,6 +543,9 @@ export default function CreateGroup() {
                                         saving_rate: "",
                                         fd_rate: "",
                                         loan_rate: "",
+                                        password: "",
+                                        supervisorId: "",
+                                        supervisorName: "",
                                     });
                                     setSelectedClusterId("");
                                     setIsNewCluster(false);

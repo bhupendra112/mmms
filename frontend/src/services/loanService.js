@@ -43,3 +43,25 @@ export const rejectLoan = async (id, reason) => {
   return res.data;
 };
 
+/**
+ * Preview loan edit recalculation (before save).
+ * @param {string} loanId
+ * @param {Object} body - { date?, amount?, time_period?, loan_rate_snapshot? } or interestRate
+ * @returns {Promise<{ data: { oldTotalPayable, newTotalPayable, difference, status, overpaidAmount, underpaidAmount, oldState, newState } }>}
+ */
+export const previewLoanEdit = async (loanId, body) => {
+  const res = await httpLoan.post(`/preview-edit/${loanId}`, body || {});
+  return res.data;
+};
+
+/**
+ * Update loan terms and apply adjustment.
+ * @param {string} loanId
+ * @param {Object} payload - loan fields + actionTaken (advance|refund|deficit|manual) + optional manualOverride*, refundPaymentMode, bankId
+ * @returns {Promise<{ data }>}
+ */
+export const updateLoan = async (loanId, payload) => {
+  const res = await httpLoan.patch(`/update/${loanId}`, payload);
+  return res.data;
+};
+

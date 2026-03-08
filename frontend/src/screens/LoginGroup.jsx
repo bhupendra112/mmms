@@ -11,7 +11,7 @@ export default function LoginGroup() {
     const isAuthenticated = useSelector(selectIsGroupAuthenticated);
     const [form, setForm] = useState({
         groupCode: "",
-        place: "",
+        password: "",
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
@@ -40,7 +40,7 @@ export default function LoginGroup() {
         try {
             const response = await loginGroup(
                 form.groupCode.trim(),
-                form.place.trim()
+                form.password
             );
 
             if (response.success && response.data) {
@@ -56,7 +56,7 @@ export default function LoginGroup() {
                 setError(response.message || "Login failed");
             }
         } catch (err) {
-            setError(err.message || "Invalid group code or place");
+            setError(err.message || "Invalid group code or password");
         } finally {
             setLoading(false);
         }
@@ -72,7 +72,7 @@ export default function LoginGroup() {
                         </div>
                     </div>
                     <h1 className="text-3xl font-bold text-gray-800 mb-2">Group Login</h1>
-                    <p className="text-gray-600">Enter your group code and place name to access</p>
+                    <p className="text-gray-600">Enter your group code and password to access</p>
                 </div>
 
                 {error && (
@@ -100,16 +100,16 @@ export default function LoginGroup() {
 
                     <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-2">
-                            Place Name *
+                            Password *
                         </label>
                         <input
-                            type="text"
-                            name="place"
-                            value={form.place}
+                            type="password"
+                            name="password"
+                            value={form.password}
                             onChange={handleChange}
                             required
                             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            placeholder="Enter place name"
+                            placeholder="Enter password"
                         />
                     </div>
 

@@ -22,10 +22,10 @@ httpGroupAuth.interceptors.response.use(
     createErrorInterceptor(false) // false = isGroup (not admin)
 );
 
-export const loginGroup = async (groupCode, place) => {
+export const loginGroup = async (groupCode, password) => {
     const payload = {
         groupCode,
-        place,
+        password,
     };
     const res = await httpGroupAuth.post("/login", payload);
     return res.data;

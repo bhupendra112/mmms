@@ -40,7 +40,8 @@ export const postTransaction = async (options) => {
             bankId,
             referenceModel,
             referenceId,
-            createdBy
+            createdBy,
+            session,
         } = options;
 
         // Validate required fields
@@ -79,7 +80,7 @@ export const postTransaction = async (options) => {
         let finalHeadId = headId;
         if (!finalHeadId) {
             if (finalHeadType === "groupMaster") {
-                const headInfo = await findOrCreateHead(groupId, normalizedHeadName, finalSection);
+                const headInfo = await findOrCreateHead(groupId, normalizedHeadName, finalSection, session);
                 if (headInfo) {
                     finalHeadId = headInfo.headId;
                     finalHeadType = headInfo.headType;
@@ -97,13 +98,14 @@ export const postTransaction = async (options) => {
 
         // Deduplication: RecoveryMaster has multiple entries per recovery (one per head per member); others are one per reference.
         let existingEntry;
+        const findOptions = session ? { session } : {};
         if (referenceModel === "RecoveryMaster") {
             existingEntry = await GroupLedger.findOne({
                 referenceModel,
                 referenceId,
                 headName: normalizedHeadName,
                 ...(memberId ? { memberId } : {})
-            });
+            }, null, findOptions);
             if (normalizedHeadName.toLowerCase().includes("penalty")) {
                 console.log("[LEDGER_POSTING] RecoveryMaster penalty:", { headName: normalizedHeadName, amount, section: finalSection, existingEntry: !!existingEntry, memberId: memberId?.toString?.() });
             }
@@ -111,7 +113,7 @@ export const postTransaction = async (options) => {
             existingEntry = await GroupLedger.findOne({
                 referenceModel,
                 referenceId
-            });
+            }, null, findOptions);
         }
 
         const ledgerData = {
@@ -133,14 +135,15 @@ export const postTransaction = async (options) => {
         };
 
         let ledgerEntry;
+        const writeOptions = session ? { session } : {};
         if (existingEntry) {
             // Update existing entry
             Object.assign(existingEntry, ledgerData);
-            await existingEntry.save();
+            await existingEntry.save(writeOptions);
             ledgerEntry = existingEntry;
         } else {
             // Create new entry
-            ledgerEntry = await GroupLedger.create(ledgerData);
+            ledgerEntry = await GroupLedger.create(ledgerData, writeOptions);
         }
 
         console.log("[LEDGER_POSTING] Transaction posted:", {

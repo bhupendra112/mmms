@@ -1,6 +1,6 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail, getCashTransactions, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, listClusters } from "../../controller/admin/groupController.js";
+import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail, getCashTransactions, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, listClusters, changeSupervisor, changePassword } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
@@ -67,5 +67,9 @@ router.post("/:groupId/charges", authAdmin, addGroupCharge);
 router.put("/:groupId/charges/:chargeId", authAdmin, updateGroupCharge);
 router.delete("/:groupId/charges/:chargeId", authAdmin, deleteGroupCharge);
 router.get("/:groupId/charges", authAdmin, getGroupCharges);
+
+// Supervisor and password management
+router.post("/:groupId/change-supervisor", authAdmin, changeSupervisor);
+router.post("/:groupId/change-password", authAdmin, changePassword);
 
 export default router;

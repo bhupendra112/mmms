@@ -191,3 +191,27 @@ export const getGroupCharges = async (groupId) => {
         throw err.response ? err.response.data : err;
     }
 };
+
+// -------------------------------------------------------------
+// SUPERVISOR & PASSWORD
+// -------------------------------------------------------------
+export const changeSupervisor = async (groupId, data) => {
+    try {
+        const payload = sanitizePayload(data);
+        const res = await httpGroup.post(`/${groupId}/change-supervisor`, payload);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+export const changePassword = async (groupId, newPassword) => {
+    try {
+        const res = await httpGroup.post(`/${groupId}/change-password`, {
+            newPassword: String(newPassword).trim(),
+        });
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};

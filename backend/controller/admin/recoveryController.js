@@ -1,7 +1,7 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import RecoveryMaster from "../../model/RecoveryMaster.js";
-import { GroupMaster, FDMaster, MemberRevenueDemand } from "../../model/index.js";
+import { GroupMaster, FDMaster, MemberRevenueDemand, LoanAdjustmentLog } from "../../model/index.js";
 import LoanMaster from "../../model/LoanMaster.js";
 import Member from "../../model/Member.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
@@ -11,6 +11,11 @@ import { generateRecoveryPDF } from "../../utility/pdfGenerator.js";
 import { getDateRange, parseDate } from "../../utility/dateUtils.js";
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
+
+const DEBUG_INTEREST = process.env.DEBUG_INTEREST === "true";
+
+/** Round demand amount to fixed integer: if decimal >= 0.5 round up, else round down */
+const roundDemand = (n) => (typeof n === "number" && !Number.isNaN(n)) ? Math.round(n) : (parseFloat(n) || 0);
 
 export const registerRecovery = async (req, res) => {
     try {
@@ -82,9 +87,9 @@ export const registerRecovery = async (req, res) => {
                         }
                     }
                     const sum = (rec.amounts?.saving || 0) + (rec.amounts?.loan || 0) + (rec.amounts?.fd || 0) + (rec.amounts?.interest || 0) + (rec.amounts?.yogdan || 0) + (rec.amounts?.memFeesSHG || 0) + (rec.amounts?.memFeesSamiti || 0) + (rec.amounts?.memFeesGroup || 0) + (rec.amounts?.penalty || 0) + (rec.amounts?.other || 0) + (rec.amounts?.other1 || 0) + (rec.amounts?.other2 || 0);
-                    if (total == null || total === 0) total = sum;
+                    if (total == null || total === 0) total = roundDemand(sum);
                 }
-                return { ...rec, demandDetails: demandDetails || {}, total: total ?? 0 };
+                return { ...rec, demandDetails: demandDetails || {}, total: roundDemand(total ?? 0) };
             };
             const existingRecoveries = existingSessionForDate.recoveries || [];
             const existingByMember = new Map(existingRecoveries.map((r) => [String(r.memberId), r]));
@@ -96,7 +101,7 @@ export const registerRecovery = async (req, res) => {
             let totalCash = 0, totalOnline = 0, totalAmount = 0;
             for (const rec of mergedRecoveries) {
                 if (rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther)) {
-                    const t = rec.total ?? 0;
+                    const t = roundDemand(rec.total ?? 0);
                     totalAmount += t;
                     if (rec.paymentMode?.cash) totalCash += t;
                     if (rec.paymentMode?.online) totalOnline += t;
@@ -104,7 +109,11 @@ export const registerRecovery = async (req, res) => {
             }
             existingSessionForDate.recoveries = mergedRecoveries;
             existingSessionForDate.memberCount = mergedRecoveries.length;
-            existingSessionForDate.totals = { totalCash, totalOnline, totalAmount };
+            existingSessionForDate.totals = {
+                totalCash: roundDemand(totalCash),
+                totalOnline: roundDemand(totalOnline),
+                totalAmount: roundDemand(totalAmount),
+            };
             if (payload.groupPhoto != null) existingSessionForDate.groupPhoto = payload.groupPhoto;
             if (payload.cashDenominations) existingSessionForDate.cashDenominations = payload.cashDenominations;
             if (nextMeetingDate) existingSessionForDate.nextMeetingDate = nextMeetingDate;
@@ -297,14 +306,16 @@ export const registerRecovery = async (req, res) => {
                 const enriched = await enrichRecovery(rec);
                 enrichedRecoveries.push(enriched);
                 if (enriched.attendance === 'present' || (enriched.attendance === 'absent' && enriched.recoveryByOther)) {
-                    const t = enriched.total ?? 0;
+                    const t = roundDemand(enriched.total ?? 0);
                     totalAmount += t;
                     if (enriched.paymentMode?.cash) totalCash += t;
                     if (enriched.paymentMode?.online) totalOnline += t;
                 }
             }
             recoveryData.recoveries = enrichedRecoveries;
-            recoveryData.totals = payload.totals && (payload.totals.totalAmount != null || payload.totals.totalCash != null) ? payload.totals : { totalCash, totalOnline, totalAmount };
+            recoveryData.totals = payload.totals && (payload.totals.totalAmount != null || payload.totals.totalCash != null)
+                ? payload.totals
+                : { totalCash: roundDemand(totalCash), totalOnline: roundDemand(totalOnline), totalAmount: roundDemand(totalAmount) };
         }
 
         // Second check right before create: another request may have created the session (e.g. concurrent syncs)
@@ -330,9 +341,9 @@ export const registerRecovery = async (req, res) => {
                             }
                         }
                         const sum = (rec.amounts?.saving || 0) + (rec.amounts?.loan || 0) + (rec.amounts?.fd || 0) + (rec.amounts?.interest || 0) + (rec.amounts?.yogdan || 0) + (rec.amounts?.memFeesSHG || 0) + (rec.amounts?.memFeesSamiti || 0) + (rec.amounts?.memFeesGroup || 0) + (rec.amounts?.penalty || 0) + (rec.amounts?.other || 0) + (rec.amounts?.other1 || 0) + (rec.amounts?.other2 || 0);
-                        if (total == null || total === 0) total = sum;
+                        if (total == null || total === 0) total = roundDemand(sum);
                     }
-                    return { ...rec, demandDetails: demandDetails || {}, total: total ?? 0 };
+                    return { ...rec, demandDetails: demandDetails || {}, total: roundDemand(total ?? 0) };
                 };
                 const existingRecoveries = again.recoveries || [];
                 const existingByMember = new Map(existingRecoveries.map((r) => [String(r.memberId), r]));
@@ -344,7 +355,7 @@ export const registerRecovery = async (req, res) => {
                 let totalCash = 0, totalOnline = 0, totalAmount = 0;
                 for (const rec of mergedRecoveries) {
                     if (rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther)) {
-                        const t = rec.total ?? 0;
+                        const t = roundDemand(rec.total ?? 0);
                         totalAmount += t;
                         if (rec.paymentMode?.cash) totalCash += t;
                         if (rec.paymentMode?.online) totalOnline += t;
@@ -352,7 +363,7 @@ export const registerRecovery = async (req, res) => {
                 }
                 again.recoveries = mergedRecoveries;
                 again.memberCount = mergedRecoveries.length;
-                again.totals = { totalCash, totalOnline, totalAmount };
+                again.totals = { totalCash: roundDemand(totalCash), totalOnline: roundDemand(totalOnline), totalAmount: roundDemand(totalAmount) };
                 if (payload.groupPhoto != null) again.groupPhoto = payload.groupPhoto;
                 if (payload.cashDenominations) again.cashDenominations = payload.cashDenominations;
                 if (nextMeetingDate) again.nextMeetingDate = nextMeetingDate;
@@ -390,9 +401,9 @@ export const registerRecovery = async (req, res) => {
                                 }
                             }
                             const sum = (rec.amounts?.saving || 0) + (rec.amounts?.loan || 0) + (rec.amounts?.fd || 0) + (rec.amounts?.interest || 0) + (rec.amounts?.yogdan || 0) + (rec.amounts?.memFeesSHG || 0) + (rec.amounts?.memFeesSamiti || 0) + (rec.amounts?.memFeesGroup || 0) + (rec.amounts?.penalty || 0) + (rec.amounts?.other || 0) + (rec.amounts?.other1 || 0) + (rec.amounts?.other2 || 0);
-                            if (total == null || total === 0) total = sum;
+                            if (total == null || total === 0) total = roundDemand(sum);
                         }
-                        return { ...rec, demandDetails: demandDetails || {}, total: total ?? 0 };
+                        return { ...rec, demandDetails: demandDetails || {}, total: roundDemand(total ?? 0) };
                     };
                     const existingRecoveries = existing.recoveries || [];
                     const existingByMember = new Map(existingRecoveries.map((r) => [String(r.memberId), r]));
@@ -404,7 +415,7 @@ export const registerRecovery = async (req, res) => {
                     let totalCash = 0, totalOnline = 0, totalAmount = 0;
                     for (const rec of mergedRecoveries) {
                         if (rec.attendance === 'present' || (rec.attendance === 'absent' && rec.recoveryByOther)) {
-                            const t = rec.total ?? 0;
+                            const t = roundDemand(rec.total ?? 0);
                             totalAmount += t;
                             if (rec.paymentMode?.cash) totalCash += t;
                             if (rec.paymentMode?.online) totalOnline += t;
@@ -412,7 +423,7 @@ export const registerRecovery = async (req, res) => {
                     }
                     existing.recoveries = mergedRecoveries;
                     existing.memberCount = mergedRecoveries.length;
-                    existing.totals = { totalCash, totalOnline, totalAmount };
+                    existing.totals = { totalCash: roundDemand(totalCash), totalOnline: roundDemand(totalOnline), totalAmount: roundDemand(totalAmount) };
                     if (payload.groupPhoto != null) existing.groupPhoto = payload.groupPhoto;
                     if (payload.cashDenominations) existing.cashDenominations = payload.cashDenominations;
                     if (nextMeetingDate) existing.nextMeetingDate = nextMeetingDate;
@@ -599,69 +610,40 @@ export const updateMemberRecovery = async (req, res) => {
                     r.memberId?.toString() === memberRecovery.memberId?.toString()
             );
 
+            const sumAmounts = (amt) => roundDemand(
+                (amt?.saving || 0) + (amt?.loan || 0) + (amt?.fd || 0) + (amt?.interest || 0) + (amt?.yogdan || 0) +
+                (amt?.memFeesSHG || 0) + (amt?.memFeesSamiti || 0) + (amt?.memFeesGroup || 0) + (amt?.penalty || 0) +
+                (amt?.other || 0) + (amt?.other1 || 0) + (amt?.other2 || 0)
+            );
             if (memberIndex >= 0) {
-                // Update existing member recovery
+                // Update existing member recovery (total fixed integer)
+                const total = sumAmounts(memberRecovery.amounts);
                 recoverySession.recoveries[memberIndex] = {
                     ...recoverySession.recoveries[memberIndex],
                     ...memberRecovery,
                     demandDetails,
-                    total: (memberRecovery.amounts?.saving || 0) +
-                        (memberRecovery.amounts?.loan || 0) +
-                        (memberRecovery.amounts?.fd || 0) +
-                        (memberRecovery.amounts?.interest || 0) +
-                        (memberRecovery.amounts?.yogdan || 0) +
-                        (memberRecovery.amounts?.memFeesSHG || 0) +
-                        (memberRecovery.amounts?.memFeesSamiti || 0) +
-                        (memberRecovery.amounts?.memFeesGroup || 0) +
-                        (memberRecovery.amounts?.penalty || 0) +
-                        (memberRecovery.amounts?.other || 0) +
-                        (memberRecovery.amounts?.other1 || 0) + // Backward compatibility
-                        (memberRecovery.amounts?.other2 || 0) // Backward compatibility
+                    total,
                 };
             } else {
-                // Add new member recovery
-                const total = (memberRecovery.amounts?.saving || 0) +
-                    (memberRecovery.amounts?.loan || 0) +
-                    (memberRecovery.amounts?.fd || 0) +
-                    (memberRecovery.amounts?.interest || 0) +
-                    (memberRecovery.amounts?.yogdan || 0) +
-                    (memberRecovery.amounts?.memFeesSHG || 0) +
-                    (memberRecovery.amounts?.memFeesSamiti || 0) +
-                    (memberRecovery.amounts?.memFeesGroup || 0) +
-                    (memberRecovery.amounts?.penalty || 0) +
-                    (memberRecovery.amounts?.other || 0) +
-                    (memberRecovery.amounts?.other1 || 0) + // Backward compatibility
-                    (memberRecovery.amounts?.other2 || 0); // Backward compatibility
-
+                // Add new member recovery (total fixed integer)
+                const total = sumAmounts(memberRecovery.amounts);
                 recoverySession.recoveries.push({
                     ...memberRecovery,
                     demandDetails,
-                    total
+                    total,
                 });
                 recoverySession.memberCount = recoverySession.recoveries.length;
             }
 
-            // Recalculate totals
+            // Recalculate totals (fixed integers)
             let totalCash = 0;
             let totalOnline = 0;
             let totalAmount = 0;
 
             recoverySession.recoveries.forEach(rec => {
                 if (rec.attendance === "present" || (rec.attendance === "absent" && rec.recoveryByOther)) {
-                    // Calculate total from all amount fields
                     const amounts = rec.amounts || {};
-                    const memberTotal = (amounts.saving || 0) +
-                        (amounts.loan || 0) +
-                        (amounts.fd || 0) +
-                        (amounts.interest || 0) +
-                        (amounts.yogdan || 0) +
-                        (amounts.memFeesSHG || 0) +
-                        (amounts.memFeesSamiti || 0) +
-                        (amounts.memFeesGroup || 0) +
-                        (amounts.penalty || 0) +
-                        (amounts.other || 0) +
-                        (amounts.other1 || 0) + // Backward compatibility
-                        (amounts.other2 || 0); // Backward compatibility
+                    const memberTotal = sumAmounts(amounts);
                     rec.total = memberTotal;
                     totalAmount += memberTotal;
                     if (rec.paymentMode?.cash) totalCash += memberTotal;
@@ -670,9 +652,9 @@ export const updateMemberRecovery = async (req, res) => {
             });
 
             recoverySession.totals = {
-                totalCash,
-                totalOnline,
-                totalAmount
+                totalCash: roundDemand(totalCash),
+                totalOnline: roundDemand(totalOnline),
+                totalAmount: roundDemand(totalAmount),
             };
 
             // Use total from the session entry (recalculate has set rec.total) so "add new member" path also gets correct amount for cash/bank
@@ -866,15 +848,15 @@ export const updateMemberRecovery = async (req, res) => {
                         .sort({ date: 1 })
                         .lean();
 
-                for (const loan of memberLoans) {
-                    if (remainingYogdan <= 0) break;
+                    for (const loan of memberLoans) {
+                        if (remainingYogdan <= 0) break;
 
-                    const loanAmount = loan.amount || 0;
-                    // Use stored yogdanAmount when present (including 0); only use 1% for legacy loans
-                    const hasStored = loan.yogdanAmount !== undefined && loan.yogdanAmount !== null;
-                    const yogdanAmount = hasStored ? (parseFloat(loan.yogdanAmount) || 0) : Math.round((loanAmount * 0.01) * 100) / 100;
+                        const loanAmount = loan.amount || 0;
+                        // Use stored yogdanAmount when present (including 0); only use 1% for legacy loans
+                        const hasStored = loan.yogdanAmount !== undefined && loan.yogdanAmount !== null;
+                        const yogdanAmount = hasStored ? (parseFloat(loan.yogdanAmount) || 0) : Math.round((loanAmount * 0.01) * 100) / 100;
 
-                    if (remainingYogdan >= yogdanAmount) {
+                        if (remainingYogdan >= yogdanAmount) {
                             // Mark loan yogdan as collected in LoanMaster only
                             await LoanMaster.findByIdAndUpdate(loan._id, {
                                 yogdanCollected: true,
@@ -1904,8 +1886,8 @@ const calculateInterestForPeriod = (principal, rate, startDate, endDate, debugCo
     return interestRounded;
 };
 
-// Helper function to calculate demand details for a member
-const calculateDemandDetails = async (
+// Helper function to calculate demand details for a member (exported for settlement service)
+export const calculateDemandDetails = async (
     groupId,
     memberId,
     memberRecovery,
@@ -2045,7 +2027,7 @@ const calculateDemandDetails = async (
             allActiveLoans.at(-1)?.loan_rate_snapshot ||
             groupDoc?.loan_rate ||
             0;
-        console.log("[INTEREST] Loan rate calculation:", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Loan rate calculation:", {
             fromLastLoan: allActiveLoans.at(-1)?.loan_rate_snapshot,
             fromGroup: groupDoc?.loan_rate,
             finalLoanRate: loanRate,
@@ -2054,7 +2036,7 @@ const calculateDemandDetails = async (
         });
 
         const overdueInterest = member?.loanDetails?.overdueInterest || 0;
-        console.log("[INTEREST] Overdue interest from member:", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Overdue interest from member:", {
             overdueInterest,
             memberLoanDetails: member?.loanDetails
         });
@@ -2067,7 +2049,7 @@ const calculateDemandDetails = async (
             meetingSequence,
             excludeRecoveryId
         );
-        console.log("[INTEREST] Interest paid (cumulative):", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Interest paid (cumulative):", {
             interestPaid,
             groupId,
             memberId,
@@ -2080,7 +2062,7 @@ const calculateDemandDetails = async (
             0,
             overdueInterest - interestPaid
         );
-        console.log("[INTEREST] Remaining overdue interest:", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Remaining overdue interest:", {
             overdueInterest,
             interestPaid,
             remainingOverdueInterest,
@@ -2095,7 +2077,7 @@ const calculateDemandDetails = async (
         if (remainingLoan > 0 && loanRate > 0 && allActiveLoans.length > 0) {
             // First check last recovery: did member pay interest in that recovery?
             const lastRecoveryPaidInterest = (previousData?.interest?.actualPaid || 0) > 0;
-            console.log("[INTEREST] Last recovery check:", {
+            if (DEBUG_INTEREST) console.log("[INTEREST] Last recovery check:", {
                 lastRecoveryPaidInterest,
                 previousInterestPaid: previousData?.interest?.actualPaid,
                 decision: lastRecoveryPaidInterest ? "use meeting-by-meeting" : "use loan date → next meeting only"
@@ -2146,7 +2128,7 @@ const calculateDemandDetails = async (
                         loanId: loan._id.toString(),
                         label: "Loan to next meeting"
                     });
-                    console.log("[INTEREST] Simple path (loan date → next meeting):", {
+                    if (DEBUG_INTEREST) console.log("[INTEREST] Simple path (loan date → next meeting):", {
                         loanId: loan._id,
                         loanDate: loanDate.toISOString(),
                         nextMeetingDate: nextMeetingDate.toISOString(),
@@ -2156,398 +2138,398 @@ const calculateDemandDetails = async (
                 }
                 // Include overdue interest (one-time for existing members who had loan before system)
                 // remainingOverdueInterest already set above from member.loanDetails.overdueInterest - interestPaid
-                console.log("[INTEREST] Simple path total newInterestDemand:", newInterestDemand, "remainingOverdueInterest:", remainingOverdueInterest);
+                if (DEBUG_INTEREST) console.log("[INTEREST] Simple path total newInterestDemand:", newInterestDemand, "remainingOverdueInterest:", remainingOverdueInterest);
             } else {
-            // Get all recovery sessions to track which meetings have been paid
-            const allRecoveries = await RecoveryMaster.find({ groupId })
-                .sort({ date: 1, meetingSequence: 1 })
-                .lean();
+                // Get all recovery sessions to track which meetings have been paid
+                const allRecoveries = await RecoveryMaster.find({ groupId })
+                    .sort({ date: 1, meetingSequence: 1 })
+                    .lean();
 
-            const memberIdStr = memberId?.toString() || String(memberId);
-            const paidMeetings = new Set(); // Track paid meetings as "date-sequence" strings
+                const memberIdStr = memberId?.toString() || String(memberId);
+                const paidMeetings = new Set(); // Track paid meetings as "date-sequence" strings
 
-            for (const recovery of allRecoveries) {
-                const recoveryAdjustedDate = getAdjustedDateForCalculation(
-                    recovery.date,
-                    groupDoc,
-                    recovery.meetingSequence || 1
-                );
-                const recoverySeq = recovery.meetingSequence || 1;
+                for (const recovery of allRecoveries) {
+                    const recoveryAdjustedDate = getAdjustedDateForCalculation(
+                        recovery.date,
+                        groupDoc,
+                        recovery.meetingSequence || 1
+                    );
+                    const recoverySeq = recovery.meetingSequence || 1;
 
-                // Check if this recovery is before current date
-                const recoveryOriginalDate = new Date(recovery.date);
-                recoveryOriginalDate.setHours(0, 0, 0, 0);
-                const currentOriginalDate = new Date(parsedCurrentDate);
-                currentOriginalDate.setHours(0, 0, 0, 0);
+                    // Check if this recovery is before current date
+                    const recoveryOriginalDate = new Date(recovery.date);
+                    recoveryOriginalDate.setHours(0, 0, 0, 0);
+                    const currentOriginalDate = new Date(parsedCurrentDate);
+                    currentOriginalDate.setHours(0, 0, 0, 0);
 
-                const recoveryDateMs = recoveryAdjustedDate.getTime();
-                const currentDateMs = adjustedCurrentDate.getTime();
-                const recoveryOriginalMs = recoveryOriginalDate.getTime();
-                const currentOriginalMs = currentOriginalDate.getTime();
+                    const recoveryDateMs = recoveryAdjustedDate.getTime();
+                    const currentDateMs = adjustedCurrentDate.getTime();
+                    const recoveryOriginalMs = recoveryOriginalDate.getTime();
+                    const currentOriginalMs = currentOriginalDate.getTime();
 
-                const isBeforeCurrent = recoveryOriginalMs < currentOriginalMs ||
-                    (recoveryOriginalMs === currentOriginalMs && recoveryDateMs < currentDateMs) ||
-                    (recoveryOriginalMs === currentOriginalMs && recoveryDateMs === currentDateMs && recoverySeq < meetingSequence);
+                    const isBeforeCurrent = recoveryOriginalMs < currentOriginalMs ||
+                        (recoveryOriginalMs === currentOriginalMs && recoveryDateMs < currentDateMs) ||
+                        (recoveryOriginalMs === currentOriginalMs && recoveryDateMs === currentDateMs && recoverySeq < meetingSequence);
 
-                if (!isBeforeCurrent) continue;
+                    if (!isBeforeCurrent) continue;
 
-                const memberRecovery = recovery.recoveries?.find(r => {
-                    const rMemberIdStr = String(r.memberId || '');
-                    return rMemberIdStr === memberIdStr;
+                    const memberRecovery = recovery.recoveries?.find(r => {
+                        const rMemberIdStr = String(r.memberId || '');
+                        return rMemberIdStr === memberIdStr;
+                    });
+
+                    if (!memberRecovery) continue;
+
+                    const isValidRecovery = memberRecovery.attendance === 'present' ||
+                        (memberRecovery.attendance === 'absent' && memberRecovery.recoveryByOther === true);
+
+                    if (!isValidRecovery) continue;
+
+                    // Mark this meeting as paid (use helper so check logic uses same key)
+                    const meetingKey = getMeetingKey(recovery.date, recoverySeq, groupDoc);
+                    paidMeetings.add(meetingKey);
+                }
+
+                if (DEBUG_INTEREST) console.log("[INTEREST] Paid meetings:", {
+                    paidMeetingsCount: paidMeetings.size,
+                    paidMeetings: Array.from(paidMeetings)
                 });
 
-                if (!memberRecovery) continue;
+                // Current month meeting dates (used in STEP 2 to avoid duplicate debug, and in STEP 3 for period start)
+                const currentMonthDates = getCurrentMonthMeetingDates(parsedCurrentDate, groupDoc);
 
-                const isValidRecovery = memberRecovery.attendance === 'present' ||
-                    (memberRecovery.attendance === 'absent' && memberRecovery.recoveryByOther === true);
+                // Calculate interest for each loan separately
+                const totalLoans = allActiveLoans.length;
+                for (let loanIndex = 0; loanIndex < totalLoans; loanIndex++) {
+                    const loan = allActiveLoans[loanIndex];
+                    const isLastLoan = loanIndex === totalLoans - 1;
+                    // Use UTC calendar components so stored date (e.g. 2026-03-08T00:00:00.000Z) gives correct day regardless of server timezone
+                    const loanDateRaw = new Date(loan.date);
+                    const ly = loanDateRaw.getUTCFullYear(), lm = loanDateRaw.getUTCMonth(), ld = loanDateRaw.getUTCDate();
+                    let loanDate = new Date(ly, lm, ld);
+                    loanDate.setHours(0, 0, 0, 0);
+                    const loanAmount = loan.amount || 0;
+                    const loanSpecificRate = loan.loan_rate_snapshot || loanRate;
 
-                if (!isValidRecovery) continue;
+                    if (loanAmount <= 0 || loanSpecificRate <= 0) {
+                        if (DEBUG_INTEREST) console.log("[INTEREST] Skipping loan:", {
+                            loanId: loan._id,
+                            loanAmount,
+                            loanSpecificRate,
+                            reason: loanAmount <= 0 ? "Zero amount" : "Zero rate"
+                        });
+                        continue;
+                    }
 
-                // Mark this meeting as paid (use helper so check logic uses same key)
-                const meetingKey = getMeetingKey(recovery.date, recoverySeq, groupDoc);
-                paidMeetings.add(meetingKey);
-            }
-
-            console.log("[INTEREST] Paid meetings:", {
-                paidMeetingsCount: paidMeetings.size,
-                paidMeetings: Array.from(paidMeetings)
-            });
-
-            // Current month meeting dates (used in STEP 2 to avoid duplicate debug, and in STEP 3 for period start)
-            const currentMonthDates = getCurrentMonthMeetingDates(parsedCurrentDate, groupDoc);
-
-            // Calculate interest for each loan separately
-            const totalLoans = allActiveLoans.length;
-            for (let loanIndex = 0; loanIndex < totalLoans; loanIndex++) {
-                const loan = allActiveLoans[loanIndex];
-                const isLastLoan = loanIndex === totalLoans - 1;
-                // Use UTC calendar components so stored date (e.g. 2026-03-08T00:00:00.000Z) gives correct day regardless of server timezone
-                const loanDateRaw = new Date(loan.date);
-                const ly = loanDateRaw.getUTCFullYear(), lm = loanDateRaw.getUTCMonth(), ld = loanDateRaw.getUTCDate();
-                let loanDate = new Date(ly, lm, ld);
-                loanDate.setHours(0, 0, 0, 0);
-                const loanAmount = loan.amount || 0;
-                const loanSpecificRate = loan.loan_rate_snapshot || loanRate;
-
-                if (loanAmount <= 0 || loanSpecificRate <= 0) {
-                    console.log("[INTEREST] Skipping loan:", {
+                    if (DEBUG_INTEREST) console.log("[INTEREST] Processing loan:", {
                         loanId: loan._id,
                         loanAmount,
-                        loanSpecificRate,
-                        reason: loanAmount <= 0 ? "Zero amount" : "Zero rate"
+                        loanDate: loanDate.toISOString(),
+                        loanRate: loanSpecificRate
                     });
-                    continue;
-                }
 
-                console.log("[INTEREST] Processing loan:", {
-                    loanId: loan._id,
-                    loanAmount,
-                    loanDate: loanDate.toISOString(),
-                    loanRate: loanSpecificRate
-                });
+                    // Calculate how much of this specific loan has been paid
+                    // We need to track loan payments and allocate them to loans in order
+                    // For simplicity, we'll calculate remaining principal for this loan
+                    // by checking if loan payments exceed the sum of previous loans
 
-                // Calculate how much of this specific loan has been paid
-                // We need to track loan payments and allocate them to loans in order
-                // For simplicity, we'll calculate remaining principal for this loan
-                // by checking if loan payments exceed the sum of previous loans
+                    // Get cumulative loan payments up to current date
+                    const totalLoanPaidUpToNow = await getCumulativePayments(
+                        groupId,
+                        memberId,
+                        currentDate,
+                        "loan",
+                        meetingSequence,
+                        excludeRecoveryId
+                    );
+                    const totalLoanPaidIncludingMember = memberLoanPaid + totalLoanPaidUpToNow;
 
-                // Get cumulative loan payments up to current date
-                const totalLoanPaidUpToNow = await getCumulativePayments(
-                    groupId,
-                    memberId,
-                    currentDate,
-                    "loan",
-                    meetingSequence,
-                    excludeRecoveryId
-                );
-                const totalLoanPaidIncludingMember = memberLoanPaid + totalLoanPaidUpToNow;
+                    // Calculate which loans are fully paid
+                    let loansBeforeThis = 0;
+                    let loansPaidBeforeThis = 0;
+                    for (const l of allActiveLoans) {
+                        if (l._id.toString() === loan._id.toString()) break;
+                        loansBeforeThis += (l.amount || 0);
+                        loansPaidBeforeThis += (l.amount || 0);
+                    }
 
-                // Calculate which loans are fully paid
-                let loansBeforeThis = 0;
-                let loansPaidBeforeThis = 0;
-                for (const l of allActiveLoans) {
-                    if (l._id.toString() === loan._id.toString()) break;
-                    loansBeforeThis += (l.amount || 0);
-                    loansPaidBeforeThis += (l.amount || 0);
-                }
+                    // Calculate remaining principal for this specific loan
+                    const paidForPreviousLoans = Math.min(totalLoanPaidIncludingMember, loansBeforeThis);
+                    const paidForThisLoan = Math.max(0, Math.min(
+                        totalLoanPaidIncludingMember - paidForPreviousLoans,
+                        loanAmount
+                    ));
+                    const remainingPrincipalForThisLoan = Math.max(0, loanAmount - paidForThisLoan);
 
-                // Calculate remaining principal for this specific loan
-                const paidForPreviousLoans = Math.min(totalLoanPaidIncludingMember, loansBeforeThis);
-                const paidForThisLoan = Math.max(0, Math.min(
-                    totalLoanPaidIncludingMember - paidForPreviousLoans,
-                    loanAmount
-                ));
-                const remainingPrincipalForThisLoan = Math.max(0, loanAmount - paidForThisLoan);
-
-                console.log("[INTEREST] Loan principal calculation:", {
-                    loanId: loan._id,
-                    loanAmount,
-                    totalLoanPaidIncludingMember,
-                    loansBeforeThis,
-                    paidForPreviousLoans,
-                    paidForThisLoan,
-                    remainingPrincipalForThisLoan
-                });
-
-                if (remainingPrincipalForThisLoan <= 0) {
-                    console.log("[INTEREST] Loan fully paid, skipping:", {
+                    if (DEBUG_INTEREST) console.log("[INTEREST] Loan principal calculation:", {
                         loanId: loan._id,
+                        loanAmount,
+                        totalLoanPaidIncludingMember,
+                        loansBeforeThis,
+                        paidForPreviousLoans,
+                        paidForThisLoan,
                         remainingPrincipalForThisLoan
                     });
-                    continue;
-                }
 
-                // Get all meeting dates from this loan's date to current date
-                const allMeetings = getAllMeetingDates(loanDate, parsedCurrentDate, groupDoc);
-                console.log("[INTEREST] Meetings for this loan:", {
-                    loanId: loan._id,
-                    loanDate: loanDate.toISOString(),
-                    totalMeetings: allMeetings.length
-                });
-
-                // STEP 1: Calculate interest from loan date to first meeting date (if applicable)
-                if (allMeetings.length > 0 && groupDoc.meeting_date_1_day) {
-                    const firstMeeting = allMeetings.find(m => m.sequence === 1);
-                    if (firstMeeting && firstMeeting.date > loanDate) {
-                        // Loan was given before first meeting, calculate interest for this period
-                        const firstMeetingDate = new Date(firstMeeting.date);
-                        firstMeetingDate.setHours(0, 0, 0, 0);
-
-                        // Principal at loan date is the full loan amount (no payments yet)
-                        const principalAtLoanDate = loanAmount;
-
-                        // Check if this period was paid (check if first meeting was paid)
-                        const firstMeetingKey = getMeetingKey(firstMeeting.date, firstMeeting.sequence, groupDoc);
-                        const isFirstPeriodPaid = paidMeetings.has(firstMeetingKey);
-
-                        const loanToFirstMeetingInterest = calculateInterestForPeriod(
-                            principalAtLoanDate,
-                            loanSpecificRate,
-                            loanDate,
-                            firstMeetingDate,
-                            interestDayDebug
-                        );
-
-                        console.log("[INTEREST] Loan to first meeting period:", {
+                    if (remainingPrincipalForThisLoan <= 0) {
+                        if (DEBUG_INTEREST) console.log("[INTEREST] Loan fully paid, skipping:", {
                             loanId: loan._id,
-                            loanDate: loanDate.toISOString(),
-                            firstMeetingDate: firstMeetingDate.toISOString(),
-                            principalAtLoanDate,
-                            rate: loanSpecificRate,
-                            periodInterest: loanToFirstMeetingInterest,
-                            isPaid: isFirstPeriodPaid
+                            remainingPrincipalForThisLoan
                         });
-
-                        if (!isFirstPeriodPaid) {
-                            unpaidInterestFromPreviousMeetings += loanToFirstMeetingInterest;
-                            interestMissingPeriods.push({
-                                periodStart: loanDate.toISOString(),
-                                periodEnd: firstMeetingDate.toISOString(),
-                                interest: loanToFirstMeetingInterest,
-                                loanId: loan._id.toString(),
-                                label: "Loan to first meeting"
-                            });
-                            console.log("[INTEREST] Adding unpaid interest from loan to first meeting:", {
-                                loanId: loan._id,
-                                periodInterest: loanToFirstMeetingInterest,
-                                totalUnpaidSoFar: unpaidInterestFromPreviousMeetings
-                            });
-                        }
+                        continue;
                     }
-                }
 
-                // STEP 2: Calculate interest for each meeting period (meeting 1 to meeting 2) for this loan
-                for (let i = 0; i < allMeetings.length; i++) {
-                    const currentMeeting = allMeetings[i];
-                    const meetingKey = getMeetingKey(currentMeeting.date, currentMeeting.sequence, groupDoc);
-                    const isPaid = paidMeetings.has(meetingKey);
+                    // Get all meeting dates from this loan's date to current date
+                    const allMeetings = getAllMeetingDates(loanDate, parsedCurrentDate, groupDoc);
+                    if (DEBUG_INTEREST) console.log("[INTEREST] Meetings for this loan:", {
+                        loanId: loan._id,
+                        loanDate: loanDate.toISOString(),
+                        totalMeetings: allMeetings.length
+                    });
 
-                    // If this is meeting 2, calculate interest for the period from meeting 1 to meeting 2
-                    if (currentMeeting.sequence === 2) {
-                        // Find the corresponding meeting 1
-                        // If meeting 2 day is less than meeting 1 day, meeting 1 is in previous month
-                        const meeting1Date = new Date(currentMeeting.date);
-                        if (groupDoc.meeting_date_2_day < groupDoc.meeting_date_1_day) {
-                            // Meeting 1 is in the previous month
-                            meeting1Date.setMonth(meeting1Date.getMonth() - 1);
-                        }
-                        meeting1Date.setDate(groupDoc.meeting_date_1_day || 1);
-                        meeting1Date.setHours(0, 0, 0, 0);
+                    // STEP 1: Calculate interest from loan date to first meeting date (if applicable)
+                    if (allMeetings.length > 0 && groupDoc.meeting_date_1_day) {
+                        const firstMeeting = allMeetings.find(m => m.sequence === 1);
+                        if (firstMeeting && firstMeeting.date > loanDate) {
+                            // Loan was given before first meeting, calculate interest for this period
+                            const firstMeetingDate = new Date(firstMeeting.date);
+                            firstMeetingDate.setHours(0, 0, 0, 0);
 
-                        // Don't push to debug for current month period; STEP 3 will add the correct periodStartDate (e.g. loan-given-today = 08/03)
-                        const isCurrentMonthPeriod = currentMonthDates &&
-                            meeting1Date.getTime() === currentMonthDates.meeting1.getTime() &&
-                            currentMeeting.date.getTime() === currentMonthDates.meeting2.getTime();
-                        const debugCollectorStep2 = isCurrentMonthPeriod ? null : interestDayDebug;
+                            // Principal at loan date is the full loan amount (no payments yet)
+                            const principalAtLoanDate = loanAmount;
 
-                        // Calculate principal for this loan at meeting 1
-                        const loanPaidUpToMeeting1 = await getCumulativePayments(
-                            groupId,
-                            memberId,
-                            meeting1Date,
-                            "loan",
-                            1,
-                            null
-                        );
-                        const totalPaidUpToMeeting1 = memberLoanPaid + loanPaidUpToMeeting1;
-                        const paidForThisLoanAtMeeting1 = Math.max(0, Math.min(
-                            totalPaidUpToMeeting1 - Math.min(totalPaidUpToMeeting1, loansBeforeThis),
-                            loanAmount
-                        ));
-                        const principalAtMeeting1 = Math.max(0, loanAmount - paidForThisLoanAtMeeting1);
+                            // Check if this period was paid (check if first meeting was paid)
+                            const firstMeetingKey = getMeetingKey(firstMeeting.date, firstMeeting.sequence, groupDoc);
+                            const isFirstPeriodPaid = paidMeetings.has(firstMeetingKey);
 
-                        // Only calculate if this loan existed at meeting 1
-                        if (meeting1Date >= loanDate && principalAtMeeting1 > 0) {
-                            const periodInterest = calculateInterestForPeriod(
-                                principalAtMeeting1,
+                            const loanToFirstMeetingInterest = calculateInterestForPeriod(
+                                principalAtLoanDate,
                                 loanSpecificRate,
-                                meeting1Date,
-                                currentMeeting.date,
-                                debugCollectorStep2
+                                loanDate,
+                                firstMeetingDate,
+                                interestDayDebug
                             );
 
-                            console.log("[INTEREST] Loan meeting period calculation:", {
+                            if (DEBUG_INTEREST) console.log("[INTEREST] Loan to first meeting period:", {
                                 loanId: loan._id,
-                                meeting1Date: meeting1Date.toISOString(),
-                                meeting2Date: currentMeeting.date.toISOString(),
-                                principalAtMeeting1,
+                                loanDate: loanDate.toISOString(),
+                                firstMeetingDate: firstMeetingDate.toISOString(),
+                                principalAtLoanDate,
                                 rate: loanSpecificRate,
-                                periodInterest,
-                                isPaid
+                                periodInterest: loanToFirstMeetingInterest,
+                                isPaid: isFirstPeriodPaid
                             });
 
-                            if (!isPaid) {
-                                unpaidInterestFromPreviousMeetings += periodInterest;
+                            if (!isFirstPeriodPaid) {
+                                unpaidInterestFromPreviousMeetings += loanToFirstMeetingInterest;
                                 interestMissingPeriods.push({
-                                    periodStart: meeting1Date.toISOString(),
-                                    periodEnd: currentMeeting.date.toISOString(),
-                                    interest: periodInterest,
+                                    periodStart: loanDate.toISOString(),
+                                    periodEnd: firstMeetingDate.toISOString(),
+                                    interest: loanToFirstMeetingInterest,
                                     loanId: loan._id.toString(),
-                                    label: "Meeting 1 to Meeting 2"
+                                    label: "Loan to first meeting"
                                 });
-                                console.log("[INTEREST] Adding unpaid interest from loan meeting period:", {
+                                if (DEBUG_INTEREST) console.log("[INTEREST] Adding unpaid interest from loan to first meeting:", {
                                     loanId: loan._id,
-                                    periodInterest,
+                                    periodInterest: loanToFirstMeetingInterest,
                                     totalUnpaidSoFar: unpaidInterestFromPreviousMeetings
                                 });
                             }
                         }
                     }
-                }
-                //-------------------------------------------------------------------this is the interest logic-----------------------------------------
-                // STEP 3: Current period = from (meeting 1 or loan/created date if loan is after meeting 1) to next meeting (meeting 2)
-                if (currentMonthDates) {
-                    const { meeting1: currentMonthMeeting1, meeting2: currentMonthMeeting2 } = currentMonthDates;
-                    // Use the later of loan.date and createdAt; if request date is in current period (after meeting 1, on/before meeting 2), use "today" when loan was given today or is last loan with date on/before meeting 1
-                    let effectiveLoanDate = loanDate;
-                    if (loan.createdAt) {
-                        const createdAtRaw = new Date(loan.createdAt);
-                        const createdAtOnly = new Date(createdAtRaw.getFullYear(), createdAtRaw.getMonth(), createdAtRaw.getDate());
-                        createdAtOnly.setHours(0, 0, 0, 0);
-                        if (createdAtOnly > loanDate) {
-                            effectiveLoanDate = createdAtOnly;
-                        }
-                    }
-                    const inCurrentPeriod = parsedCurrentDate > currentMonthMeeting1 && parsedCurrentDate <= currentMonthMeeting2;
-                    const todayOnly = new Date(parsedCurrentDate.getFullYear(), parsedCurrentDate.getMonth(), parsedCurrentDate.getDate());
-                    todayOnly.setHours(0, 0, 0, 0);
-                    let loanCreatedToday = false;
-                    if (loan.createdAt) {
-                        const created = new Date(loan.createdAt);
-                        const createdOnly = new Date(created.getFullYear(), created.getMonth(), created.getDate());
-                        createdOnly.setHours(0, 0, 0, 0);
-                        loanCreatedToday = createdOnly.getTime() === todayOnly.getTime();
-                    }
-                    if (inCurrentPeriod && (loanCreatedToday || (isLastLoan && loanDate <= currentMonthMeeting1))) {
-                        effectiveLoanDate = todayOnly;
-                    }
-                    // Loan must be before or on next meeting to have current-period interest
-                    if (effectiveLoanDate <= currentMonthMeeting2) {
-                        let periodStartDate = currentMonthMeeting1;
-                        let principalForPeriod = 0;
 
-                        if (effectiveLoanDate > currentMonthMeeting1) {
-                            // Loan was given after meeting 1 (e.g. 8th): start from effective date so table shows 08/03 not 02/03, use full loan amount
-                            periodStartDate = new Date(effectiveLoanDate.getFullYear(), effectiveLoanDate.getMonth(), effectiveLoanDate.getDate());
-                            periodStartDate.setHours(0, 0, 0, 0);
-                            principalForPeriod = loanAmount;
-                        } else {
-                            // Loan existed at meeting 1: use principal at meeting 1
+                    // STEP 2: Calculate interest for each meeting period (meeting 1 to meeting 2) for this loan
+                    for (let i = 0; i < allMeetings.length; i++) {
+                        const currentMeeting = allMeetings[i];
+                        const meetingKey = getMeetingKey(currentMeeting.date, currentMeeting.sequence, groupDoc);
+                        const isPaid = paidMeetings.has(meetingKey);
+
+                        // If this is meeting 2, calculate interest for the period from meeting 1 to meeting 2
+                        if (currentMeeting.sequence === 2) {
+                            // Find the corresponding meeting 1
+                            // If meeting 2 day is less than meeting 1 day, meeting 1 is in previous month
+                            const meeting1Date = new Date(currentMeeting.date);
+                            if (groupDoc.meeting_date_2_day < groupDoc.meeting_date_1_day) {
+                                // Meeting 1 is in the previous month
+                                meeting1Date.setMonth(meeting1Date.getMonth() - 1);
+                            }
+                            meeting1Date.setDate(groupDoc.meeting_date_1_day || 1);
+                            meeting1Date.setHours(0, 0, 0, 0);
+
+                            // Don't push to debug for current month period; STEP 3 will add the correct periodStartDate (e.g. loan-given-today = 08/03)
+                            const isCurrentMonthPeriod = currentMonthDates &&
+                                meeting1Date.getTime() === currentMonthDates.meeting1.getTime() &&
+                                currentMeeting.date.getTime() === currentMonthDates.meeting2.getTime();
+                            const debugCollectorStep2 = isCurrentMonthPeriod ? null : interestDayDebug;
+
+                            // Calculate principal for this loan at meeting 1
                             const loanPaidUpToMeeting1 = await getCumulativePayments(
                                 groupId,
                                 memberId,
-                                currentMonthMeeting1,
+                                meeting1Date,
                                 "loan",
                                 1,
-                                excludeRecoveryId
+                                null
                             );
                             const totalPaidUpToMeeting1 = memberLoanPaid + loanPaidUpToMeeting1;
                             const paidForThisLoanAtMeeting1 = Math.max(0, Math.min(
                                 totalPaidUpToMeeting1 - Math.min(totalPaidUpToMeeting1, loansBeforeThis),
                                 loanAmount
                             ));
-                            principalForPeriod = Math.max(0, loanAmount - paidForThisLoanAtMeeting1);
-                        }
+                            const principalAtMeeting1 = Math.max(0, loanAmount - paidForThisLoanAtMeeting1);
 
-                        if (principalForPeriod > 0 && periodStartDate < currentMonthMeeting2) {
-                            const currentMeeting2Key = getMeetingKey(currentMonthMeeting2, 2, groupDoc);
-                            const isMeeting2Paid = paidMeetings.has(currentMeeting2Key);
+                            // Only calculate if this loan existed at meeting 1
+                            if (meeting1Date >= loanDate && principalAtMeeting1 > 0) {
+                                const periodInterest = calculateInterestForPeriod(
+                                    principalAtMeeting1,
+                                    loanSpecificRate,
+                                    meeting1Date,
+                                    currentMeeting.date,
+                                    debugCollectorStep2
+                                );
 
-                            // Interest: period start (meeting 1 or loan date) → next meeting (meeting 2)
-                            const fullPeriodInterest = calculateInterestForPeriod(
-                                principalForPeriod,
-                                loanSpecificRate,
-                                periodStartDate,
-                                currentMonthMeeting2,
-                                interestDayDebug
-                            );
-
-                            console.log("[INTEREST] Loan current period:", {
-                                loanId: loan._id,
-                                periodStartDate: periodStartDate.toISOString(),
-                                nextMeetingDate: currentMonthMeeting2.toISOString(),
-                                loanDate: loanDate.toISOString(),
-                                principalForPeriod,
-                                rate: loanSpecificRate,
-                                fullPeriodInterest,
-                                isMeeting2Paid
-                            });
-
-                            const isPeriodStarted = parsedCurrentDate >= periodStartDate;
-                            if (isPeriodStarted && !isMeeting2Paid) {
-                                newInterestDemand += fullPeriodInterest;
-                                interestMissingPeriods.push({
-                                    periodStart: periodStartDate.toISOString(),
-                                    periodEnd: currentMonthMeeting2.toISOString(),
-                                    interest: fullPeriodInterest,
-                                    loanId: loan._id.toString(),
-                                    label: "Current period"
-                                });
-                                console.log("[INTEREST] Adding current period interest to demand:", {
+                                if (DEBUG_INTEREST) console.log("[INTEREST] Loan meeting period calculation:", {
                                     loanId: loan._id,
-                                    fullPeriodInterest,
-                                    totalNewInterestSoFar: newInterestDemand
+                                    meeting1Date: meeting1Date.toISOString(),
+                                    meeting2Date: currentMeeting.date.toISOString(),
+                                    principalAtMeeting1,
+                                    rate: loanSpecificRate,
+                                    periodInterest,
+                                    isPaid
                                 });
-                            } else if (!isPeriodStarted) {
-                                console.log("[INTEREST] Period not yet started:", { loanId: loan._id });
+
+                                if (!isPaid) {
+                                    unpaidInterestFromPreviousMeetings += periodInterest;
+                                    interestMissingPeriods.push({
+                                        periodStart: meeting1Date.toISOString(),
+                                        periodEnd: currentMeeting.date.toISOString(),
+                                        interest: periodInterest,
+                                        loanId: loan._id.toString(),
+                                        label: "Meeting 1 to Meeting 2"
+                                    });
+                                    if (DEBUG_INTEREST) console.log("[INTEREST] Adding unpaid interest from loan meeting period:", {
+                                        loanId: loan._id,
+                                        periodInterest,
+                                        totalUnpaidSoFar: unpaidInterestFromPreviousMeetings
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    //-------------------------------------------------------------------this is the interest logic-----------------------------------------
+                    // STEP 3: Current period = from (meeting 1 or loan/created date if loan is after meeting 1) to next meeting (meeting 2)
+                    if (currentMonthDates) {
+                        const { meeting1: currentMonthMeeting1, meeting2: currentMonthMeeting2 } = currentMonthDates;
+                        // Use the later of loan.date and createdAt; if request date is in current period (after meeting 1, on/before meeting 2), use "today" when loan was given today or is last loan with date on/before meeting 1
+                        let effectiveLoanDate = loanDate;
+                        if (loan.createdAt) {
+                            const createdAtRaw = new Date(loan.createdAt);
+                            const createdAtOnly = new Date(createdAtRaw.getFullYear(), createdAtRaw.getMonth(), createdAtRaw.getDate());
+                            createdAtOnly.setHours(0, 0, 0, 0);
+                            if (createdAtOnly > loanDate) {
+                                effectiveLoanDate = createdAtOnly;
+                            }
+                        }
+                        const inCurrentPeriod = parsedCurrentDate > currentMonthMeeting1 && parsedCurrentDate <= currentMonthMeeting2;
+                        const todayOnly = new Date(parsedCurrentDate.getFullYear(), parsedCurrentDate.getMonth(), parsedCurrentDate.getDate());
+                        todayOnly.setHours(0, 0, 0, 0);
+                        let loanCreatedToday = false;
+                        if (loan.createdAt) {
+                            const created = new Date(loan.createdAt);
+                            const createdOnly = new Date(created.getFullYear(), created.getMonth(), created.getDate());
+                            createdOnly.setHours(0, 0, 0, 0);
+                            loanCreatedToday = createdOnly.getTime() === todayOnly.getTime();
+                        }
+                        if (inCurrentPeriod && (loanCreatedToday || (isLastLoan && loanDate <= currentMonthMeeting1))) {
+                            effectiveLoanDate = todayOnly;
+                        }
+                        // Loan must be before or on next meeting to have current-period interest
+                        if (effectiveLoanDate <= currentMonthMeeting2) {
+                            let periodStartDate = currentMonthMeeting1;
+                            let principalForPeriod = 0;
+
+                            if (effectiveLoanDate > currentMonthMeeting1) {
+                                // Loan was given after meeting 1 (e.g. 8th): start from effective date so table shows 08/03 not 02/03, use full loan amount
+                                periodStartDate = new Date(effectiveLoanDate.getFullYear(), effectiveLoanDate.getMonth(), effectiveLoanDate.getDate());
+                                periodStartDate.setHours(0, 0, 0, 0);
+                                principalForPeriod = loanAmount;
                             } else {
-                                console.log("[INTEREST] Meeting 2 already paid, not adding current period:", { loanId: loan._id });
+                                // Loan existed at meeting 1: use principal at meeting 1
+                                const loanPaidUpToMeeting1 = await getCumulativePayments(
+                                    groupId,
+                                    memberId,
+                                    currentMonthMeeting1,
+                                    "loan",
+                                    1,
+                                    excludeRecoveryId
+                                );
+                                const totalPaidUpToMeeting1 = memberLoanPaid + loanPaidUpToMeeting1;
+                                const paidForThisLoanAtMeeting1 = Math.max(0, Math.min(
+                                    totalPaidUpToMeeting1 - Math.min(totalPaidUpToMeeting1, loansBeforeThis),
+                                    loanAmount
+                                ));
+                                principalForPeriod = Math.max(0, loanAmount - paidForThisLoanAtMeeting1);
+                            }
+
+                            if (principalForPeriod > 0 && periodStartDate < currentMonthMeeting2) {
+                                const currentMeeting2Key = getMeetingKey(currentMonthMeeting2, 2, groupDoc);
+                                const isMeeting2Paid = paidMeetings.has(currentMeeting2Key);
+
+                                // Interest: period start (meeting 1 or loan date) → next meeting (meeting 2)
+                                const fullPeriodInterest = calculateInterestForPeriod(
+                                    principalForPeriod,
+                                    loanSpecificRate,
+                                    periodStartDate,
+                                    currentMonthMeeting2,
+                                    interestDayDebug
+                                );
+
+                                if (DEBUG_INTEREST) console.log("[INTEREST] Loan current period:", {
+                                    loanId: loan._id,
+                                    periodStartDate: periodStartDate.toISOString(),
+                                    nextMeetingDate: currentMonthMeeting2.toISOString(),
+                                    loanDate: loanDate.toISOString(),
+                                    principalForPeriod,
+                                    rate: loanSpecificRate,
+                                    fullPeriodInterest,
+                                    isMeeting2Paid
+                                });
+
+                                const isPeriodStarted = parsedCurrentDate >= periodStartDate;
+                                if (isPeriodStarted && !isMeeting2Paid) {
+                                    newInterestDemand += fullPeriodInterest;
+                                    interestMissingPeriods.push({
+                                        periodStart: periodStartDate.toISOString(),
+                                        periodEnd: currentMonthMeeting2.toISOString(),
+                                        interest: fullPeriodInterest,
+                                        loanId: loan._id.toString(),
+                                        label: "Current period"
+                                    });
+                                    if (DEBUG_INTEREST) console.log("[INTEREST] Adding current period interest to demand:", {
+                                        loanId: loan._id,
+                                        fullPeriodInterest,
+                                        totalNewInterestSoFar: newInterestDemand
+                                    });
+                                } else if (!isPeriodStarted) {
+                                    if (DEBUG_INTEREST) console.log("[INTEREST] Period not yet started:", { loanId: loan._id });
+                                } else {
+                                    if (DEBUG_INTEREST) console.log("[INTEREST] Meeting 2 already paid, not adding current period:", { loanId: loan._id });
+                                }
                             }
                         }
                     }
                 }
-            }
-            //------------------------------------------------------------------------------------------------------------
+                //------------------------------------------------------------------------------------------------------------
 
-            console.log("[INTEREST] Final interest calculation summary (all loans):", {
-                unpaidInterestFromPreviousMeetings,
-                newInterestDemand,
-                remainingLoan,
-                totalInterestDemand: unpaidInterestFromPreviousMeetings + newInterestDemand
-            });
+                if (DEBUG_INTEREST) console.log("[INTEREST] Final interest calculation summary (all loans):", {
+                    unpaidInterestFromPreviousMeetings,
+                    newInterestDemand,
+                    remainingLoan,
+                    totalInterestDemand: unpaidInterestFromPreviousMeetings + newInterestDemand
+                });
             }
         } else {
-            console.log("[INTEREST] Interest calculation skipped:", {
+            if (DEBUG_INTEREST) console.log("[INTEREST] Interest calculation skipped:", {
                 remainingLoan,
                 loanRate,
                 allActiveLoansCount: allActiveLoans.length,
@@ -2558,7 +2540,7 @@ const calculateDemandDetails = async (
         // Current interest demand = overdue + unpaid from previous meetings + new period interest (all included)
         const interestCurrDemand =
             remainingOverdueInterest + unpaidInterestFromPreviousMeetings + newInterestDemand;
-        console.log("[INTEREST] Current demand decision:", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Current demand decision:", {
             remainingOverdueInterest,
             unpaidInterestFromPreviousMeetings,
             newInterestDemand,
@@ -2568,14 +2550,14 @@ const calculateDemandDetails = async (
 
         const interestPrevDemand =
             previousData.interest.unpaidDemand || 0;
-        console.log("[INTEREST] Previous demand:", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Previous demand:", {
             interestPrevDemand,
             previousDataInterest: previousData.interest
         });
 
         const interestTotalDemand =
             interestPrevDemand + interestCurrDemand;
-        console.log("[INTEREST] Total demand calculation:", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Total demand calculation:", {
             interestPrevDemand,
             interestCurrDemand,
             interestTotalDemand,
@@ -2586,7 +2568,7 @@ const calculateDemandDetails = async (
             0,
             interestTotalDemand - actualInterest
         );
-        console.log("[INTEREST] Final interest calculation:", {
+        if (DEBUG_INTEREST) console.log("[INTEREST] Final interest calculation:", {
             overdueInterest,
             interestPaid,
             remainingOverdueInterest,
@@ -2782,86 +2764,108 @@ const calculateDemandDetails = async (
             }
         }
 
-        // ------------------ FINAL RESULT ------------------
+        // ------------------ LOAN ADJUSTMENT (edit terms: credit/deficit from LoanAdjustmentLog) ------------------
+        const memberIdStr = memberId?.toString?.() || String(memberId);
+        const adjustmentLogs = await LoanAdjustmentLog.find({
+            groupId,
+            memberId: memberIdStr,
+        }).lean();
+        let memberCredit = 0;
+        let deficitAmount = 0;
+        for (const log of adjustmentLogs) {
+            memberCredit += Math.max(0, parseFloat(log.memberCredit) || 0);
+            deficitAmount += Math.max(0, parseFloat(log.deficitAmount) || 0);
+        }
+        const loanAdjustment = { memberCredit, deficitAmount };
+
+        // ------------------ FINAL RESULT (all amounts rounded to fixed integers: >= 0.5 rounds up) ------------------
         const demandResult = {
             loan: {
-                prevDemand: loanPrevDemand,
-                currDemand: loanCurrDemand,
-                totalDemand: loanTotalDemand,
-                actualPaid: actualLoan,
-                unpaidDemand: loanUnpaidDemand,
-                openingBalance: totalLoanPaid,
-                closingBalance: totalLoanPaid + actualLoan,
+                prevDemand: roundDemand(loanPrevDemand),
+                currDemand: roundDemand(loanCurrDemand),
+                totalDemand: roundDemand(loanTotalDemand),
+                actualPaid: roundDemand(actualLoan),
+                unpaidDemand: roundDemand(loanUnpaidDemand),
+                openingBalance: roundDemand(totalLoanPaid),
+                closingBalance: roundDemand(totalLoanPaid + actualLoan),
             },
             interest: {
-                prevDemand: interestPrevDemand,
-                currDemand: interestCurrDemand,
-                totalDemand: interestTotalDemand,
-                actualPaid: actualInterest,
-                unpaidDemand: interestUnpaidDemand,
-                openingBalance: interestPaid,
-                closingBalance: interestPaid + actualInterest,
-                // From RecoveryMaster (last recovery): amount only, no start/end date
+                prevDemand: roundDemand(interestPrevDemand),
+                currDemand: roundDemand(interestCurrDemand),
+                totalDemand: roundDemand(interestTotalDemand),
+                actualPaid: roundDemand(actualInterest),
+                unpaidDemand: roundDemand(interestUnpaidDemand),
+                openingBalance: roundDemand(interestPaid),
+                closingBalance: roundDemand(interestPaid + actualInterest),
                 previousUnpaidInterestLabel: "Previous unpaid interest",
-                previousUnpaidInterest: interestPrevDemand,
-                // Unpaid/missing periods (e.g. absent meetings) with period dates and interest for each
-                missingPeriods: interestMissingPeriods,
+                previousUnpaidInterest: roundDemand(interestPrevDemand),
+                missingPeriods: (interestMissingPeriods || []).map((p) => ({ ...p, interest: roundDemand(p.interest) })),
             },
             saving: {
-                prevDemand: savingPrevDemand,
-                currDemand: savingCurrDemand,
-                totalDemand: savingTotalDemand,
-                actualPaid: actualSaving,
-                unpaidDemand: savingUnpaidDemand,
-                openingBalance: totalSavingPaid,
-                closingBalance: totalSavingPaid + actualSaving,
+                prevDemand: roundDemand(savingPrevDemand),
+                currDemand: roundDemand(savingCurrDemand),
+                totalDemand: roundDemand(savingTotalDemand),
+                actualPaid: roundDemand(actualSaving),
+                unpaidDemand: roundDemand(savingUnpaidDemand),
+                openingBalance: roundDemand(totalSavingPaid),
+                closingBalance: roundDemand(totalSavingPaid + actualSaving),
             },
             fd: {
-                actualPaid: actualFd,
-                openingBalance: totalFdPaid,
-                closingBalance: totalFdPaid + actualFd,
+                actualPaid: roundDemand(actualFd),
+                openingBalance: roundDemand(totalFdPaid),
+                closingBalance: roundDemand(totalFdPaid + actualFd),
             },
             yogdan: {
-                prevDemand: yogdanPrevUnpaid,
-                currDemand: yogdanTotalDemand,
-                totalDemand: yogdanTotalDemandWithPrev,
-                actualPaid: actualYogdan,
-                unpaidDemand: yogdanUnpaidDemand,
-                openingBalance: yogdanPaidFromRecoveries,
-                closingBalance: yogdanPaidFromRecoveries + actualYogdan,
+                prevDemand: roundDemand(yogdanPrevUnpaid),
+                currDemand: roundDemand(yogdanTotalDemand),
+                totalDemand: roundDemand(yogdanTotalDemandWithPrev),
+                actualPaid: roundDemand(actualYogdan),
+                unpaidDemand: roundDemand(yogdanUnpaidDemand),
+                openingBalance: roundDemand(yogdanPaidFromRecoveries),
+                closingBalance: roundDemand(yogdanPaidFromRecoveries + actualYogdan),
             },
             memFeesSHG: {
-                prevDemand: memFeesSHGPrevUnpaid,
-                currDemand: memFeesSHGTotalDemand,
-                totalDemand: memFeesSHGPrevUnpaid + memFeesSHGTotalDemand,
-                actualPaid: actualMemFeesSHG,
-                unpaidDemand: memFeesSHGUnpaidDemand,
+                prevDemand: roundDemand(memFeesSHGPrevUnpaid),
+                currDemand: roundDemand(memFeesSHGTotalDemand),
+                totalDemand: roundDemand(memFeesSHGPrevUnpaid + memFeesSHGTotalDemand),
+                actualPaid: roundDemand(actualMemFeesSHG),
+                unpaidDemand: roundDemand(memFeesSHGUnpaidDemand),
             },
             memFeesGroup: {
-                prevDemand: memFeesGroupPrevUnpaid,
-                currDemand: memFeesGroupTotalDemand,
-                totalDemand: memFeesGroupPrevUnpaid + memFeesGroupTotalDemand,
-                actualPaid: actualMemFeesGroup,
-                unpaidDemand: memFeesGroupUnpaidDemand,
+                prevDemand: roundDemand(memFeesGroupPrevUnpaid),
+                currDemand: roundDemand(memFeesGroupTotalDemand),
+                totalDemand: roundDemand(memFeesGroupPrevUnpaid + memFeesGroupTotalDemand),
+                actualPaid: roundDemand(actualMemFeesGroup),
+                unpaidDemand: roundDemand(memFeesGroupUnpaidDemand),
             },
             charges: {
-                chargesDue: chargesDueData,
-                chargesTotalDemand,
-                chargesPrevUnpaid,
-                chargesPrevUnpaidTotal,
-                actualPaid: actualCharges,
-                actualPaidTotal: actualChargesTotal,
-                unpaidDemand: chargesUnpaidDemand,
-                unpaidDemandTotal: chargesUnpaidTotal,
+                chargesDue: Object.fromEntries(Object.entries(chargesDueData || {}).map(([k, v]) => [k, roundDemand(v)])),
+                chargesTotalDemand: roundDemand(chargesTotalDemand),
+                chargesPrevUnpaid: Object.fromEntries(Object.entries(chargesPrevUnpaid || {}).map(([k, v]) => [k, roundDemand(v)])),
+                chargesPrevUnpaidTotal: roundDemand(chargesPrevUnpaidTotal),
+                actualPaid: Object.fromEntries(Object.entries(actualCharges || {}).map(([k, v]) => [k, roundDemand(v)])),
+                actualPaidTotal: roundDemand(actualChargesTotal),
+                unpaidDemand: Object.fromEntries(Object.entries(chargesUnpaidDemand || {}).map(([k, v]) => [k, roundDemand(v)])),
+                unpaidDemandTotal: roundDemand(chargesUnpaidTotal),
             },
             penalty: {
                 prevDemand: 0,
-                currDemand: penaltyTotalDemand,
-                totalDemand: penaltyTotalDemand,
-                actualPaid: actualPenalty,
-                unpaidDemand: penaltyUnpaidDemand,
+                currDemand: roundDemand(penaltyTotalDemand),
+                totalDemand: roundDemand(penaltyTotalDemand),
+                actualPaid: roundDemand(actualPenalty),
+                unpaidDemand: roundDemand(penaltyUnpaidDemand),
             },
+            loanAdjustment: {
+                memberCredit: roundDemand(memberCredit),
+                deficitAmount: roundDemand(deficitAmount),
+            },
+            totalUnpaidBeforeAdjustment: roundDemand(
+                loanUnpaidDemand + interestUnpaidDemand + savingUnpaidDemand + yogdanUnpaidDemand
+                + memFeesSHGUnpaidDemand + memFeesGroupUnpaidDemand + chargesUnpaidTotal + penaltyUnpaidDemand
+            ),
         };
+        const totalBase = demandResult.totalUnpaidBeforeAdjustment || 0;
+        demandResult.effectiveTotalUnpaidAfterAdjustment = roundDemand(Math.max(0, totalBase - memberCredit) + deficitAmount);
         if (interestDayDebug && interestDayDebug.length > 0) {
             demandResult._debugInterestDays = interestDayDebug;
         }

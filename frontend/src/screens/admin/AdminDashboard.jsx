@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Building2, Users, Banknote, TrendingUp, Download, FileText } from "lucide-react";
 import { getDashboardStatistics } from "../../services/dataManagementService";
 import { exportMemberLedger } from "../../services/memberService";
-import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
+import { exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../../utils/exportUtils";
 
 export default function AdminDashboard() {
     const [stats, setStats] = useState([
@@ -52,9 +52,9 @@ export default function AdminDashboard() {
 
             if (response?.success && response?.data && response.data.length > 0) {
                 if (format === 'excel') {
-                    exportMemberLedgerToExcel(response.data, `All_Members_Ledger_All_Groups`);
+                    exportMemberSummaryToExcel(response.data, `All_Members_Summary_All_Groups`);
                 } else {
-                    exportMemberLedgerToPDF(response.data, `All_Members_Ledger_All_Groups`);
+                    exportMemberSummaryToPDF(response.data, `All_Members_Summary_All_Groups`);
                 }
             } else {
                 alert("No ledger data found to export");

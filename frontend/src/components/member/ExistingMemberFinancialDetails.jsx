@@ -9,8 +9,8 @@ export default function ExistingMemberFinancialDetails({ member, memberDoc, isMo
   const shouldShowTable = !isCurrentlyMobile && !isMobile;
 
   return (
-    <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg shadow-sm p-3 sm:p-4 md:p-6 mb-3 sm:mb-4 md:mb-6 w-full box-border overflow-x-hidden">
-      <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 break-words">Existing Member Financial Details</h2>
+    <div className="bg-blue-50 border-l-4 border-blue-500 rounded-lg shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 mb-2 sm:mb-3 md:mb-4 w-full min-w-0 box-border overflow-x-hidden">
+      <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 break-words">Existing Member Financial Details</h2>
 
       {/* Mobile Card View */}
       <div className={`block sm:hidden ${shouldShowTable ? 'hidden' : ''} space-y-2 mb-4`}>
@@ -90,7 +90,7 @@ export default function ExistingMemberFinancialDetails({ member, memberDoc, isMo
 
       {/* Desktop Table View */}
       {shouldShowTable && (
-        <div className="existing-member-finance-table w-full overflow-x-auto rounded-lg border bg-white">
+        <div className="existing-member-finance-table w-full min-w-0 overflow-x-auto rounded-lg border bg-white">
           <table className="min-w-[400px] w-full border-collapse text-xs md:text-sm">
             <tbody>
               <tr className="border-b border-blue-200">
@@ -175,7 +175,7 @@ export default function ExistingMemberFinancialDetails({ member, memberDoc, isMo
           <p className="text-xs md:text-sm text-gray-600 mb-3 md:mb-4">
             This rate is used for saving demand calculations instead of current group rate.
           </p>
-          <div className="w-full overflow-x-auto rounded-lg border bg-white">
+          <div className="w-full min-w-0 overflow-x-auto rounded-lg border bg-white">
             <table className="min-w-[400px] w-full border-collapse text-xs md:text-sm">
               <tbody>
                 <tr className="border-b border-blue-200">

@@ -1,10 +1,13 @@
+import mongoose from "mongoose";
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import { GroupMaster, Member, LoanMaster, RecoveryMaster, FDMaster, PaymentMaster, MemberRevenueDemand, MemberExitSettlement, BankMaster } from "../../model/index.js";
 import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
+import { getOriginalOpeningSaving } from "../../utility/memberOpeningSavingHelper.js";
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
+import { calculateMemberExitPosition } from "../../service/settlementService.js";
 
 export const registerMember = async (req, res) => {
     try {
@@ -486,11 +489,63 @@ export const registerMember = async (req, res) => {
             return apiResponse.error(res, `Validation error: ${validationErrors}`, 400);
         }
         if (error.name === 'MongoServerError' && error.code === 11000) {
-            // This error should not occur now since we removed unique constraint
-            // But keeping it for backward compatibility
             return apiResponse.error(res, 'Member with this ID already exists in this group', 400);
         }
         return apiResponse.error(res, error.message || 'Failed to register member', 500);
+    }
+};
+
+/**
+ * PUT /api/admin/member/:memberId/update-opening-saving
+ * Admin only. Updates opening saving and records an adjustment for ledger history.
+ */
+export const updateOpeningSaving = async (req, res) => {
+    try {
+        if (req.user?.type === "group" || req.admin?.type === "group") {
+            return apiResponse.error(res, "Only admin can update opening saving", 403);
+        }
+        const { memberId } = req.params;
+        const { newOpeningSaving, reason } = req.body;
+        if (!memberId) {
+            return apiResponse.error(res, "memberId is required", 400);
+        }
+        const member = await Member.findById(memberId);
+        if (!member) {
+            return apiResponse.error(res, "Member not found", 404);
+        }
+        const groupId = member.group?.toString?.() || member.group;
+        if (!groupId) {
+            return apiResponse.error(res, "Member has no group", 400);
+        }
+        const adminPlace = req.user?.place || req.admin?.place;
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Access denied", 403);
+        }
+        const oldOpeningSaving = Number(member.openingSaving) || 0;
+        const newVal = Number(newOpeningSaving);
+        if (isNaN(newVal) || newVal < 0) {
+            return apiResponse.error(res, "newOpeningSaving must be a number >= 0", 400);
+        }
+        const difference = newVal - oldOpeningSaving;
+        member.openingSaving = newVal;
+        if (!member.openingSavingAdjustments) {
+            member.openingSavingAdjustments = [];
+        }
+        member.openingSavingAdjustments.push({
+            date: new Date(),
+            amount: difference,
+            reason: typeof reason === "string" ? reason.trim() : "",
+        });
+        await member.save();
+        return apiResponse.success(res, "Opening saving updated successfully", {
+            memberId: member._id,
+            previousOpeningSaving: oldOpeningSaving,
+            newOpeningSaving: newVal,
+            difference,
+        });
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Failed to update opening saving", 500);
     }
 };
 
@@ -591,9 +646,126 @@ export const getMemberDetail = async (req, res) => {
     }
 };
 
+/** Build heads object for exit summary/settlement from demand snapshot (from calculateDemandDetails). */
+function buildHeadsFromDemandSnapshot(dd) {
+    if (!dd) {
+        const zero = { key: "", label: "", prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 };
+        return {
+            saving: { ...zero, key: "saving", label: "Saving" },
+            loan: { ...zero, key: "loan", label: "Loan" },
+            fd: { ...zero, key: "fd", label: "FD" },
+            interest: { ...zero, key: "interest", label: "Interest" },
+            yogdan: { ...zero, key: "yogdan", label: "Yogdan" },
+            membershipFee: { ...zero, key: "membership_fee", label: "Membership Fee (SHG)" },
+            groupFee: { ...zero, key: "group_fee", label: "Group Fee" },
+            charges: { ...zero, key: "charges", label: "Other Charges / Penalty" },
+        };
+    }
+    const savingHead = {
+        key: "saving",
+        label: "Saving",
+        prev: dd.saving?.prevDemand ?? 0,
+        curr: dd.saving?.currDemand ?? 0,
+        total: dd.saving?.totalDemand ?? 0,
+        actual: dd.saving?.actualPaid ?? 0,
+        unpaid: dd.saving?.unpaidDemand ?? 0,
+        opening: dd.saving?.openingBalance ?? 0,
+        closing: dd.saving?.closingBalance ?? 0,
+    };
+    const fdHead = {
+        key: "fd",
+        label: "FD",
+        prev: 0,
+        curr: 0,
+        total: 0,
+        actual: dd.fd?.actualPaid ?? 0,
+        unpaid: 0,
+        opening: dd.fd?.openingBalance ?? 0,
+        closing: dd.fd?.closingBalance ?? 0,
+    };
+    const loanHead = {
+        key: "loan",
+        label: "Loan",
+        prev: dd.loan?.prevDemand ?? 0,
+        curr: dd.loan?.currDemand ?? 0,
+        total: dd.loan?.totalDemand ?? 0,
+        actual: dd.loan?.actualPaid ?? 0,
+        unpaid: dd.loan?.unpaidDemand ?? 0,
+        opening: dd.loan?.openingBalance ?? 0,
+        closing: dd.loan?.closingBalance ?? 0,
+    };
+    const interestHead = {
+        key: "interest",
+        label: "Interest",
+        prev: dd.interest?.prevDemand ?? 0,
+        curr: dd.interest?.currDemand ?? 0,
+        total: dd.interest?.totalDemand ?? 0,
+        actual: dd.interest?.actualPaid ?? 0,
+        unpaid: dd.interest?.unpaidDemand ?? 0,
+        opening: dd.interest?.openingBalance ?? 0,
+        closing: dd.interest?.closingBalance ?? 0,
+    };
+    const yogdanHead = {
+        key: "yogdan",
+        label: "Yogdan",
+        prev: dd.yogdan?.prevDemand ?? 0,
+        curr: dd.yogdan?.currDemand ?? 0,
+        total: dd.yogdan?.totalDemand ?? 0,
+        actual: dd.yogdan?.actualPaid ?? 0,
+        unpaid: dd.yogdan?.unpaidDemand ?? 0,
+        opening: dd.yogdan?.openingBalance ?? 0,
+        closing: dd.yogdan?.closingBalance ?? 0,
+    };
+    const membershipFeeHead = {
+        key: "membership_fee",
+        label: "Membership Fee (SHG)",
+        prev: dd.memFeesSHG?.prevDemand ?? 0,
+        curr: dd.memFeesSHG?.currDemand ?? 0,
+        total: dd.memFeesSHG?.totalDemand ?? 0,
+        actual: dd.memFeesSHG?.actualPaid ?? 0,
+        unpaid: dd.memFeesSHG?.unpaidDemand ?? 0,
+        opening: 0,
+        closing: dd.memFeesSHG?.unpaidDemand ?? 0,
+    };
+    const groupFeeHead = {
+        key: "group_fee",
+        label: "Group Fee",
+        prev: dd.memFeesGroup?.prevDemand ?? 0,
+        curr: dd.memFeesGroup?.currDemand ?? 0,
+        total: dd.memFeesGroup?.totalDemand ?? 0,
+        actual: dd.memFeesGroup?.actualPaid ?? 0,
+        unpaid: dd.memFeesGroup?.unpaidDemand ?? 0,
+        opening: 0,
+        closing: dd.memFeesGroup?.unpaidDemand ?? 0,
+    };
+    const penaltyUnpaid = dd.penalty?.unpaidDemand ?? 0;
+    const chargesUnpaid = dd.charges?.unpaidDemandTotal ?? 0;
+    const chargesHead = {
+        key: "charges",
+        label: "Other Charges / Penalty",
+        prev: 0,
+        curr: (dd.penalty?.currDemand ?? 0) + (dd.charges?.chargesTotalDemand ?? 0),
+        total: (dd.penalty?.totalDemand ?? 0) + (dd.charges?.chargesTotalDemand ?? 0),
+        actual: (dd.penalty?.actualPaid ?? 0) + (dd.charges?.actualPaidTotal ?? 0),
+        unpaid: penaltyUnpaid + chargesUnpaid,
+        opening: 0,
+        closing: penaltyUnpaid + chargesUnpaid,
+    };
+    return {
+        saving: savingHead,
+        loan: loanHead,
+        fd: fdHead,
+        interest: interestHead,
+        yogdan: yogdanHead,
+        membershipFee: membershipFeeHead,
+        groupFee: groupFeeHead,
+        charges: chargesHead,
+    };
+}
+
 /**
  * GET /api/admin/member/exit-summary?memberId=...
- * Computes per-head balances for a member at the time of exit and returns
+ * Computes per-head balances from demand (calculateDemandDetails) and returns
  * a normalized summary used by the frontend settlement UI.
  */
 export const getMemberExitSummary = async (req, res) => {
@@ -614,201 +786,13 @@ export const getMemberExitSummary = async (req, res) => {
             return apiResponse.error(res, "Member group not found", 400);
         }
 
-        // Reuse existing ledger calculation so exit logic stays consistent
-        const { summary } = await calculateMemberLedger(member, null, null);
+        const position = await calculateMemberExitPosition(groupId, memberId, new Date());
 
-        // ---- Asset heads: amounts payable to member (focus on closing balance) ----
-        const savingHead = {
-            key: "saving",
-            label: "Saving",
-            opening: summary.openingSavings || 0,
-            closing: summary.closingSavings || 0,
-            // For exit, only closing balance matters for payout
-            prev: 0,
-            curr: 0,
-            total: 0,
-            actual: summary.closingSavings || 0,
-            unpaid: 0,
-        };
-
-        const fdHead = {
-            key: "fd",
-            label: "FD",
-            opening: summary.openingFD || 0,
-            closing: summary.closingFD || 0,
-            prev: 0,
-            curr: 0,
-            total: 0,
-            actual: summary.closingFD || 0,
-            unpaid: 0,
-        };
-
-        // ---- Liability heads: amounts payable by member to group (focus on closing dues) ----
-        const loanHead = {
-            key: "loan",
-            label: "Loan",
-            opening: summary.openingLoan || 0,
-            closing: summary.closingLoan || 0,
-            prev: 0,
-            curr: 0,
-            total: 0,
-            // For exit, treat full closing loan as due
-            actual: summary.closingLoan || 0,
-            unpaid: summary.closingLoan || 0,
-        };
-
-        const interestHead = {
-            key: "interest",
-            label: "Interest",
-            opening: summary.openingInterest || 0,
-            closing: summary.closingInterest || 0,
-            prev: 0,
-            curr: 0,
-            total: 0,
-            actual: summary.closingInterest || 0,
-            unpaid: summary.closingInterest || 0,
-        };
-
-        const yogdanHead = {
-            key: "yogdan",
-            label: "Yogdan",
-            opening: summary.openingYogdan || 0,
-            closing: summary.closingYogdanDue || 0,
-            prev: 0,
-            curr: 0,
-            total: 0,
-            actual: summary.closingYogdanDue || 0,
-            unpaid: Math.max(0, summary.closingYogdanDue || 0),
-        };
-
-        // Membership, group fees and charges come from MemberRevenueDemand
-        const revenueDemands = await MemberRevenueDemand.find({ memberId, groupId }).lean();
-
-        const aggregateRevenue = (type) => {
-            const docs = revenueDemands.filter((d) => d.revenueType === type);
-            const total = docs.reduce((sum, d) => sum + (d.amount || 0), 0);
-            const paid = docs.reduce((sum, d) => sum + (d.paidAmount || 0), 0);
-            const unpaid = Math.max(0, total - paid);
-            return { total, paid, unpaid };
-        };
-
-        const membershipShg = aggregateRevenue("membership_fees_shg");
-        const membershipGroup = aggregateRevenue("membership_fees_group");
-        const penalty = aggregateRevenue("penalty");
-
-        const membershipFeeHead = {
-            key: "membership_fee",
-            label: "Membership Fee (SHG)",
-            opening: 0,
-            closing: membershipShg.unpaid,
-            prev: 0,
-            curr: 0,
-            total: 0,
-            actual: membershipShg.unpaid,
-            unpaid: membershipShg.unpaid,
-        };
-
-        const groupFeeHead = {
-            key: "group_fee",
-            label: "Group Fee",
-            opening: 0,
-            closing: membershipGroup.unpaid,
-            prev: 0,
-            curr: 0,
-            total: 0,
-            actual: membershipGroup.unpaid,
-            unpaid: membershipGroup.unpaid,
-        };
-
-        const chargesHead = {
-            key: "charges",
-            label: "Other Charges / Penalty",
-            opening: 0,
-            closing: penalty.unpaid,
-            prev: 0,
-            curr: 0,
-            total: 0,
-            actual: penalty.unpaid,
-            unpaid: penalty.unpaid,
-        };
-
-        // Build heads map
-        const rawHeads = {
-            saving: savingHead,
-            loan: loanHead,
-            fd: fdHead,
-            interest: interestHead,
-            yogdan: yogdanHead,
-            membershipFee: membershipFeeHead,
-            groupFee: groupFeeHead,
-            charges: chargesHead,
-        };
-
-        // Totals based on raw heads
-        let totalPayoutToMember =
-            (savingHead.actual || 0) +
-            (fdHead.actual || 0);
-
-        let totalDuesFromMember =
-            (loanHead.unpaid || 0) +
-            (interestHead.unpaid || 0) +
-            (yogdanHead.unpaid || 0) +
-            (membershipFeeHead.unpaid || 0) +
-            (groupFeeHead.unpaid || 0) +
-            (chargesHead.unpaid || 0);
-
-        let netAmount = Math.round((totalDuesFromMember - totalPayoutToMember) * 100) / 100;
-
-        let direction = "SETTLED";
-        if (netAmount > 0) direction = "MEMBER_PAYS";
-        else if (netAmount < 0) direction = "GROUP_PAYS";
-
-        // If a member exit settlement already exists, treat this member as fully settled:
-        // override head-wise closing/actual/unpaid to 0 so the UI shows no pending amounts.
-        const latestExit = await MemberExitSettlement.findOne({ memberId, groupId }).sort({ createdAt: -1 }).lean();
-
-        const heads = { ...rawHeads };
-        if (latestExit) {
-            Object.keys(heads).forEach((key) => {
-                const h = heads[key];
-                if (!h) return;
-                h.opening = 0;
-                h.prev = 0;
-                h.curr = 0;
-                h.total = 0;
-                h.actual = 0;
-                h.unpaid = 0;
-                h.closing = 0;
-            });
-
-            totalPayoutToMember = 0;
-            totalDuesFromMember = 0;
-            netAmount = 0;
-            direction = "SETTLED";
-        }
-
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                location: 'memberController.js:getMemberExitSummary',
-                message: 'Computed member exit summary',
-                data: {
-                    memberId,
-                    groupId,
-                    heads,
-                    totals: {
-                        totalPayoutToMember,
-                        totalDuesFromMember,
-                        netAmount,
-                        direction,
-                    },
-                },
-                timestamp: Date.now(),
-            }),
-        }).catch(() => { });
-        // #endregion agent log
+        const heads = buildHeadsFromDemandSnapshot(position.demandSnapshot);
+        const totalPayoutToMember = position.receivable;
+        const totalDuesFromMember = position.payable;
+        const netAmount = position.net;
+        const direction = position.direction;
 
         return apiResponse.success(res, "Member exit summary computed successfully", {
             member: {
@@ -954,6 +938,9 @@ export const updateMember = async (req, res) => {
 
         // Parse date fields
         const payload = { ...req.body };
+        // Only the dedicated update-opening-saving API can change these
+        delete payload.openingSaving;
+        delete payload.openingSavingAdjustments;
         const dateFields = ['Member_Dt', 'Dt_Join', 'dt_birth'];
         dateFields.forEach(field => {
             if (payload[field] && typeof payload[field] === 'string' && payload[field] !== '') {
@@ -1073,9 +1060,9 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
         loanRate,
         groupName: group?.group_name
     });
-    // Initialize running balances
-    // Start with opening savings only (FD and Loan come from FDMaster and LoanMaster)
-    let runningSavings = member.openingSaving || 0;
+    // Initialize running balances (use original opening for ledger; adjustments added as separate entries)
+    const originalOpeningSaving = getOriginalOpeningSaving(member);
+    let runningSavings = originalOpeningSaving;
     let runningLoan = 0; // Loans come from LoanMaster only
     let runningFD = 0; // FDs come from FDMaster only
     // For existing members, include overdueInterest from member.loanDetails (until paid)
@@ -1105,6 +1092,7 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
     if (member.isExistingMember) {
         const openingOverdueInterest = member.loanDetails?.overdueInterest || 0;
         console.log('[MEMBER_LEDGER] Processing existing member opening balances', {
+            originalOpeningSaving,
             openingSaving: member.openingSaving,
             overdueInterest: openingOverdueInterest,
             note: 'Opening savings and overdue interest included - FD and Loan come from FDMaster and LoanMaster'
@@ -1112,26 +1100,24 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
 
         const openingDate = member.Dt_Join || member.createdAt || new Date();
 
-        // Opening Saving entry (only for existing members) - Opening savings and overdue interest
-        // FD and Loan should come only from FDMaster and LoanMaster respectively
-        // Overdue interest comes from member.loanDetails for existing members (until paid)
-        if (member.openingSaving > 0 || openingOverdueInterest > 0) {
+        // Opening Saving entry (only for existing members) - use original amount so adjustments show separately
+        if (originalOpeningSaving > 0 || openingOverdueInterest > 0) {
             const openingEntry = {
                 date: openingDate,
                 receipt: "Opening",
-                savingsDeposit: member.openingSaving, // Only opening savings
+                savingsDeposit: originalOpeningSaving,
                 savingsWithdraw: 0,
                 savingsBalance: runningSavings,
-                loanPaid: 0, // Loans come from LoanMaster only
+                loanPaid: 0,
                 loanRecovered: 0,
-                loanBalance: 0, // Will be calculated from LoanMaster entries
-                fdDeposit: 0, // FDs come from FDMaster only
+                loanBalance: 0,
+                fdDeposit: 0,
                 fdWithdraw: 0,
-                fdBalance: 0, // Will be calculated from FDMaster entries
-                interestDue: 0, // Overdue interest from member.loanDetails (for existing members)
+                fdBalance: 0,
+                interestDue: 0,
                 interestPaid: 0,
-                yogdanDue: 0, // Yogdan calculated from loans in LoanMaster
-                yogdanPaid: 0, // Yogdan paid from recoveries (but recoveries not in ledger)
+                yogdanDue: 0,
+                yogdanPaid: 0,
                 other: 0,
             };
 
@@ -1139,8 +1125,36 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
             console.log('[MEMBER_LEDGER] Added opening entry (savings and overdue interest)', openingEntry);
         }
 
-        // REMOVED: FD Opening entry - FDs should only come from FDMaster
-        // REMOVED: Loan Taken entry - Loans should only come from LoanMaster
+        // Ledger adjustment entries for admin opening-saving changes (preserve history)
+        const adjustments = (member.openingSavingAdjustments || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+        for (const adj of adjustments) {
+            const amount = Number(adj.amount) || 0;
+            if (amount === 0) continue;
+            const deposit = amount > 0 ? amount : 0;
+            const withdraw = amount < 0 ? Math.abs(amount) : 0;
+            runningSavings += amount;
+            entries.push({
+                date: adj.date,
+                receipt: "SAVING_OPENING_ADJUSTMENT",
+                type: "openingSavingAdjustment",
+                savingsDeposit: deposit,
+                savingsWithdraw: withdraw,
+                savingsBalance: Math.round(runningSavings * 100) / 100,
+                loanPaid: 0,
+                loanRecovered: 0,
+                loanBalance: 0,
+                fdDeposit: 0,
+                fdWithdraw: 0,
+                fdBalance: 0,
+                interestDue: 0,
+                interestPaid: 0,
+                yogdanDue: 0,
+                yogdanPaid: 0,
+                other: 0,
+                note: "Admin adjusted opening saving",
+                reason: adj.reason || "",
+            });
+        }
     }
 
     // Fetch loans from LoanMaster
@@ -1512,6 +1526,9 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
         } else if (entry.receipt.startsWith("Saving -")) {
             recalcSavings += entry.savingsDeposit;
             entry.loanPaid = 0; // No loan disbursed in Saving entries
+        } else if (entry.receipt === "SAVING_OPENING_ADJUSTMENT" || entry.type === "openingSavingAdjustment") {
+            recalcSavings += (entry.savingsDeposit || 0) - (entry.savingsWithdraw || 0);
+            entry.loanPaid = 0;
         } else if (entry.receipt === "Recovery") {
             // Handle full recovery entry with all amounts
             recalcSavings += entry.savingsDeposit || 0;
@@ -1618,7 +1635,7 @@ const calculateMemberLedger = async (member, fromDate, toDate) => {
             return sum;
         }, 0),
         totalOther: entries.reduce((sum, e) => sum + (e.other || 0), 0),
-        openingSavings: member.openingSaving || 0,
+        openingSavings: member.openingSaving || 0, // current value (after adjustments)
         openingLoan: 0, // Loans come from LoanMaster only
         openingFD: 0, // FDs come from FDMaster only
         openingInterest: member.isExistingMember && member.loanDetails?.overdueInterest ? member.loanDetails.overdueInterest : 0, // Overdue interest from member.loanDetails (for existing members)
@@ -1783,25 +1800,29 @@ export const createMemberExitSettlement = async (req, res) => {
             return apiResponse.error(res, "memberId is required", 400);
         }
 
-        // Reuse exit-summary calculation to prevent tampering
-        const fakeReq = { query: { memberId } };
-        const summaryResult = await (async () => {
-            let body;
-            const fakeRes = {
-                status: () => fakeRes,
-                json: (payload) => {
-                    body = payload;
-                },
-            };
-            await getMemberExitSummary(fakeReq, fakeRes);
-            if (!body || body.success === false) {
-                throw new Error(body?.message || "Failed to compute exit summary");
-            }
-            return body.data;
-        })();
+        const member = await Member.findById(memberId).populate("group");
+        if (!member) {
+            return apiResponse.error(res, "Member not found", 404);
+        }
 
-        const backendNet = summaryResult?.totals?.netAmount ?? 0;
-        const backendDirection = summaryResult?.totals?.direction ?? "SETTLED";
+        const groupId = member.group?._id || member.group;
+        if (!groupId) {
+            return apiResponse.error(res, "Member group not found", 400);
+        }
+
+        const existingSettlement = await MemberExitSettlement.findOne({
+            groupId,
+            $or: [{ memberId: member._id }, { memberId }],
+        }).lean();
+        if (existingSettlement) {
+            return apiResponse.error(res, "Member has already been settled", 400);
+        }
+
+        const exitDate = paymentDate ? new Date(paymentDate) : new Date();
+        const position = await calculateMemberExitPosition(groupId, memberId, exitDate);
+
+        const backendNet = position.net;
+        const backendDirection = position.direction;
 
         const clientNet = Number(confirmedNetAmount);
         if (Number.isNaN(clientNet)) {
@@ -1824,20 +1845,18 @@ export const createMemberExitSettlement = async (req, res) => {
             );
         }
 
-        const member = await Member.findById(memberId).populate("group");
-        if (!member) {
-            return apiResponse.error(res, "Member not found", 404);
-        }
-
-        const groupId = summaryResult.member.groupId;
         const adminPlace = req.user?.place || req.admin?.place;
         const createdBy = req.user?.id || req.admin?.id || "system";
+        const settlementHeads = buildHeadsFromDemandSnapshot(position.demandSnapshot);
 
         let payment = null;
+        const session = await mongoose.startSession();
+        try {
+            await session.startTransaction();
 
-        // If group pays member, create a PaymentMaster payout and update cash/bank + ledger
-        if (backendDirection === "GROUP_PAYS" && backendNet < 0) {
-            const payoutAmount = Math.abs(backendNet);
+        // If group (samooh) pays member: net > 0 → deduct amount from group cash/bank
+        if (backendDirection === "GROUP_PAYS" && backendNet > 0) {
+            const payoutAmount = backendNet;
             const normalizedMode = payoutPaymentMode === "Bank" ? "Bank" : "Cash";
 
             // Verify group access
@@ -1907,40 +1926,37 @@ export const createMemberExitSettlement = async (req, res) => {
                 paymentDate: effectivePaymentDate,
                 createdBy,
                 remarks: notes || paymentReference || "Member exit settlement payout",
-            });
+            }, { session });
 
             // Update bank/cash balances and transaction records
             if (normalizedMode === "Bank" && bank) {
                 const paymentAmount = payoutAmount;
                 const balanceBefore = bank.current_balance || 0;
                 bank.current_balance = Math.max(0, balanceBefore - paymentAmount);
-                await bank.save();
+                await bank.save({ session });
 
-                try {
-                    const { createBankTransactionRecord } = await import("../../utility/bankTransactionHelper.js");
-                    await createBankTransactionRecord({
-                        bankId: bank._id,
-                        groupId,
-                        transactionType: "payment",
-                        amount: paymentAmount,
-                        date: effectivePaymentDate,
-                        description: `Payment - member_exit_payout: ${member.Member_Nm} (${member.Member_Id})`,
-                        paymentId: payment._id,
-                        memberId: payment.memberId,
-                        memberCode: payment.memberCode,
-                        memberName: payment.memberName,
-                        createdBy,
-                        status: "verified",
-                    });
-                } catch (err) {
-                    console.error("[EXIT_PAYOUT] Error creating bank transaction record:", err);
-                }
+                const { createBankTransactionRecord } = await import("../../utility/bankTransactionHelper.js");
+                await createBankTransactionRecord({
+                    bankId: bank._id,
+                    groupId,
+                    transactionType: "payment",
+                    amount: paymentAmount,
+                    date: effectivePaymentDate,
+                    description: `Payment - member_exit_payout: ${member.Member_Nm} (${member.Member_Id})`,
+                    paymentId: payment._id,
+                    memberId: payment.memberId,
+                    memberCode: payment.memberCode,
+                    memberName: payment.memberName,
+                    createdBy,
+                    status: "verified",
+                    session,
+                });
             } else if (normalizedMode === "Cash") {
                 const paymentAmount = payoutAmount;
                 await group.recalculateCashBalance();
                 const cashBalanceBefore = group.current_cash_balance || 0;
                 group.current_cash_balance = Math.max(0, cashBalanceBefore - paymentAmount);
-                await group.save();
+                await group.save({ session });
 
                 await createCashTransactionRecord({
                     groupId,
@@ -1953,11 +1969,12 @@ export const createMemberExitSettlement = async (req, res) => {
                     memberCode: payment.memberCode,
                     memberName: payment.memberName,
                     createdBy,
+                    session,
                 });
             }
 
             // Post ledger entry for exit payout
-            const headInfo = await findOrCreateHead(groupId, "Member Exit Settlement", "liability");
+            const headInfo = await findOrCreateHead(groupId, "Member Exit Settlement", "liability", session);
             await postTransaction({
                 sourceDoc: payment,
                 headName: "Member Exit Settlement",
@@ -1975,12 +1992,13 @@ export const createMemberExitSettlement = async (req, res) => {
                 referenceModel: "PaymentMaster",
                 referenceId: payment._id,
                 createdBy,
+                session,
             });
         }
 
-        // If member pays group, record an incoming PaymentMaster and update cash/bank + ledger
-        if (backendDirection === "MEMBER_PAYS" && backendNet > 0) {
-            const incomingAmount = backendNet;
+        // If member pays group: net < 0 → add amount to group cash/bank
+        if (backendDirection === "MEMBER_PAYS" && backendNet < 0) {
+            const incomingAmount = Math.abs(backendNet);
             const normalizedMode = payoutPaymentMode === "Bank" ? "Bank" : "Cash";
 
             // Verify group access
@@ -2037,40 +2055,37 @@ export const createMemberExitSettlement = async (req, res) => {
                 paymentDate: effectivePaymentDate,
                 createdBy,
                 remarks: notes || paymentReference || "Member exit settlement – member pays group",
-            });
+            }, { session });
 
             // Update bank/cash balances and transaction records (inflow)
             if (normalizedMode === "Bank" && bank) {
                 const paymentAmount = incomingAmount;
                 const balanceBefore = bank.current_balance || 0;
                 bank.current_balance = balanceBefore + paymentAmount;
-                await bank.save();
+                await bank.save({ session });
 
-                try {
-                    const { createBankTransactionRecord } = await import("../../utility/bankTransactionHelper.js");
-                    await createBankTransactionRecord({
-                        bankId: bank._id,
-                        groupId,
-                        transactionType: "member_exit_recovery",
-                        amount: paymentAmount,
-                        date: effectivePaymentDate,
-                        description: `Member exit recovery (bank): ${member.Member_Nm} (${member.Member_Id})`,
-                        paymentId: payment._id,
-                        memberId: payment.memberId,
-                        memberCode: payment.memberCode,
-                        memberName: payment.memberName,
-                        createdBy,
-                        status: "verified",
-                    });
-                } catch (err) {
-                    console.error("[EXIT_RECOVERY] Error creating bank transaction record:", err);
-                }
+                const { createBankTransactionRecord } = await import("../../utility/bankTransactionHelper.js");
+                await createBankTransactionRecord({
+                    bankId: bank._id,
+                    groupId,
+                    transactionType: "member_exit_recovery",
+                    amount: paymentAmount,
+                    date: effectivePaymentDate,
+                    description: `Member exit recovery (bank): ${member.Member_Nm} (${member.Member_Id})`,
+                    paymentId: payment._id,
+                    memberId: payment.memberId,
+                    memberCode: payment.memberCode,
+                    memberName: payment.memberName,
+                    createdBy,
+                    status: "verified",
+                    session,
+                });
             } else if (normalizedMode === "Cash") {
                 const paymentAmount = incomingAmount;
                 await group.recalculateCashBalance();
                 const cashBalanceBefore = group.current_cash_balance || 0;
                 group.current_cash_balance = cashBalanceBefore + paymentAmount;
-                await group.save();
+                await group.save({ session });
 
                 await createCashTransactionRecord({
                     groupId,
@@ -2083,16 +2098,17 @@ export const createMemberExitSettlement = async (req, res) => {
                     memberCode: payment.memberCode,
                     memberName: payment.memberName,
                     createdBy,
+                    session,
                 });
             }
 
             // Post ledger entry for exit recovery
-            const headInfo = await findOrCreateHead(groupId, "Member Exit Settlement", "asset");
+            const headInfoRecovery = await findOrCreateHead(groupId, "Member Exit Settlement", "asset", session);
             await postTransaction({
                 sourceDoc: payment,
                 headName: "Member Exit Settlement",
-                headType: headInfo?.headType || "groupMaster",
-                headId: headInfo?.headId,
+                headType: headInfoRecovery?.headType || "groupMaster",
+                headId: headInfoRecovery?.headId,
                 section: "asset",
                 amount: incomingAmount,
                 direction: "in",
@@ -2105,19 +2121,20 @@ export const createMemberExitSettlement = async (req, res) => {
                 referenceModel: "PaymentMaster",
                 referenceId: payment._id,
                 createdBy,
+                session,
             });
         }
 
-        const settlement = await MemberExitSettlement.create({
-            memberId,
+        const settlementDoc = {
+            memberId: member._id,
             groupId,
-            heads: summaryResult.heads,
-            totalPayoutToMember: summaryResult.totals.totalPayoutToMember,
-            totalDuesFromMember: summaryResult.totals.totalDuesFromMember,
-            netAmount: backendNet,
-            direction: backendDirection,
+            heads: settlementHeads || {},
+            totalPayoutToMember: position.receivable ?? 0,
+            totalDuesFromMember: position.payable ?? 0,
+            netAmount: backendNet ?? 0,
+            direction: backendDirection || "SETTLED",
             paymentMode:
-                backendDirection === "SETTLED" || summaryResult.totals.netAmount === 0
+                backendDirection === "SETTLED" || position.net === 0
                     ? "NONE"
                     : payoutPaymentMode || "Cash",
             paymentReference: paymentReference || "",
@@ -2125,17 +2142,18 @@ export const createMemberExitSettlement = async (req, res) => {
             paymentId: payment?._id || undefined,
             notes: notes || "",
             createdBy,
-        });
+        };
+        const settlement = await MemberExitSettlement.create(settlementDoc, { session });
 
-        // After successful settlement, mark member's remaining demands as paid
-        // and close any FD records linked to this member/group so that future
-        // demand/recovery flows and summaries show zero outstanding.
-        try {
-            const effectiveDate = paymentDate ? new Date(paymentDate) : new Date();
-            await finalizeMemberExitObligations(member._id, groupId, effectiveDate);
-        } catch (cleanupError) {
-            console.error("[MemberExit] finalizeMemberExitObligations failed:", cleanupError);
-            // Do not fail the main response if cleanup has issues.
+        const effectiveDate = paymentDate ? new Date(paymentDate) : new Date();
+        await finalizeMemberExitObligations(member._id, groupId, effectiveDate, session);
+
+            await session.commitTransaction();
+        } catch (txnErr) {
+            await session.abortTransaction();
+            throw txnErr;
+        } finally {
+            session.endSession();
         }
 
         return apiResponse.success(res, "Member exit settlement recorded successfully", settlement);
@@ -2145,18 +2163,63 @@ export const createMemberExitSettlement = async (req, res) => {
     }
 };
 
+/**
+ * DELETE /api/admin/member/exit-settlement?memberId=...
+ * Removes all exit settlement records for the member so a new (correct) settlement can be created.
+ * Use when a settlement was created by mistake or with wrong data.
+ */
+export const voidMemberExitSettlement = async (req, res) => {
+    try {
+        const { memberId } = req.query;
+        if (!memberId) {
+            return apiResponse.error(res, "memberId is required", 400);
+        }
+
+        const member = await Member.findById(memberId).select("group").lean();
+        if (!member) {
+            return apiResponse.error(res, "Member not found", 404);
+        }
+
+        const groupId = member.group?._id || member.group;
+        if (!groupId) {
+            return apiResponse.error(res, "Member group not found", 400);
+        }
+
+        const memberObjId = member._id;
+        const result = await MemberExitSettlement.deleteMany({
+            $or: [ { memberId: memberObjId, groupId }, { memberId: memberId, groupId } ],
+        });
+
+        const deletedCount = result?.deletedCount ?? 0;
+        if (deletedCount === 0) {
+            return apiResponse.error(res, "No exit settlement found for this member", 404);
+        }
+
+        return apiResponse.success(res, "Exit settlement voided. You can now create a new settlement.", {
+            deletedCount,
+        });
+    } catch (error) {
+        console.error("Error voiding member exit settlement:", error);
+        return apiResponse.error(res, error.message || "Failed to void exit settlement", 500);
+    }
+};
+
 // Helper: after a member's exit settlement is completed, clear any remaining
 // demand records and mark FD entries as closed so that subsequent Demand & Recovery
 // flows no longer show outstanding amounts for this member.
-const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate) => {
+// Optional fourth arg: mongoose session for transaction support.
+const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate, txnSession = null) => {
     const ts = effectiveDate || new Date();
+    const sessionOptions = txnSession ? { session: txnSession } : {};
 
     // 1) Mark all open MemberRevenueDemand records for this member/group as fully paid
-    const openDemands = await MemberRevenueDemand.find({
+    const openDemandsQuery = MemberRevenueDemand.find({
         memberId,
         groupId,
         isPaid: false,
     });
+    if (txnSession) openDemandsQuery.session(txnSession);
+    const openDemands = await openDemandsQuery;
 
     // #region agent log
     fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
@@ -2171,32 +2234,34 @@ const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate) =
                 openDemandCount: openDemands.length,
                 sampleDemand: openDemands[0]
                     ? {
-                          id: openDemands[0]._id,
-                          revenueType: openDemands[0].revenueType,
-                          amount: openDemands[0].amount,
-                          paidAmount: openDemands[0].paidAmount,
-                          isPaid: openDemands[0].isPaid,
-                      }
+                        id: openDemands[0]._id,
+                        revenueType: openDemands[0].revenueType,
+                        amount: openDemands[0].amount,
+                        paidAmount: openDemands[0].paidAmount,
+                        isPaid: openDemands[0].isPaid,
+                    }
                     : null,
             },
             timestamp: Date.now(),
         }),
-    }).catch(() => {});
+    }).catch(() => { });
     // #endregion agent log
 
     for (const demand of openDemands) {
         demand.paidAmount = demand.amount || 0;
         demand.paidDate = ts;
         demand.isPaid = true;
-        await demand.save();
+        await demand.save(sessionOptions);
     }
 
     // 2) Zero out demandDetails in RecoveryMaster for this member so summaries show 0
     const memberIdStr = memberId.toString();
-    const sessions = await RecoveryMaster.find({
+    const sessionsQuery = RecoveryMaster.find({
         groupId,
         "recoveries.memberId": memberIdStr,
     });
+    if (txnSession) sessionsQuery.session(txnSession);
+    const sessions = await sessionsQuery;
 
     // #region agent log
     fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
@@ -2212,37 +2277,36 @@ const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate) =
             },
             timestamp: Date.now(),
         }),
-    }).catch(() => {});
+    }).catch(() => { });
     // #endregion agent log
 
-    for (const session of sessions) {
+    const zeroDemandHead = (d) => {
+        if (!d || typeof d !== "object") return;
+        const numKeys = ["prevDemand", "currDemand", "totalDemand", "actualPaid", "unpaidDemand", "openingBalance", "closingBalance"];
+        numKeys.forEach((k) => { if (d[k] !== undefined) d[k] = 0; });
+        if (d.unpaidDemandTotal !== undefined) d.unpaidDemandTotal = 0;
+        if (d.chargesTotalDemand !== undefined) d.chargesTotalDemand = 0;
+        if (d.actualPaidTotal !== undefined) d.actualPaidTotal = 0;
+    };
+
+    for (const recSession of sessions) {
         let changed = false;
-        session.recoveries.forEach((rec) => {
+        recSession.recoveries.forEach((rec) => {
             if (
                 rec.memberId === memberIdStr ||
                 (rec.memberId && rec.memberId.toString && rec.memberId.toString() === memberIdStr)
             ) {
-                if (rec.demandDetails) {
-                    const keys = ["loan", "interest", "saving", "fd"];
-                    keys.forEach((k) => {
-                        const d = rec.demandDetails[k];
-                        if (d) {
-                            d.prevDemand = 0;
-                            d.currDemand = 0;
-                            d.totalDemand = 0;
-                            d.actualPaid = 0;
-                            d.unpaidDemand = 0;
-                            d.openingBalance = 0;
-                            d.closingBalance = 0;
-                        }
+                if (rec.demandDetails && typeof rec.demandDetails === "object") {
+                    Object.keys(rec.demandDetails).forEach((k) => {
+                        zeroDemandHead(rec.demandDetails[k]);
                     });
                 }
                 changed = true;
             }
         });
         if (changed) {
-            session.markModified("recoveries");
-            await session.save();
+            recSession.markModified("recoveries");
+            await recSession.save(sessionOptions);
         }
     }
 
@@ -2255,6 +2319,7 @@ const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate) =
         },
         {
             $set: { status: "closed" },
-        }
+        },
+        sessionOptions
     );
 };

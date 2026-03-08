@@ -1,11 +1,17 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, Search, Plus, Building2, Download, FileText } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { getGroups } from "../../services/groupService";
 import { getMembersByGroup, exportMemberLedger } from "../../services/memberService";
-import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
+import { exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../../utils/exportUtils";
+
+const STORAGE_KEY_CLUSTER = "adminMembers_selectedCluster";
+const STORAGE_KEY_GROUP = "adminMembers_selectedGroup";
 
 export default function AdminMembers() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const hasRestoredRef = useRef(false);
+
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGroup, setSelectedGroup] = useState(null); // {id, name, code}
     const [selectedClusterKey, setSelectedClusterKey] = useState("");
@@ -32,9 +38,9 @@ export default function AdminMembers() {
                 const memberCode = memberData.memberInfo?.code || "Member";
                 
                 if (format === 'excel') {
-                    exportMemberLedgerToExcel([memberData], `Member_${memberCode}_Ledger`);
+                    exportMemberSummaryToExcel([memberData], `Member_${memberCode}_Summary`);
                 } else {
-                    exportMemberLedgerToPDF([memberData], `Member_${memberCode}_Ledger`);
+                    exportMemberSummaryToPDF([memberData], `Member_${memberCode}_Summary`);
                 }
             } else {
                 alert("No ledger data found to export");
@@ -66,9 +72,9 @@ export default function AdminMembers() {
             if (response?.success && response?.data && response.data.length > 0) {
                 const groupName = selectedGroup.name || "Group";
                 if (format === 'excel') {
-                    exportMemberLedgerToExcel(response.data, `${groupName}_All_Members_Ledger`);
+                    exportMemberSummaryToExcel(response.data, `${groupName}_All_Members_Summary`);
                 } else {
-                    exportMemberLedgerToPDF(response.data, `${groupName}_All_Members_Ledger`);
+                    exportMemberSummaryToPDF(response.data, `${groupName}_All_Members_Summary`);
                 }
             } else {
                 alert("No ledger data found to export");
@@ -141,6 +147,30 @@ export default function AdminMembers() {
         );
     }, [groups, searchTerm, selectedClusterKey]);
 
+    // Restore cluster/group from URL or sessionStorage when returning (e.g. after Back from member detail)
+    useEffect(() => {
+        if (groups.length === 0 || hasRestoredRef.current) return;
+        hasRestoredRef.current = true;
+        let cluster = searchParams.get("cluster") || "";
+        let groupId = searchParams.get("group") || "";
+        if (!cluster && !groupId) {
+            cluster = sessionStorage.getItem(STORAGE_KEY_CLUSTER) || "";
+            groupId = sessionStorage.getItem(STORAGE_KEY_GROUP) || "";
+            if (cluster || groupId) {
+                const next = {};
+                if (cluster) next.cluster = cluster;
+                if (groupId) next.group = groupId;
+                setSearchParams(next, { replace: true });
+            }
+        }
+        if (cluster) setSelectedClusterKey(cluster);
+        if (groupId) {
+            const groupInList = groups.find((g) => g.id === groupId);
+            if (groupInList) setSelectedGroup(groupInList);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [groups]);
+
     return (
         <div className="w-full p-3 sm:p-4 md:p-6">
             <div className="mb-4 sm:mb-6">
@@ -160,9 +190,19 @@ export default function AdminMembers() {
                     <select
                         value={selectedClusterKey}
                         onChange={(e) => {
-                            setSelectedClusterKey(e.target.value);
+                            const val = e.target.value;
+                            setSelectedClusterKey(val);
                             setSelectedGroup(null);
                             setMembers([]);
+                            if (val) {
+                                setSearchParams({ cluster: val }, { replace: true });
+                                sessionStorage.setItem(STORAGE_KEY_CLUSTER, val);
+                                sessionStorage.removeItem(STORAGE_KEY_GROUP);
+                            } else {
+                                setSearchParams({}, { replace: true });
+                                sessionStorage.removeItem(STORAGE_KEY_CLUSTER);
+                                sessionStorage.removeItem(STORAGE_KEY_GROUP);
+                            }
                         }}
                         className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm sm:text-base"
                     >
@@ -194,7 +234,14 @@ export default function AdminMembers() {
                         filteredGroups.map((group) => (
                             <div
                                 key={group.id}
-                                onClick={() => setSelectedGroup(group)}
+                                onClick={() => {
+                                    setSelectedGroup(group);
+                                    if (selectedClusterKey) {
+                                        setSearchParams({ cluster: selectedClusterKey, group: group.id }, { replace: true });
+                                        sessionStorage.setItem(STORAGE_KEY_CLUSTER, selectedClusterKey);
+                                        sessionStorage.setItem(STORAGE_KEY_GROUP, group.id);
+                                    }
+                                }}
                                 className={`p-3 sm:p-4 border-2 rounded-lg cursor-pointer transition-colors ${selectedGroup?.id === group.id
                                     ? "border-blue-500 bg-blue-50"
                                     : "border-gray-200 hover:border-blue-300"

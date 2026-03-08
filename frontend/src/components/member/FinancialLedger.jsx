@@ -14,11 +14,11 @@ export default function FinancialLedger({
   formatCurrency: formatCurrencyFn = formatCurrency,
 }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 md:p-6 w-full box-border overflow-x-hidden">
-      <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 break-words">Financial Ledger</h2>
+    <div className="bg-white rounded-xl shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 w-full min-w-0 box-border overflow-x-hidden">
+      <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 break-words">Financial Ledger</h2>
 
       {/* Date Filter - Moved to top */}
-      <div className="bg-gray-50 rounded-lg p-3 sm:p-4 md:p-5 mb-3 sm:mb-4 md:mb-6 border border-gray-200">
+      <div className="bg-gray-50 rounded-lg p-2 sm:p-3 md:p-4 mb-2 sm:mb-3 md:mb-4 border border-gray-200">
         <h3 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex flex-wrap items-center gap-2">
           <Calendar size={16} className="sm:w-4 sm:h-4 md:w-5 md:h-5 shrink-0" />
           <span className="break-words">Date Range Filter</span>
@@ -89,7 +89,7 @@ export default function FinancialLedger({
             </div>
           </div>
 
-          <div className="financial-ledger-table w-full overflow-x-auto sm:overflow-x-auto overflow-y-auto sm:overflow-y-visible max-h-[500px] sm:max-h-none rounded-lg border bg-white">
+          <div className="financial-ledger-table w-full min-w-0 overflow-x-auto sm:overflow-x-auto overflow-y-auto sm:overflow-y-visible max-h-[500px] sm:max-h-none rounded-lg border bg-white">
             <table className="min-w-[1400px] w-full border-collapse text-xs md:text-sm">
               <thead>
                 <tr className="bg-gray-100">

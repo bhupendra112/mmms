@@ -38,8 +38,8 @@ export default function MembershipFeesSummary({ memberRecoveries, memberDoc, isM
   const shouldShowTable = !isCurrentlyMobile && !isMobile;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 md:p-6 mb-3 sm:mb-4 md:mb-6 w-full box-border overflow-x-hidden">
-      <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 break-words">Membership Fees Summary</h2>
+    <div className="bg-white rounded-xl shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 mb-2 sm:mb-3 md:mb-4 w-full min-w-0 box-border overflow-x-hidden">
+      <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 break-words">Membership Fees Summary</h2>
 
       {/* Mobile Card View */}
       <div className={`block sm:hidden ${shouldShowTable ? 'hidden' : ''}`}>
@@ -99,7 +99,7 @@ export default function MembershipFeesSummary({ memberRecoveries, memberDoc, isM
 
       {/* Desktop Table View */}
       {shouldShowTable && (
-        <div className="membership-fees-table w-full overflow-x-auto rounded-lg border bg-white">
+        <div className="membership-fees-table w-full min-w-0 overflow-x-auto rounded-lg border bg-white">
           <table className="min-w-[500px] w-full border-collapse text-xs md:text-sm">
             <thead>
               <tr className="bg-gray-100">

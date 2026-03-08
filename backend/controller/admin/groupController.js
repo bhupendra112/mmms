@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs";
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import { BankMaster, GroupMaster, Member, LoanMaster, RecoveryMaster, PaymentMaster } from "../../model/index.js";
@@ -6,6 +7,8 @@ import CashTransaction from "../../model/CashTransaction.js";
 import { addBankValidationSchema, updateGroupSchema, updateBankValidationSchema } from "../../validation/adminValidation.js";
 import { verifyGroupAccess, verifyGroupAccessByCode, getAdminPlace } from "../../utility/groupAccessHelper.js";
 
+const BCRYPT_ROUNDS = 10;
+
 export const registerGroup = async (req, res) => {
     try {
         const {
@@ -13,7 +16,10 @@ export const registerGroup = async (req, res) => {
             group_code,
             village,
             cluster_name,
-            cluster_code
+            cluster_code,
+            password,
+            supervisorId,
+            supervisorName,
         } = req.body;
 
         // Get admin's place from token
@@ -24,7 +30,6 @@ export const registerGroup = async (req, res) => {
         }
 
         // Check if group exists with same code in same village/cluster
-        // Uniqueness is based on group_code + village (or cluster_name/cluster_code if village is not provided)
         const query = { group_code };
         if (village) {
             query.village = village;
@@ -40,17 +45,54 @@ export const registerGroup = async (req, res) => {
             return apiResponse.error(res, `Group with code "${group_code}" already exists in ${location}`, 400);
         }
 
-        // Add admin's place to group data
+        // Build group data (exclude password/supervisor fields from spread; set separately)
+        const { password: _p, supervisorId: _sid, supervisorName: _sname, ...restBody } = req.body;
         const groupData = {
-            ...req.body,
-            place: adminPlace // Associate group with admin's place
+            ...restBody,
+            place: adminPlace,
         };
 
-        // Create new group
+        // Hash password if provided
+        if (password && String(password).trim()) {
+            groupData.groupPassword = await bcrypt.hash(String(password).trim(), BCRYPT_ROUNDS);
+            groupData.passwordUpdatedAt = new Date();
+        }
+
+        // Create new group first (so we have group._id for member)
         const newGroup = await GroupMaster.create(groupData);
 
-        return apiResponse.success(res, message.GROUP_REGISTERED, newGroup);
+        let supervisorMemberId = null;
+        if (supervisorId) {
+            // Reuse existing member: ensure they exist and assign to this group
+            const existingMember = await Member.findById(supervisorId).lean();
+            if (!existingMember) {
+                await GroupMaster.findByIdAndDelete(newGroup._id);
+                return apiResponse.error(res, "Selected supervisor (member) not found", 400);
+            }
+            // Update member's group to this new group so they belong here
+            await Member.findByIdAndUpdate(supervisorId, { group: newGroup._id, Group_Name: group_name });
+            supervisorMemberId = existingMember._id;
+        } else if (supervisorName && String(supervisorName).trim()) {
+            // Create new member as supervisor for this group
+            const memberCode = `${group_code}-SUP-${Date.now().toString(36)}`;
+            const newMember = await Member.create({
+                Member_Id: memberCode,
+                Member_Nm: String(supervisorName).trim(),
+                Group_Name: group_name,
+                group: newGroup._id,
+                Desg: "Member",
+            });
+            supervisorMemberId = newMember._id;
+        }
 
+        if (supervisorMemberId) {
+            newGroup.supervisorId = supervisorMemberId;
+            await newGroup.save();
+        }
+
+        // Return group without groupPassword (select: false already excludes it; ensure we don't leak)
+        const result = await GroupMaster.findById(newGroup._id).select("-groupPassword").lean();
+        return apiResponse.success(res, message.GROUP_REGISTERED, result);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }
@@ -601,6 +643,11 @@ export const updateGroup = async (req, res) => {
             return apiResponse.error(res, error.details[0].message, 400);
         }
 
+        // Never update password or supervisor via generic update (use dedicated endpoints)
+        const updateBody = { ...req.body };
+        delete updateBody.groupPassword;
+        delete updateBody.passwordUpdatedAt;
+
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
 
@@ -641,7 +688,7 @@ export const updateGroup = async (req, res) => {
         // Update group
         const updatedGroup = await GroupMaster.findByIdAndUpdate(
             id,
-            { $set: req.body },
+            { $set: updateBody },
             { new: true, runValidators: true }
         ).populate("bankmaster").populate("bankmasters").lean();
 
@@ -929,6 +976,96 @@ export const getGroupCharges = async (req, res) => {
         }
 
         return apiResponse.success(res, "Charges fetched successfully", charges);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// POST: CHANGE SUPERVISOR
+// ------------------------------------------------------------------
+export const changeSupervisor = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { supervisorId, supervisorName } = req.body;
+
+        if (!groupId) {
+            return apiResponse.error(res, "groupId is required", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+        }
+
+        const group = await GroupMaster.findById(groupId);
+        if (!group) {
+            return apiResponse.error(res, "Group not found", 404);
+        }
+
+        if (supervisorId) {
+            const member = await Member.findById(supervisorId).lean();
+            if (!member) {
+                return apiResponse.error(res, "Selected member not found", 400);
+            }
+            // Assign member to this group if not already
+            await Member.findByIdAndUpdate(supervisorId, {
+                group: group._id,
+                Group_Name: group.group_name,
+            });
+            group.supervisorId = member._id;
+        } else if (supervisorName && String(supervisorName).trim()) {
+            const memberCode = `${group.group_code}-SUP-${Date.now().toString(36)}`;
+            const newMember = await Member.create({
+                Member_Id: memberCode,
+                Member_Nm: String(supervisorName).trim(),
+                Group_Name: group.group_name,
+                group: group._id,
+                Desg: "Member",
+            });
+            group.supervisorId = newMember._id;
+        } else {
+            return apiResponse.error(res, "Either supervisorId or supervisorName is required", 400);
+        }
+
+        await group.save({ validateBeforeSave: true });
+        const updated = await GroupMaster.findById(groupId).select("-groupPassword").lean();
+        return apiResponse.success(res, "Supervisor updated successfully", updated);
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// POST: CHANGE PASSWORD
+// ------------------------------------------------------------------
+export const changePassword = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { newPassword } = req.body;
+
+        if (!groupId) {
+            return apiResponse.error(res, "groupId is required", 400);
+        }
+
+        if (!newPassword || String(newPassword).trim().length < 1) {
+            return apiResponse.error(res, "newPassword is required", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const accessCheck = await verifyGroupAccess(groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
+        }
+
+        const hashed = await bcrypt.hash(String(newPassword).trim(), BCRYPT_ROUNDS);
+        await GroupMaster.findByIdAndUpdate(groupId, {
+            groupPassword: hashed,
+            passwordUpdatedAt: new Date(),
+        });
+
+        return apiResponse.success(res, "Password updated successfully", {});
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

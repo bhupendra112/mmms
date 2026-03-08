@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     Building2,
     DollarSign,
@@ -9,13 +9,23 @@ import {
     WifiOff,
     Filter,
     ArrowLeft,
+    Eye,
+    Pencil,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { getGroups } from "../../services/groupService";
 import { getLoans } from "../../services/loanService";
 import { exportLoanToExcel, exportLoanToPDF } from "../../utils/exportUtils";
+import ViewLoanModal from "../../components/loans/ViewLoanModal";
+import EditLoanModal from "../../components/loans/EditLoanModal";
+
+const STORAGE_KEY_CLUSTER = "loanManagement_selectedCluster";
+const STORAGE_KEY_GROUP = "loanManagement_selectedGroup";
 
 export default function AdminLoanManagement() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const hasRestoredRef = useRef(false);
+
     const [isOnline, setIsOnline] = useState(navigator.onLine);
 
     const [groups, setGroupsState] = useState([]);
@@ -32,6 +42,11 @@ export default function AdminLoanManagement() {
 
     // mobile UI toggles
     const [showMobileFilters, setShowMobileFilters] = useState(false);
+
+    // View / Edit modals
+    const [viewLoan, setViewLoan] = useState(null);
+    const [editLoan, setEditLoan] = useState(null);
+    const [successMessage, setSuccessMessage] = useState(null);
 
     useEffect(() => {
         const handleOnline = () => setIsOnline(true);
@@ -85,6 +100,12 @@ export default function AdminLoanManagement() {
         }
     };
 
+    const handleEditSuccess = () => {
+        setSuccessMessage("Loan updated successfully.");
+        if (selectedGroup?.id) loadLoans(selectedGroup.id);
+        setTimeout(() => setSuccessMessage(null), 4000);
+    };
+
     const clusterOptions = useMemo(() => {
         const uniqueClusters = Array.from(
             new Set(groups.map((g) => `${g.clusterName}|${g.clusterCode}`))
@@ -102,6 +123,33 @@ export default function AdminLoanManagement() {
         const [cName, cCode] = selectedClusterKey.split("|");
         return groups.filter((g) => g.clusterName === cName && g.clusterCode === cCode);
     }, [groups, selectedClusterKey]);
+
+    // Restore cluster/group from URL or sessionStorage when returning (e.g. after Back)
+    useEffect(() => {
+        if (groups.length === 0 || hasRestoredRef.current) return;
+        hasRestoredRef.current = true;
+        let cluster = searchParams.get("cluster") || "";
+        let groupId = searchParams.get("group") || "";
+        if (!cluster && !groupId) {
+            cluster = sessionStorage.getItem(STORAGE_KEY_CLUSTER) || "";
+            groupId = sessionStorage.getItem(STORAGE_KEY_GROUP) || "";
+            if (cluster || groupId) {
+                const next = {};
+                if (cluster) next.cluster = cluster;
+                if (groupId) next.group = groupId;
+                setSearchParams(next, { replace: true });
+            }
+        }
+        if (cluster) setSelectedClusterKey(cluster);
+        if (groupId) {
+            const groupInList = groups.find((g) => g.id === groupId);
+            if (groupInList) {
+                setSelectedGroup(groupInList);
+                loadLoans(groupId);
+            }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [groups]);
 
     const filteredLoans = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
@@ -219,9 +267,19 @@ export default function AdminLoanManagement() {
                         <select
                             value={selectedClusterKey}
                             onChange={(e) => {
-                                setSelectedClusterKey(e.target.value);
+                                const val = e.target.value;
+                                setSelectedClusterKey(val);
                                 setSelectedGroup(null);
                                 setLoans([]);
+                                if (val) {
+                                    setSearchParams({ cluster: val }, { replace: true });
+                                    sessionStorage.setItem(STORAGE_KEY_CLUSTER, val);
+                                    sessionStorage.removeItem(STORAGE_KEY_GROUP);
+                                } else {
+                                    setSearchParams({}, { replace: true });
+                                    sessionStorage.removeItem(STORAGE_KEY_CLUSTER);
+                                    sessionStorage.removeItem(STORAGE_KEY_GROUP);
+                                }
                             }}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-blue-500"
                         >
@@ -262,6 +320,11 @@ export default function AdminLoanManagement() {
                                             onClick={() => {
                                                 setSelectedGroup(g);
                                                 loadLoans(g.id);
+                                                if (selectedClusterKey) {
+                                                    setSearchParams({ cluster: selectedClusterKey, group: g.id }, { replace: true });
+                                                    sessionStorage.setItem(STORAGE_KEY_CLUSTER, selectedClusterKey);
+                                                    sessionStorage.setItem(STORAGE_KEY_GROUP, g.id);
+                                                }
                                             }}
                                             className="text-left p-4 sm:p-5 border rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-colors"
                                         >
@@ -361,8 +424,13 @@ export default function AdminLoanManagement() {
                                 setLoans([]);
                                 setSearchTerm("");
                                 setStatusFilter("all");
-                                setSelectedClusterKey("");
                                 setShowMobileFilters(false);
+                                // Keep cluster so user sees group list for same cluster (no re-select)
+                                if (selectedClusterKey) {
+                                    setSearchParams({ cluster: selectedClusterKey }, { replace: true });
+                                    sessionStorage.setItem(STORAGE_KEY_CLUSTER, selectedClusterKey);
+                                }
+                                sessionStorage.removeItem(STORAGE_KEY_GROUP);
                             }}
                             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-semibold text-sm"
                         >
@@ -522,6 +590,25 @@ export default function AdminLoanManagement() {
                                                         {loan.status || "-"}
                                                     </span>
                                                     <span className="text-xs text-gray-500">Date: {dateLabel}</span>
+                                                    <div className="flex gap-1.5 ml-auto">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setViewLoan(loan)}
+                                                            className="p-1.5 rounded-lg border border-gray-300 hover:bg-gray-100 text-gray-600"
+                                                            title="View"
+                                                        >
+                                                            <Eye size={16} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => loan.status === "approved" && setEditLoan(loan)}
+                                                            disabled={loan.status !== "approved"}
+                                                            className="p-1.5 rounded-lg border border-gray-300 hover:bg-gray-100 text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            title={loan.status === "approved" ? "Edit" : "Edit only for approved loans"}
+                                                        >
+                                                            <Pencil size={16} />
+                                                        </button>
+                                                    </div>
                                                 </div>
 
                                                 <p className="mt-2 text-sm font-semibold text-gray-800">
@@ -584,6 +671,7 @@ export default function AdminLoanManagement() {
                                     <th className="border-b p-3 text-left font-semibold text-gray-700 text-sm">Purpose</th>
                                     <th className="border-b p-3 text-right font-semibold text-gray-700 text-sm">Amount</th>
                                     <th className="border-b p-3 text-left font-semibold text-gray-700 text-sm">Date</th>
+                                    <th className="border-b p-3 text-left font-semibold text-gray-700 text-sm">Actions</th>
                                 </tr>
                             </thead>
 
@@ -623,13 +711,34 @@ export default function AdminLoanManagement() {
                                                 ₹{Number(loan.amount || 0).toLocaleString()}
                                             </td>
                                             <td className="border-b p-3 text-gray-700 text-sm whitespace-nowrap">{dateLabel}</td>
+                                            <td className="border-b p-3">
+                                                <div className="flex items-center gap-1.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setViewLoan(loan)}
+                                                        className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 text-gray-600"
+                                                        title="View"
+                                                    >
+                                                        <Eye size={18} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => loan.status === "approved" && setEditLoan(loan)}
+                                                        disabled={loan.status !== "approved"}
+                                                        className="p-2 rounded-lg border border-gray-300 hover:bg-gray-100 text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        title={loan.status === "approved" ? "Edit" : "Edit only for approved loans"}
+                                                    >
+                                                        <Pencil size={18} />
+                                                    </button>
+                                                </div>
+                                            </td>
                                         </tr>
                                     );
                                 })}
 
                                 {!loading && filteredLoans.length === 0 && (
                                     <tr>
-                                        <td className="border-b p-8 text-center text-gray-600 text-sm" colSpan={7}>
+                                        <td className="border-b p-8 text-center text-gray-600 text-sm" colSpan={8}>
                                             No loan requests found.
                                         </td>
                                     </tr>
@@ -646,6 +755,7 @@ export default function AdminLoanManagement() {
                                             ₹{totalAmount.toLocaleString()}
                                         </td>
                                         <td className="border-t p-3" />
+                                        <td className="border-t p-3" />
                                     </tr>
                                 </tfoot>
                             )}
@@ -653,6 +763,21 @@ export default function AdminLoanManagement() {
                     </div>
                 </div>
             </div>
+
+            {/* Success toast */}
+            {successMessage && (
+                <div className="fixed bottom-4 right-4 z-50 px-4 py-3 bg-green-600 text-white rounded-lg shadow-lg text-sm font-medium">
+                    {successMessage}
+                </div>
+            )}
+
+            <ViewLoanModal show={!!viewLoan} loan={viewLoan} onClose={() => setViewLoan(null)} />
+            <EditLoanModal
+                show={!!editLoan}
+                loan={editLoan}
+                onClose={() => setEditLoan(null)}
+                onSuccess={handleEditSuccess}
+            />
         </div>
     );
 }

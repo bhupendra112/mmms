@@ -26,6 +26,7 @@ export const DEFAULT_HEAD_MAPPINGS = {
     "FD Return": { section: "liability", headType: "groupMaster" },
     "Loan Distribute": { section: "liability", headType: "groupMaster" },
     "Loan Recover": { section: "assets", headType: "groupMaster" },
+    "Loan Refund": { section: "liability", headType: "groupMaster" },
     "Member Fee Group": { section: "income", headType: "groupMaster" },
     "Member Fee": { section: "income", headType: "groupMaster" },
     "Member Fee SHG": { section: "income", headType: "groupMaster" },
@@ -104,18 +105,22 @@ export const getHeadMapping = (headName) => {
  * @param {string} groupId - Group ID
  * @param {string} headName - Head name
  * @param {string} section - Accounting section (income, expense, assets, liability)
+ * @param {Object} session - Optional Mongoose session for transaction
  * @returns {Promise<Object>} { headId, headType } - headId is the charge._id
  */
-export const findOrCreateHead = async (groupId, headName, section) => {
+export const findOrCreateHead = async (groupId, headName, section, session = null) => {
     try {
         const normalized = normalizeHeadName(headName);
         const mapping = getHeadMapping(normalized);
         const finalSection = section || mapping?.section || "expense";
 
-        const group = await GroupMaster.findById(groupId);
+        const findOptions = session ? { session } : {};
+        const group = await GroupMaster.findById(groupId, null, findOptions);
         if (!group) {
             throw new Error("Group not found");
         }
+
+        const saveOptions = session ? { session } : {};
 
         // Try to find existing charge with matching name and section
         if (group.charges && group.charges.length > 0) {
@@ -130,7 +135,7 @@ export const findOrCreateHead = async (groupId, headName, section) => {
                 // Update headName if not set
                 if (!existingCharge.headName) {
                     existingCharge.headName = normalized;
-                    await group.save();
+                    await group.save(saveOptions);
                 }
                 return {
                     headId: existingCharge._id,
@@ -162,7 +167,7 @@ export const findOrCreateHead = async (groupId, headName, section) => {
             }
 
             group.charges.push(newCharge);
-            await group.save();
+            await group.save(saveOptions);
 
             const createdCharge = group.charges[group.charges.length - 1];
             return {

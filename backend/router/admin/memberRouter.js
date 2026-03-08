@@ -1,6 +1,6 @@
 import express from "express";
-import { registerMemberSchema, updateMemberSchema } from "../../validation/adminValidation.js";
-import { getMemberDetail, listMembers, listMembersByGroup, registerMember, getAutoMemberCode, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember, getPendingMembers, approveMember, rejectMember, getMemberExitSummary, createMemberExitSettlement } from "../../controller/admin/memberController.js";
+import { registerMemberSchema, updateMemberSchema, updateOpeningSavingSchema } from "../../validation/adminValidation.js";
+import { getMemberDetail, listMembers, listMembersByGroup, registerMember, getAutoMemberCode, exportMemberLedger, getMemberFinancialLedger, updateMember, deleteMember, getPendingMembers, approveMember, rejectMember, getMemberExitSummary, createMemberExitSettlement, voidMemberExitSettlement, updateOpeningSaving } from "../../controller/admin/memberController.js";
 import upload from "../../config/multerConfig.js";
 import authAdmin from "../../middleware/authorization.js";
 import compressImages from "../../middleware/compressImages.js";
@@ -47,6 +47,18 @@ router.put("/update/:id", authAdmin, async (req, res) => {
     return updateMember(req, res);
 });
 
+// UPDATE OPENING SAVING (admin only; group panel cannot use this)
+router.put("/:memberId/update-opening-saving", authAdmin, async (req, res) => {
+    const { error } = updateOpeningSavingSchema.validate(req.body);
+    if (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.details[0].message
+        });
+    }
+    return updateOpeningSaving(req, res);
+});
+
 // DELETE MEMBER
 router.delete("/delete/:id", authAdmin, deleteMember);
 
@@ -64,6 +76,10 @@ router.get("/exit-summary", authAdmin, (req, res) => {
 
 router.post("/exit-settlement", authAdmin, (req, res) => {
     return createMemberExitSettlement(req, res);
+});
+
+router.delete("/exit-settlement", authAdmin, (req, res) => {
+    return voidMemberExitSettlement(req, res);
 });
 
 // Handle file uploads with multer - using fields to handle multiple optional files

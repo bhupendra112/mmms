@@ -79,6 +79,12 @@ const MemberSchema = new mongoose.Schema({
     isExistingMember: { type: Boolean, default: false },
     openingSaving: { type: Number, default: 0 },
     openingSavingPaid: { type: Boolean, default: false }, //Track if openingSaving has been paid
+    // Admin adjustments to opening saving (preserves history in ledger)
+    openingSavingAdjustments: [{
+        date: { type: Date, required: true },
+        amount: { type: Number, required: true }, // delta (positive = increase, negative = decrease)
+        reason: { type: String, default: "" },
+    }],
     fdDetails: {
         date: { type: Date },
         maturityDate: { type: Date },

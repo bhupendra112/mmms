@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { DollarSign } from "lucide-react";
-import { exportToExcel, exportToPDF, exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
+import { exportToExcel, exportToPDF, exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../utils/exportUtils";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -25,6 +25,7 @@ import { getPayments } from "../services/paymentService";
 import CreateFD from "../components/fd/CreateFD";
 import { formatDate, formatCurrency } from "../utils/memberUtils";
 
+import BackButton from "../components/admin/BackButton";
 import MemberDashboardHeader from "../components/member/MemberDashboardHeader";
 import MemberDashboardActions from "../components/member/MemberDashboardActions";
 import MemberPhoto from "../components/member/MemberPhoto";
@@ -630,8 +631,8 @@ export default function MemberDashboard() {
         const memberData = response.data[0];
         const memberCode = memberData.memberInfo?.code || "Member";
 
-        if (format === "excel") exportMemberLedgerToExcel([memberData], `Member_${memberCode}_Complete_Ledger`);
-        else exportMemberLedgerToPDF([memberData], `Member_${memberCode}_Complete_Ledger`);
+        if (format === "excel") exportMemberSummaryToExcel([memberData], `Member_${memberCode}_Summary`);
+        else exportMemberSummaryToPDF([memberData], `Member_${memberCode}_Summary`);
       } else {
         alert("No ledger data found to export");
       }
@@ -668,11 +669,11 @@ export default function MemberDashboard() {
   }, []);
 
   return (
-    <div className="member-dashboard-main w-full max-w-full overflow-x-hidden box-border">
-      {/* ✅ OUTER PADDING (SAFE ON PHONE) */}
-      <div className="w-full max-w-full min-w-0 overflow-x-hidden px-2 sm:px-4">
-        {/* ✅ INNER WRAPPER: LEFT ALIGNED + CONTROL WIDTH (THIS FIXES YOUR ISSUE) */}
-        <div className="w-full max-w-[380px] sm:max-w-[720px] md:max-w-[920px] lg:max-w-[1200px] mr-auto mx-0 min-w-0 flex flex-col gap-4">
+    <div className="member-dashboard-main w-full min-w-0 max-w-full box-border overflow-x-hidden">
+      {/* Fixed member navbar: always below app navbar (56px), never scrolls */}
+      <div className="fixed top-14 left-0 right-0 z-30 bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-[1200px] mx-auto px-2 sm:px-4 py-2 sm:py-3 flex flex-col gap-2 sm:gap-3 min-w-0 w-full box-border">
+          <BackButton fallback={isGroupRoute ? "/group/members" : "/admin/members"} label="Back to members" className="mb-0" />
           <MemberDashboardHeader
             member={member}
             onNextMember={handleGoToNextMember}
@@ -688,27 +689,27 @@ export default function MemberDashboard() {
             hasPrev={!!prevMemberId}
             onExitMember={handleExitMember}
           />
+          <MemberDashboardActions
+            onCreateFD={() => setShowCreateFD(true)}
+            onExportTableExcel={exportTableToExcel}
+            onExportFullDetailsExcel={exportFullDetailsToExcel}
+            onExportCompleteLedgerExcel={() => exportCompleteLedger("excel")}
+          />
+        </div>
+      </div>
 
+      {/* Content starts below fixed navbar; mobile needs more pt when navbar wraps */}
+      <div className="pt-[260px] sm:pt-[220px] md:pt-[180px] w-full max-w-[1200px] min-w-0 mx-auto px-2 sm:px-3 md:px-4 flex flex-col gap-3 sm:gap-4 overflow-x-hidden box-border">
           {loading && (
             <p className="text-sm md:text-base text-gray-600 mb-1">Loading member…</p>
           )}
 
           {!loading && loadError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 md:p-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-2 sm:p-3 md:p-4 w-full min-w-0">
               <p className="text-sm md:text-base text-red-700 font-semibold">Failed to load member</p>
               <p className="text-xs md:text-sm text-red-600 mt-1 break-words">{loadError}</p>
             </div>
           )}
-
-          <MemberDashboardActions
-            onCreateFD={() => setShowCreateFD(true)}
-            onExportTableExcel={exportTableToExcel}
-            onExportTablePDF={exportTableToPDF}
-            onExportFullDetailsExcel={exportFullDetailsToExcel}
-            onExportFullDetailsPDF={exportFullDetailsToPDF}
-            onExportCompleteLedgerExcel={() => exportCompleteLedger("excel")}
-            onExportCompleteLedgerPDF={() => exportCompleteLedger("pdf")}
-          />
 
           {showCreateFD && memberDoc && (
             <CreateFD
@@ -768,13 +769,13 @@ export default function MemberDashboard() {
 
           {/* FD Details */}
           {memberFDs.length > 0 && (
-            <div className="bg-green-50 border-l-4 border-green-500 rounded-lg shadow-sm p-3 sm:p-4 md:p-6 w-full min-w-0 overflow-x-hidden">
-              <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 break-words">
+            <div className="bg-green-50 border-l-4 border-green-500 rounded-lg shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 w-full min-w-0 overflow-x-hidden">
+              <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 break-words">
                 Fixed Deposit Details
               </h2>
 
-              <div className="w-full overflow-x-auto rounded-lg border bg-white">
-                <table className="min-w-[800px] w-full border-collapse text-xs md:text-sm">
+              <div className="w-full min-w-0 overflow-x-auto rounded-lg border bg-white">
+                <table className="min-w-[600px] sm:min-w-[800px] w-full border-collapse text-xs md:text-sm">
                   <thead>
                     <tr className="bg-green-100">
                       <th className="p-2 md:p-3 text-left font-semibold text-gray-700 border-b border-green-200">Date</th>
@@ -823,8 +824,8 @@ export default function MemberDashboard() {
 
           {/* Loan/Transaction */}
           {memberLoans.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 md:p-6 w-full min-w-0 overflow-x-hidden">
-              <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex flex-wrap items-center gap-2">
+            <div className="bg-white rounded-xl shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 w-full min-w-0 overflow-x-hidden">
+              <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 flex flex-wrap items-center gap-2">
                 <DollarSign size={18} className="sm:w-5 sm:h-5 text-green-600 shrink-0" />
                 <span className="break-words">Loan & Transaction Details ({memberLoans.length})</span>
               </h2>
@@ -884,8 +885,8 @@ export default function MemberDashboard() {
                   </div>
 
                   {/* Desktop table */}
-                  <div className="hidden sm:block w-full overflow-x-auto rounded-lg border bg-white">
-                    <table className="min-w-[800px] w-full border-collapse text-xs md:text-sm">
+                  <div className="hidden sm:block w-full min-w-0 overflow-x-auto rounded-lg border bg-white">
+                    <table className="min-w-[600px] md:min-w-[800px] w-full border-collapse text-xs md:text-sm">
                       <thead>
                         <tr className="bg-gray-100">
                           <th className="border border-gray-300 p-2 md:p-3 text-left font-semibold">Date</th>
@@ -961,7 +962,6 @@ export default function MemberDashboard() {
             formatDate={formatDate}
             formatCurrency={formatCurrency}
           />
-        </div>
       </div>
     </div>
   );

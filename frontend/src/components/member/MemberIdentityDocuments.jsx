@@ -88,8 +88,8 @@ export default function MemberIdentityDocuments({
     // ✅ Hard block: no horizontal overflow
     <div className="w-full max-w-full min-w-0 overflow-x-hidden">
       {/* ✅ Left align always (phone too): mx-0 + mr-auto */}
-      <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 md:p-6 mb-4 md:mb-6 w-full mx-0 mr-auto sm:max-w-[720px] lg:max-w-[900px]">
-        <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-3 md:mb-4 flex items-center gap-2">
+      <div className="bg-white rounded-xl shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 mb-3 sm:mb-4 md:mb-6 w-full min-w-0 mx-0 mr-auto sm:max-w-[720px] lg:max-w-[900px]">
+        <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 flex items-center gap-2">
           <IdCard size={20} className="shrink-0" />
           <span className="break-words">Member Identity Documents</span>
         </h2>

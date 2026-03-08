@@ -4,7 +4,7 @@ import { Building2, Search, Banknote, Calendar, DollarSign, FileText, Download }
 import { Input, Select, FormSection } from "../../components/forms/FormComponents";
 import { useSearchParams } from "react-router-dom";
 import { exportMemberLedger } from "../../services/memberService";
-import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../../utils/exportUtils";
+import { exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../../utils/exportUtils";
 
 export default function BankDetails() {
     const [searchParams] = useSearchParams();
@@ -112,9 +112,9 @@ export default function BankDetails() {
             if (response?.success && response?.data && response.data.length > 0) {
                 const groupName = selectedGroup.name || "Group";
                 if (format === 'excel') {
-                    exportMemberLedgerToExcel(response.data, `${groupName}_All_Members_Ledger`);
+                    exportMemberSummaryToExcel(response.data, `${groupName}_All_Members_Summary`);
                 } else {
-                    exportMemberLedgerToPDF(response.data, `${groupName}_All_Members_Ledger`);
+                    exportMemberSummaryToPDF(response.data, `${groupName}_All_Members_Summary`);
                 }
             } else {
                 alert("No ledger data found to export");

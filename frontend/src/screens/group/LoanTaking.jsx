@@ -13,7 +13,7 @@ import {
     CreditCard,
     LayoutGrid,
 } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { Input, Select } from "../../components/forms/FormComponents";
 import { LoanPurposeInput } from "../../components/forms/LoanPurposeInput";
 import { useGroup } from "../../contexts/GroupContext";
@@ -25,9 +25,11 @@ import { getMembersByGroup as getMembersByGroupOffline } from "../../services/me
 import { getGroups, getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
 import { getCashAmount } from "../../services/cashAmount";
+import BackButton from "../../components/admin/BackButton";
 
 export default function LoanTaking() {
     const { currentGroup, isOnline, isGroupPanel, isGroupLoading } = useGroup();
+    const { pathname } = useLocation();
     const { lastRefreshedAt } = useOffline();
     const isAdminMode = !isGroupPanel;
     const [searchParams] = useSearchParams();
@@ -371,6 +373,7 @@ export default function LoanTaking() {
 
     return (
         <div className="max-w-7xl mx-auto">
+            <BackButton fallback={pathname.startsWith("/group") ? "/group/loans" : "/admin/loan-management"} label="Back to loan management" className="mb-4" />
             <div className="mb-6">
                 <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
                     <DollarSign size={32} />

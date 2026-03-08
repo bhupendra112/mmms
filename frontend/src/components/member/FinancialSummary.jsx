@@ -10,8 +10,8 @@ export default function FinancialSummary({ member, memberDoc, isMobile, windowWi
   const shouldShowTable = !isCurrentlyMobile && !isMobile;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 md:p-6 mb-3 sm:mb-4 md:mb-6 w-full box-border overflow-x-hidden">
-      <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 break-words flex items-center gap-2">
+    <div className="bg-white rounded-xl shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 mb-2 sm:mb-3 md:mb-4 w-full min-w-0 box-border overflow-x-hidden">
+      <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 break-words flex items-center gap-2">
         <DollarSign size={18} className="sm:w-5 sm:h-5 shrink-0" />
         <span>Financial Summary</span>
       </h2>
@@ -106,7 +106,7 @@ export default function FinancialSummary({ member, memberDoc, isMobile, windowWi
 
       {/* Desktop Table View */}
       {shouldShowTable && (
-        <div className="finance-summary-table w-full overflow-x-auto rounded-lg border bg-white">
+        <div className="finance-summary-table w-full min-w-0 overflow-x-auto rounded-lg border bg-white">
           <table className="min-w-[400px] w-full border-collapse text-xs md:text-sm">
             <tbody>
               <tr className="border-b border-gray-200">

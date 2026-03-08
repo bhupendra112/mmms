@@ -1,12 +1,13 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import LoanMaster from "../../model/LoanMaster.js";
-import { GroupMaster, BankMaster } from "../../model/index.js";
+import { GroupMaster, BankMaster, LoanAdjustmentLog, PaymentMaster, Member } from "../../model/index.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
 import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
+import { recalculateLoanState } from "../../service/loanRecalculationService.js";
 
 export const registerLoan = async (req, res) => {
     try {
@@ -445,6 +446,314 @@ export const rejectLoan = async (req, res) => {
         return apiResponse.success(res, "Loan rejected successfully", loan);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ---------- Editable loan terms: preview & update (forward-only, no past record changes) ----------
+
+const asOfToday = () => {
+    const d = new Date();
+    d.setHours(23, 59, 59, 999);
+    return d;
+};
+
+/**
+ * Preview loan edit: old vs new total payable and adjustment status.
+ * Body: { date?, amount?, time_period?, loan_rate_snapshot? }
+ */
+export const previewLoanEdit = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const body = req.body || {};
+        if (!id) {
+            return apiResponse.error(res, "Loan ID is required", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const loan = await LoanMaster.findById(id).lean();
+        if (!loan) {
+            return apiResponse.error(res, "Loan not found", 404);
+        }
+        const accessCheck = await verifyGroupAccess(loan.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Access denied", 403);
+        }
+        if (loan.transactionType !== "Loan" || loan.status !== "approved") {
+            return apiResponse.error(res, "Only approved loans can be edited", 400);
+        }
+
+        const asOf = asOfToday();
+        const oldState = await recalculateLoanState(id, asOf);
+        const overrides = {};
+        if (body.date != null) overrides.date = body.date;
+        if (body.amount != null) overrides.amount = body.amount;
+        if (body.time_period != null) overrides.time_period = body.time_period;
+        if (body.loan_rate_snapshot != null) overrides.loan_rate_snapshot = body.loan_rate_snapshot;
+        if (body.interestRate != null) overrides.loan_rate_snapshot = body.interestRate; // alias
+
+        const newState = Object.keys(overrides).length > 0
+            ? await recalculateLoanState(id, asOf, overrides)
+            : oldState;
+
+        const oldTotalPayable = oldState.totalDue;
+        const newTotalPayable = newState.totalDue;
+        const difference = Math.round((newTotalPayable - oldTotalPayable) * 100) / 100;
+        let status = "no_change";
+        let overpaidAmount = 0;
+        let underpaidAmount = 0;
+        if (newState.overpayment > 0) {
+            status = "overpaid";
+            overpaidAmount = newState.overpayment;
+        } else if (newState.underpayment > 0) {
+            status = "underpaid";
+            underpaidAmount = newState.underpayment;
+        }
+
+        return apiResponse.success(res, "Preview calculated", {
+            oldTotalPayable,
+            newTotalPayable,
+            difference,
+            status,
+            overpaidAmount,
+            underpaidAmount,
+            oldState: {
+                totalDue: oldState.totalDue,
+                totalPaid: oldState.totalPaid,
+                overpayment: oldState.overpayment,
+                underpayment: oldState.underpayment,
+                outstanding: oldState.outstanding,
+            },
+            newState: {
+                totalDue: newState.totalDue,
+                totalPaid: newState.totalPaid,
+                overpayment: newState.overpayment,
+                underpayment: newState.underpayment,
+                outstanding: newState.outstanding,
+            },
+        });
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Preview failed", 500);
+    }
+};
+
+/**
+ * Update loan terms and apply adjustment (advance | refund | deficit | manual).
+ * Body: date?, amount?, time_period?, loan_rate_snapshot?, actionTaken, manualOverride?, refundPaymentMode?, bankId?
+ */
+export const updateLoan = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const body = req.body || {};
+        if (!id) {
+            return apiResponse.error(res, "Loan ID is required", 400);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const loan = await LoanMaster.findById(id);
+        if (!loan) {
+            return apiResponse.error(res, "Loan not found", 404);
+        }
+        const accessCheck = await verifyGroupAccess(loan.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Access denied", 403);
+        }
+        if (loan.transactionType !== "Loan" || loan.status !== "approved") {
+            return apiResponse.error(res, "Only approved loans can be edited", 400);
+        }
+
+        const actionTaken = body.actionTaken; // advance | refund | deficit | manual
+        const manualOverride = body.manualOverride || body.manualOverrideAmount != null
+            ? {
+                amount: body.manualOverrideAmount ?? body.manualOverride?.amount,
+                type: body.manualAdjustmentType ?? body.manualOverride?.type,
+                reason: body.manualAdjustmentReason ?? body.manualOverride?.reason,
+            }
+            : null;
+
+        // 1) Snapshot old loan
+        const oldLoanSnapshot = {
+            date: loan.date,
+            amount: loan.amount,
+            time_period: loan.time_period,
+            loan_rate_snapshot: loan.loan_rate_snapshot,
+            installment_amount: loan.installment_amount,
+        };
+
+        // 2) Update editable fields (forward-only)
+        if (body.date != null) loan.date = new Date(body.date);
+        if (body.amount != null) {
+            loan.amount = parseFloat(body.amount);
+            if (loan.time_period > 0) {
+                loan.installment_amount = loan.amount / loan.time_period;
+            }
+        }
+        if (body.time_period != null) {
+            const tp = parseFloat(body.time_period);
+            // Store in months: if value looks like years (1–30 integer), convert; else treat as months
+            loan.time_period = tp > 0 && tp <= 30 && Number.isInteger(tp) ? Math.round(tp * 12) : Math.round(tp);
+            if (loan.amount != null && loan.time_period > 0) {
+                loan.installment_amount = loan.amount / loan.time_period;
+            }
+        }
+        if (body.loan_rate_snapshot != null) loan.loan_rate_snapshot = parseFloat(body.loan_rate_snapshot);
+        if (body.interestRate != null) loan.loan_rate_snapshot = parseFloat(body.interestRate);
+
+        await loan.save();
+
+        const newLoanSnapshot = {
+            date: loan.date,
+            amount: loan.amount,
+            time_period: loan.time_period,
+            loan_rate_snapshot: loan.loan_rate_snapshot,
+            installment_amount: loan.installment_amount,
+        };
+
+        // 3) Recalculate after update
+        const asOf = asOfToday();
+        const systemRecalculation = await recalculateLoanState(id, asOf);
+
+        let refundPaymentId = null;
+        let memberCredit = 0;
+        let deficitAmount = 0;
+        let effectiveAction = actionTaken;
+
+        if (manualOverride && manualOverride.amount != null && manualOverride.type) {
+            effectiveAction = "manual";
+            const amt = Math.abs(parseFloat(manualOverride.amount)) || 0;
+            if (manualOverride.type === "overpaid") {
+                memberCredit = amt;
+            } else if (manualOverride.type === "underpaid") {
+                deficitAmount = amt;
+            }
+        } else if (systemRecalculation.overpayment > 0) {
+            if (actionTaken === "advance") {
+                memberCredit = systemRecalculation.overpayment;
+                effectiveAction = "advance";
+            } else if (actionTaken === "refund") {
+                const refundAmt = systemRecalculation.overpayment;
+                const paymentMode = body.refundPaymentMode || loan.paymentMode || "Cash";
+                const bankId = body.bankId || loan.bankId;
+                if (paymentMode === "Bank" && !bankId) {
+                    return apiResponse.error(res, "bankId required for Bank refund", 400);
+                }
+                const member = await Member.findById(loan.memberId).lean();
+                const paymentData = {
+                    memberId: member?._id || loan.memberId,
+                    memberCode: loan.memberCode || member?.Member_Id,
+                    memberName: loan.memberName || member?.memberName,
+                    groupId: loan.groupId,
+                    groupName: loan.groupName,
+                    groupCode: loan.groupCode,
+                    paymentType: "loan_refund",
+                    amount: refundAmt,
+                    paymentMode,
+                    bankId: paymentMode === "Bank" ? bankId : undefined,
+                    status: "completed",
+                    paymentDate: new Date(),
+                    remarks: `Loan overpayment refund - Loan edit adjustment`,
+                    createdBy: req.user?.id || "admin",
+                    completedBy: req.user?.id || "admin",
+                    completedAt: new Date(),
+                };
+                const payment = await PaymentMaster.create(paymentData);
+                refundPaymentId = payment._id;
+
+                if (paymentMode === "Cash") {
+                    await createCashTransactionRecord({
+                        groupId: loan.groupId,
+                        transactionType: "payment",
+                        amount: refundAmt,
+                        date: new Date(),
+                        description: "Loan Refund (overpayment)",
+                        paymentId: payment._id,
+                        memberId: loan.memberId,
+                        memberCode: loan.memberCode,
+                        memberName: loan.memberName,
+                        createdBy: req.user?.id || "admin",
+                    });
+                } else {
+                    await createBankTransactionRecord({
+                        bankId,
+                        groupId: loan.groupId,
+                        transactionType: "payment",
+                        amount: refundAmt,
+                        date: new Date(),
+                        description: "Loan Refund (overpayment)",
+                        paymentId: payment._id,
+                        memberId: loan.memberId,
+                        memberCode: loan.memberCode,
+                        memberName: loan.memberName,
+                        createdBy: req.user?.id || "admin",
+                        status: "verified",
+                    });
+                }
+                const headInfo = await findOrCreateHead(loan.groupId, "Loan Refund", "liability");
+                await postTransaction({
+                    sourceDoc: payment,
+                    headName: "Loan Refund",
+                    headType: headInfo?.headType || "groupMaster",
+                    headId: headInfo?.headId,
+                    section: "liability",
+                    amount: refundAmt,
+                    direction: "out",
+                    groupId: loan.groupId,
+                    memberId: loan.memberId || undefined,
+                    date: new Date(),
+                    notes: `Loan refund - ${loan.memberName || loan.memberCode || ""}`,
+                    paymentMode,
+                    bankId: paymentMode === "Bank" ? bankId : undefined,
+                    referenceModel: "PaymentMaster",
+                    referenceId: payment._id,
+                    createdBy: req.user?.id || "admin",
+                });
+            }
+        } else if (systemRecalculation.underpayment > 0) {
+            if (actionTaken === "deficit" || !actionTaken) {
+                deficitAmount = systemRecalculation.underpayment;
+                effectiveAction = "deficit";
+            }
+        }
+
+        const adjustmentLog = await LoanAdjustmentLog.create({
+            loanId: loan._id,
+            groupId: loan.groupId,
+            memberId: loan.memberId,
+            memberCode: loan.memberCode,
+            memberName: loan.memberName,
+            oldLoanSnapshot,
+            newLoanSnapshot,
+            systemRecalculation: {
+                recalculatedPrincipalDue: systemRecalculation.recalculatedPrincipalDue,
+                recalculatedInterestDue: systemRecalculation.recalculatedInterestDue,
+                totalDue: systemRecalculation.totalDue,
+                totalPaid: systemRecalculation.totalPaid,
+                overpayment: systemRecalculation.overpayment,
+                underpayment: systemRecalculation.underpayment,
+                outstanding: systemRecalculation.outstanding,
+                principalPaid: systemRecalculation.principalPaid,
+                interestPaid: systemRecalculation.interestPaid,
+            },
+            manualOverride: manualOverride && (manualOverride.amount != null || manualOverride.reason)
+                ? {
+                    amount: manualOverride.amount,
+                    type: manualOverride.type,
+                    reason: manualOverride.reason,
+                }
+                : undefined,
+            actionTaken: effectiveAction,
+            refundPaymentId: refundPaymentId || undefined,
+            memberCredit,
+            deficitAmount,
+            createdBy: req.user?.id || "admin",
+        });
+
+        return apiResponse.success(res, "Loan updated and adjustment applied", {
+            loan: loan.toObject ? loan.toObject() : loan,
+            adjustmentLog: adjustmentLog.toObject ? adjustmentLog.toObject() : adjustmentLog,
+            systemRecalculation,
+        });
+    } catch (error) {
+        return apiResponse.error(res, error.message || "Update failed", 500);
     }
 };
 

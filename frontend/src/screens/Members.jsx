@@ -5,7 +5,7 @@ import { useGroup } from "../contexts/GroupContext";
 import { useOffline } from "../contexts/OfflineContext";
 import { getMembersByGroup } from "../services/memberServiceOffline";
 import { exportMemberLedger } from "../services/memberService";
-import { exportMemberLedgerToExcel, exportMemberLedgerToPDF } from "../utils/exportUtils";
+import { exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../utils/exportUtils";
 
 const Members = () => {
   const { currentGroup, isGroupLoading } = useGroup();
@@ -33,9 +33,9 @@ const Members = () => {
         const memberCode = memberData.memberInfo?.code || "Member";
 
         if (format === 'excel') {
-          exportMemberLedgerToExcel([memberData], `Member_${memberCode}_Ledger`);
+          exportMemberSummaryToExcel([memberData], `Member_${memberCode}_Summary`);
         } else {
-          exportMemberLedgerToPDF([memberData], `Member_${memberCode}_Ledger`);
+          exportMemberSummaryToPDF([memberData], `Member_${memberCode}_Summary`);
         }
       } else {
         alert("No ledger data found to export");
@@ -67,9 +67,9 @@ const Members = () => {
       if (response?.success && response?.data && response.data.length > 0) {
         const groupName = currentGroup.name || "Group";
         if (format === 'excel') {
-          exportMemberLedgerToExcel(response.data, `${groupName}_All_Members_Ledger`);
+          exportMemberSummaryToExcel(response.data, `${groupName}_All_Members_Summary`);
         } else {
-          exportMemberLedgerToPDF(response.data, `${groupName}_All_Members_Ledger`);
+          exportMemberSummaryToPDF(response.data, `${groupName}_All_Members_Summary`);
         }
       } else {
         alert("No ledger data found to export");

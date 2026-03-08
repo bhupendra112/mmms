@@ -444,7 +444,13 @@ export default function DemandRecovery() {
     return saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + memFeesGroup + penalty + other + chargesTotal;
   };
 
-  // Amount change validation
+  // Sum of all breakup fields except saving (cut from any field → add to saving, total unchanged)
+  const sumExceptSaving = (breakup) => totalFromBreakup({ ...breakup, saving: 0 });
+
+  // Fixed integer amount: if decimal >= 0.5 round up, else round down (no float display)
+  const roundAmount = (n) => Math.round(Number(n) || 0);
+
+  // Amount change: when admin edits a non-Saving field, keep total unchanged and add the cut amount to Saving
   const handleAmountChange = (fieldName, value) => {
     const numValue = parseFloat(value) || 0;
 
@@ -460,28 +466,37 @@ export default function DemandRecovery() {
       ? { ...amountBreakup, charges: value || {} }
       : { ...amountBreakup, [fieldName]: value };
 
+    // Saving is the flexible bucket: editing it just recalculates total from all fields
     if (fieldName === "saving") {
       setAmountBreakup(nextBreakup);
-      setTotalAmount(totalFromBreakup(nextBreakup) > 0 ? totalFromBreakup(nextBreakup).toFixed(2) : "");
+      const tot = totalFromBreakup(nextBreakup);
+      setTotalAmount(tot > 0 ? String(roundAmount(tot)) : "");
       setAutoCalculated(false);
       return;
     }
 
-    if (value === "" || value == null) {
-      setAmountBreakup(nextBreakup);
-      setTotalAmount(totalFromBreakup(nextBreakup) > 0 ? totalFromBreakup(nextBreakup).toFixed(2) : "");
-      setAutoCalculated(false);
-    } else if (numValue <= maxValue) {
-      setAmountBreakup(nextBreakup);
-      setTotalAmount(totalFromBreakup(nextBreakup) > 0 ? totalFromBreakup(nextBreakup).toFixed(2) : "");
-      setAutoCalculated(false);
-    } else {
+    // Cap if value exceeds due amount
+    if (value !== "" && value != null && numValue > maxValue) {
       alert(`Amount cannot exceed the due amount of ₹${maxValue.toLocaleString()}`);
       const capped = { ...amountBreakup, [fieldName]: String(maxValue) };
+      const currentTotal = totalFromBreakup(amountBreakup);
+      const sumOthers = sumExceptSaving(capped);
+      const newSaving = Math.max(0, currentTotal - sumOthers);
+      capped.saving = String(roundAmount(newSaving));
       setAmountBreakup(capped);
-      setTotalAmount(totalFromBreakup(capped) > 0 ? totalFromBreakup(capped).toFixed(2) : "");
+      setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
       setAutoCalculated(false);
+      return;
     }
+
+    // For Loan, Interest, Yogdan, etc.: keep total unchanged, add cut amount to Saving
+    const currentTotal = totalFromBreakup(amountBreakup);
+    const sumOthers = sumExceptSaving(nextBreakup);
+    const newSaving = Math.max(0, currentTotal - sumOthers);
+    nextBreakup.saving = String(roundAmount(newSaving));
+    setAmountBreakup(nextBreakup);
+    setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
+    setAutoCalculated(false);
   };
 
   // FIX: this was calling getDemandSummary incorrectly earlier.
@@ -538,28 +553,29 @@ export default function DemandRecovery() {
     const chargesDue = summary?.charges?.chargesDue || {};
 
     // Priority: Yogdan -> MemFeesGroup -> MemFeesSHG -> MemFeesSamiti -> Charges -> Interest -> Saving -> Loan
-    // Any extra after loan also goes to Saving (no auto FD/penalty from total)
+    // Any extra after loan also goes to Saving (no auto FD/penalty from total). Amounts fixed integers (>= 0.5 rounds up).
+    const roundAmt = (n) => Math.round(Number(n) || 0);
     if (yogdanDue > 0 && remaining > 0) {
       const v = Math.min(yogdanDue, remaining);
-      calculated.yogdan = v.toFixed(2);
+      calculated.yogdan = String(roundAmt(v));
       remaining -= v;
     }
 
     if (membershipGroupDue > 0 && remaining > 0) {
       const v = Math.min(membershipGroupDue, remaining);
-      calculated.memFeesGroup = v.toFixed(2);
+      calculated.memFeesGroup = String(roundAmt(v));
       remaining -= v;
     }
 
     if (membershipFeesDue > 0 && remaining > 0) {
       const v = Math.min(membershipFeesDue, remaining);
-      calculated.memFeesSHG = v.toFixed(2);
+      calculated.memFeesSHG = String(roundAmt(v));
       remaining -= v;
     }
 
     if (memFeesSamitiDue > 0 && remaining > 0) {
       const v = Math.min(memFeesSamitiDue, remaining);
-      calculated.memFeesSamiti = v.toFixed(2);
+      calculated.memFeesSamiti = String(roundAmt(v));
       remaining -= v;
     }
 
@@ -569,7 +585,7 @@ export default function DemandRecovery() {
         const due = parseFloat(chargesDue[chargeName] ?? 0) || 0;
         if (due > 0 && remaining > 0) {
           const v = Math.min(due, remaining);
-          calculatedCharges[chargeName] = v.toFixed(2);
+          calculatedCharges[chargeName] = String(roundAmt(v));
           remaining -= v;
         }
       });
@@ -578,14 +594,14 @@ export default function DemandRecovery() {
 
     if (interestDue > 0 && remaining > 0) {
       const v = Math.min(interestDue, remaining);
-      calculated.interest = v.toFixed(2);
+      calculated.interest = String(roundAmt(v));
       remaining -= v;
     }
 
     // NEW: Calculate saving BEFORE loan
     if (savingDue > 0 && remaining > 0) {
       const v = Math.min(savingDue, remaining);
-      calculated.saving = v.toFixed(2);
+      calculated.saving = String(roundAmt(v));
       remaining -= v;
     }
 
@@ -630,7 +646,7 @@ export default function DemandRecovery() {
     if (effectiveLoanDue > 0 && remaining > 0) {
       if (!isLoanFullyPaid || hasLoanFromSummary) {
         const v = Math.min(effectiveLoanDue, remaining);
-        calculated.loan = v.toFixed(2);
+        calculated.loan = String(roundAmt(v));
         remaining -= v;
       }
     }
@@ -638,7 +654,7 @@ export default function DemandRecovery() {
     // Any remaining extra after loan goes to Saving (not FD or penalty)
     if (remaining > 0) {
       const cur = parseFloat(calculated.saving ?? 0) || 0;
-      calculated.saving = (cur + remaining).toFixed(2);
+      calculated.saving = String(roundAmt(cur + remaining));
     }
 
     setAmountBreakup(calculated);
@@ -1329,8 +1345,8 @@ export default function DemandRecovery() {
                 </div>
               </div>
 
-              {/* Current Member Form */}
-              <div className="lg:col-span-8 min-w-0">
+              {/* Current Member Form — sticky when section scrolls into view */}
+              <div className="lg:col-span-8 min-w-0 sticky top-20 z-10 self-start">
                 {currentMember && currentMemberSummary ? (
                   <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                     <div className="p-2 sm:p-3 md:p-4 space-y-4">
@@ -1445,7 +1461,7 @@ export default function DemandRecovery() {
                         onAmountBreakupChange={(nextBreakup) => {
                           setAmountBreakup(nextBreakup);
                           const total = totalFromBreakup(nextBreakup);
-                          setTotalAmount(total > 0 ? total.toFixed(2) : "");
+                          setTotalAmount(total > 0 ? String(roundAmount(total)) : "");
                           setAutoCalculated(false);
                         }}
                         onSetAutoCalculated={setAutoCalculated}

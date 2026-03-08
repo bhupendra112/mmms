@@ -5,8 +5,8 @@ export default function MemberDetails({ memberDoc, formatDate: formatDateFn = fo
   if (!memberDoc) return null;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4 md:p-6 mb-3 sm:mb-4 md:mb-6 w-full box-border overflow-x-hidden">
-      <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex flex-wrap items-center gap-2">
+    <div className="bg-white rounded-xl shadow-sm p-2 sm:p-3 md:p-4 lg:p-6 mb-2 sm:mb-3 md:mb-4 w-full min-w-0 box-border overflow-x-hidden">
+      <h2 className="text-sm sm:text-base md:text-lg font-semibold text-gray-800 mb-2 sm:mb-3 flex flex-wrap items-center gap-2">
         <User size={18} className="sm:w-5 sm:h-5 shrink-0" />
         <span className="break-words">Complete Member & Spouse Details</span>
       </h2>

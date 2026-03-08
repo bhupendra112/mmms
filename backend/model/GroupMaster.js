@@ -47,6 +47,15 @@ const GroupMasterSchema = new mongoose.Schema({
     loginEnabled: { type: Boolean, default: true },
     lastLoginAt: { type: Date },
 
+    // Supervisor and password-based login
+    supervisorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Member",
+        default: null,
+    },
+    groupPassword: { type: String, select: false }, // Hashed; never returned by default
+    passwordUpdatedAt: { type: Date },
+
     // Financial rates
     saving_rate: { type: Number }, // Rate for saving (interest rate percentage)
     fd_rate: { type: Number }, // Fixed Deposit interest rate percentage
