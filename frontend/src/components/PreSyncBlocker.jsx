@@ -22,16 +22,15 @@ export default function PreSyncBlocker({ children }) {
 
     const [retrying, setRetrying] = useState(false);
 
-    // List of routes that should bypass pre-sync check (auth routes and admin routes)
+    // List of routes that should bypass pre-sync check (auth routes)
     const authRoutes = [
         '/login-admin',
         '/group/login',
-        '/admin/register',
     ];
 
     // Check if current route is an auth route or admin route
     const isAuthRoute = authRoutes.some(route => location.pathname === route || location.pathname.startsWith(route));
-    const isAdminRoute = location.pathname.startsWith('/admin') && !location.pathname.startsWith('/admin/register');
+    const isAdminRoute = location.pathname.startsWith('/admin');
 
     useEffect(() => {
         // Check pre-sync status on mount

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { loginAdminService } from "../services/adminService";
 import { useAdmin } from "../contexts/AdminContext";
-import { Link } from "react-router-dom";
 
 function LoginAdmin() {
   const navigate = useNavigate();
@@ -108,13 +107,6 @@ function LoginAdmin() {
             {loading ? "Logging in..." : "Login"}
           </button>
         </form>
-
-        <p className="mt-6 text-center text-gray-600">
-          Don't have an account?{" "}
-          <Link to="/admin/register" className="text-blue-600 hover:text-blue-800 font-medium">
-            Register here
-          </Link>
-        </p>
       </div>
     </div>
   );

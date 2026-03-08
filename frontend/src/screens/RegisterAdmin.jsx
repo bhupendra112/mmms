@@ -1,8 +1,12 @@
 import React, { useState } from "react";
 import { registerAdminService } from "../services/adminService";
-import { Link , useNavigate} from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 
 function RegisterAdmin() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isAddPlace = location.pathname.includes("add-place");
+
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -10,7 +14,6 @@ function RegisterAdmin() {
     confirmPassword: "",
     place: ""
   });
-const navigate = useNavigate();
   const [message, setMessage] = useState("");
 
   const handleChange = (e) => {
@@ -33,12 +36,16 @@ const navigate = useNavigate();
         place: form.place
       });
 
-      setMessage("✅ Registered Successfully!");
-
-      localStorage.setItem("token", response.data.token);
-
-      alert("Login Successful");
-      navigate("/");
+      if (isAddPlace) {
+        setMessage("✅ Place added successfully.");
+        setForm({ name: "", email: "", password: "", confirmPassword: "", place: "" });
+        setTimeout(() => navigate("/admin/dashboard"), 1500);
+      } else {
+        setMessage("✅ Registered Successfully!");
+        localStorage.setItem("token", response.data.token);
+        alert("Login Successful");
+        navigate("/");
+      }
     } catch (error) {
       setMessage(error.response?.data?.message || "❌ Registration Failed");
     }
@@ -46,7 +53,7 @@ const navigate = useNavigate();
 
   return (
     <div className="max-w-md mx-auto p-6 mt-8 border rounded-lg shadow">
-      <h2 className="text-2xl font-bold mb-4">Register Admin</h2>
+      <h2 className="text-2xl font-bold mb-4">{isAddPlace ? "Add new place" : "Register Admin"}</h2>
 
       {message && <p className="mb-3 text-red-600">{message}</p>}
 
@@ -107,15 +114,23 @@ const navigate = useNavigate();
           type="submit"
           className="bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
         >
-          Register Admin
+          {isAddPlace ? "Add new place" : "Register Admin"}
         </button>
 
-        <p className="text-sm mt-2">
-          Already have an account?{" "}
-          <Link to="/login-admin" className="text-blue-600 underline">
-            Login here
-          </Link>
-        </p>
+        {isAddPlace ? (
+          <p className="text-sm mt-2">
+            <Link to="/admin/dashboard" className="text-blue-600 underline">
+              Back to dashboard
+            </Link>
+          </p>
+        ) : (
+          <p className="text-sm mt-2">
+            Already have an account?{" "}
+            <Link to="/login-admin" className="text-blue-600 underline">
+              Login here
+            </Link>
+          </p>
+        )}
       </form>
     </div>
   );

@@ -6,6 +6,7 @@ import {
     X,
     LayoutGrid,
     Building2,
+    MapPin,
     Users,
     Settings,
     Banknote,
@@ -70,6 +71,17 @@ export default function AdminNavbar() {
         {
             section: "Dashboard",
             items: [{ icon: LayoutGrid, label: "Dashboard", path: "/admin" }],
+        },
+        {
+            section: "Admin",
+            items: [
+                {
+                    icon: MapPin,
+                    label: "Add new place",
+                    path: "/admin/add-place",
+                    description: "Register a new place (admin only)"
+                },
+            ],
         },
         {
             section: "Village Samooh Management",

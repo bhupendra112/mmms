@@ -53,7 +53,6 @@ function App() {
               {/* Public Auth Routes */}
               <Route path="/login-admin" element={<LoginAdmin />} />
               <Route path="/group/login" element={<LoginGroup />} />
-              <Route path="/admin/register" element={<RegisterAdmin />} />
 
               {/* Admin Routes */}
               <Route
@@ -85,6 +84,7 @@ function App() {
                 <Route path="bank-details" element={<BankDetails />} />
                 <Route path="cash-to-bank" element={<CashToBankConversion />} />
                 <Route path="create-group" element={<CreateGroup />} />
+                <Route path="add-place" element={<RegisterAdmin />} />
                 <Route path="demand-recovery" element={<DemandRecovery />} />
               </Route>
 
