@@ -1,5 +1,6 @@
 import { GroupMaster } from "../model/index.js";
 import { Admin } from "../model/index.js";
+import { Supervisor } from "../model/index.js";
 
 
 /**
@@ -23,6 +24,13 @@ export const getAdminPlace = async (req) => {
                 if (group && group.place) {
                     adminPlace = group.place;
                     // Update req.user and req.admin for subsequent use
+                    if (req.user) req.user.place = adminPlace;
+                    if (req.admin) req.admin.place = adminPlace;
+                }
+            } else if (req.user?.type === "supervisor" || req.admin?.type === "supervisor") {
+                const supervisor = await Supervisor.findById(id).select('place').lean();
+                if (supervisor && supervisor.place) {
+                    adminPlace = supervisor.place;
                     if (req.user) req.user.place = adminPlace;
                     if (req.admin) req.admin.place = adminPlace;
                 }

@@ -151,15 +151,7 @@ export const createBankTransactionRecord = async (options) => {
                 willRemoveFromBalance: !isCredit,
                 currentBalanceBefore: bank.current_balance || 0
             });
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'bankTransactionHelper.js:114', message: 'Recalculating bank balance for expense', data: { transactionType: transactionType, amount: parseFloat(amount), bankId: bank._id.toString(), isCredit: isCredit, willRemoveFromBalance: !isCredit, currentBalanceBefore: bank.current_balance || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'EXPENSE_FIX' }) }).catch(() => { });
-            // #endregion
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'bankTransactionHelper.js:120', message: 'Recalculating bank balance', data: { transactionType: transactionType, amount: parseFloat(amount), bankId: bank._id.toString(), isCredit: isCredit, currentBalanceBefore: bank.current_balance || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
-            // #endregion
-            
+
             const balanceBefore = bank.current_balance || 0;
             await bank.recalculateBalance();
             const balanceAfter = bank.current_balance || 0;
@@ -170,10 +162,6 @@ export const createBankTransactionRecord = async (options) => {
                 difference: balanceAfter - balanceBefore,
                 expectedDifference: isCredit ? parseFloat(amount) : -parseFloat(amount)
             });
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'bankTransactionHelper.js:135', message: 'Bank balance recalculated', data: { balanceBefore: balanceBefore, balanceAfter: balanceAfter, difference: balanceAfter - balanceBefore, expectedDifference: isCredit ? parseFloat(amount) : -parseFloat(amount), isCorrect: (balanceAfter - balanceBefore) === (isCredit ? parseFloat(amount) : -parseFloat(amount)) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'FD_FIX' }) }).catch(() => { });
-            // #endregion
         } else {
             console.log("[BANK_TRANSACTION] Transaction is pending, balance will be updated when verified:", {
                 transactionType,

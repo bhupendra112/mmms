@@ -15,6 +15,7 @@ import MemberExitSettlement from "./MemberExitSettlement.js";
 import GroupLedger from "./GroupLedger.js";
 import IncomeExpenseHead from "./IncomeExpenseHead.js";
 import LoanAdjustmentLog from "./LoanAdjustmentLog.js";
+import Supervisor from "./Supervisor.js";
 
 export {
     Admin,
@@ -33,5 +34,6 @@ export {
     GroupLedger,
     IncomeExpenseHead,
     MemberExitSettlement,
-    LoanAdjustmentLog
+    LoanAdjustmentLog,
+    Supervisor
 };

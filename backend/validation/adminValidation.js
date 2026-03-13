@@ -260,3 +260,29 @@ export const groupLoginSchema = Joi.object({
     groupCode: Joi.string().required(),
     password: Joi.string().required(),
 });
+
+// ======================
+// SUPERVISOR LOGIN VALIDATION
+// ======================
+export const supervisorLoginSchema = Joi.object({
+    email: Joi.string().email().required(),
+    password: Joi.string().required(),
+});
+
+// ======================
+// SUPERVISOR CREATE (ADMIN)
+// ======================
+export const createSupervisorSchema = Joi.object({
+    name: Joi.string().required().trim(),
+    email: Joi.string().email().required(),
+    password: Joi.string().min(6).required(),
+});
+
+// ======================
+// SUPERVISOR UPDATE (ADMIN)
+// ======================
+export const updateSupervisorSchema = Joi.object({
+    name: Joi.string().trim().optional(),
+    email: Joi.string().email().optional(),
+    password: Joi.string().min(6).optional(),
+}).min(1);

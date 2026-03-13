@@ -117,52 +117,9 @@ export default function PaymentManagement() {
             // Prefer live backend data when online so balances reflect latest approvals
             const useOnline = typeof navigator !== "undefined" && navigator.onLine;
 
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    location: 'PaymentManagement.jsx:loadBanks - START',
-                    message: 'Loading banks',
-                    data: { groupId, useOnline, isOnline: navigator.onLine },
-                    timestamp: Date.now(),
-                    sessionId: 'debug-session',
-                    runId: 'run1',
-                    hypothesisId: 'H8',
-                }),
-            }).catch(() => { });
-            // #endregion
-
             const res = useOnline
                 ? await getGroupBanksOnline(groupId)
                 : await getGroupBanksOffline(groupId);
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    location: 'PaymentManagement.jsx:loadBanks - API RESPONSE',
-                    message: 'Banks API response received',
-                    data: {
-                        groupId,
-                        source: useOnline ? 'backend_api' : 'offline_master_banks',
-                        hasResponse: !!res,
-                        success: res?.success,
-                        hasData: !!res?.data,
-                        dataIsArray: Array.isArray(res?.data),
-                        rawDataLength: res?.data?.length,
-                        rawDataKeys: res?.data ? Object.keys(res?.data) : [],
-                        nestedDataIsArray: Array.isArray(res?.data?.data),
-                        nestedDataLength: res?.data?.data?.length,
-                    },
-                    timestamp: Date.now(),
-                    sessionId: 'debug-session',
-                    runId: 'run1',
-                    hypothesisId: 'H8',
-                }),
-            }).catch(() => { });
-            // #endregion
 
             // Handle response structure:
             // - Online: getGroupBanksOnline returns axios res.data = { success: true, message: "...", data: banks }
@@ -188,54 +145,8 @@ export default function PaymentManagement() {
             });
 
             setBanks(mapped);
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    location: 'PaymentManagement.jsx:loadBanks - FINAL',
-                    message: 'Group banks loaded for payment module',
-                    data: {
-                        groupId,
-                        source: useOnline ? 'backend_api' : 'offline_master_banks',
-                        bankCount: mapped.length,
-                        sampleBank: mapped[0] ? {
-                            id: mapped[0].id,
-                            name: mapped[0].name,
-                            available_balance: mapped[0].available_balance,
-                            current_balance: mapped[0].current_balance,
-                        } : null,
-                    },
-                    timestamp: Date.now(),
-                    sessionId: 'debug-session',
-                    runId: 'run1',
-                    hypothesisId: 'H8',
-                }),
-            }).catch(() => { });
-            // #endregion
         } catch (err) {
             console.error("Error loading banks:", err);
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    location: 'PaymentManagement.jsx:loadBanks - ERROR',
-                    message: 'Error loading banks',
-                    data: {
-                        groupId,
-                        errorMessage: err?.message,
-                        errorStack: err?.stack,
-                        errorResponse: err?.response?.data,
-                    },
-                    timestamp: Date.now(),
-                    sessionId: 'debug-session',
-                    runId: 'run1',
-                    hypothesisId: 'H8',
-                }),
-            }).catch(() => { });
-            // #endregion
             setBanks([]);
         } finally {
             setBanksLoading(false);

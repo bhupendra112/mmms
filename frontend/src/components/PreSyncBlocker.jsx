@@ -26,25 +26,27 @@ export default function PreSyncBlocker({ children }) {
     const authRoutes = [
         '/login-admin',
         '/group/login',
+        '/supervisor/login',
     ];
 
-    // Check if current route is an auth route or admin route
+    // Check if current route is an auth route or admin/supervisor route
     const isAuthRoute = authRoutes.some(route => location.pathname === route || location.pathname.startsWith(route));
     const isAdminRoute = location.pathname.startsWith('/admin');
+    const isSupervisorRoute = location.pathname.startsWith('/supervisor');
 
     useEffect(() => {
         // Check pre-sync status on mount
         checkPreSyncStatus();
     }, [checkPreSyncStatus]);
 
-    // Auto-start pre-sync if not completed and not in progress (but skip if on auth route or admin route)
+    // Auto-start pre-sync if not completed and not in progress (but skip if on auth route or admin/supervisor route)
     useEffect(() => {
-        if (!isAuthRoute && !isAdminRoute && !preSyncCompleted && !preSyncInProgress && !preSyncError && !retrying) {
+        if (!isAuthRoute && !isAdminRoute && !isSupervisorRoute && !preSyncCompleted && !preSyncInProgress && !preSyncError && !retrying) {
             startPreSync().catch(err => {
                 console.error('Pre-sync failed:', err);
             });
         }
-    }, [isAuthRoute, isAdminRoute, preSyncCompleted, preSyncInProgress, preSyncError, startPreSync, retrying]);
+    }, [isAuthRoute, isAdminRoute, isSupervisorRoute, preSyncCompleted, preSyncInProgress, preSyncError, startPreSync, retrying]);
 
     const handleRetry = async () => {
         setRetrying(true);
@@ -57,8 +59,8 @@ export default function PreSyncBlocker({ children }) {
         }
     };
 
-    // Allow auth routes and admin routes to pass through without pre-sync check
-    if (isAuthRoute || isAdminRoute) {
+    // Allow auth routes and admin/supervisor routes to pass through without pre-sync check
+    if (isAuthRoute || isAdminRoute || isSupervisorRoute) {
         return <>{children}</>;
     }
 

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { useSelector, useDispatch } from "react-redux";
+import { useSelector } from "react-redux";
 import { selectGroup, selectIsGroupAuthenticated } from "../store/groupAuthSlice";
+import { selectIsSupervisorAuthenticated } from "../store/supervisorAuthSlice";
 import { getGroups, getGroupDetail, getGroupByCode } from "../services/groupService";
 
 const GroupContext = createContext();
@@ -15,15 +16,18 @@ export const useGroup = () => {
             isOnline: navigator.onLine,
             isGroupPanel: false,
             isGroupLoading: false,
+            isSupervisor: false,
         };
     }
     return context;
 };
 
 export const GroupProvider = ({ children }) => {
-    const dispatch = useDispatch();
     const reduxGroup = useSelector(selectGroup);
-    const isAuthenticated = useSelector(selectIsGroupAuthenticated);
+    const isGroupAuthenticated = useSelector(selectIsGroupAuthenticated);
+    const isSupervisorAuthenticated = useSelector(selectIsSupervisorAuthenticated);
+    const isAuthenticated = isGroupAuthenticated || isSupervisorAuthenticated;
+    const isSupervisor = isSupervisorAuthenticated;
     const ACTIVE_GROUP_ID_KEY = "activeGroupId";
     const ACTIVE_GROUP_CODE_KEY = "activeGroupCode";
     const ACTIVE_GROUP_CACHE_KEY = "activeGroupCache";
@@ -53,14 +57,15 @@ export const GroupProvider = ({ children }) => {
             _setCurrentGroup(mappedGroup);
             setIsGroupLoading(false);
         } else {
-            // Try to load from localStorage cache or API
-            loadActiveGroup()
+            // Try to load from localStorage cache or API (for group user) or restore previous selection (for supervisor)
+            loadActiveGroup(isSupervisor)
+                .then(() => setIsGroupLoading(false))
                 .catch((e) => {
                     console.error("Failed to load active group:", e);
                     setIsGroupLoading(false);
                 });
         }
-    }, [isAuthenticated, reduxGroup]);
+    }, [isAuthenticated, reduxGroup, isSupervisor]);
 
     const mapGroupFromApi = (group) => {
         if (!group) return null;
@@ -97,7 +102,7 @@ export const GroupProvider = ({ children }) => {
         }
     };
 
-    const loadActiveGroup = async () => {
+    const loadActiveGroup = async (supervisorMode = false) => {
         // If offline, try cached group
         if (!navigator.onLine) {
             try {
@@ -118,24 +123,38 @@ export const GroupProvider = ({ children }) => {
 
         // Prefer id, then code
         if (storedId) {
-            const detailRes = await getGroupDetail(storedId);
-            const group = mapGroupFromApi(detailRes?.data);
-            if (group) {
-                setCurrentGroup(group);
-                return;
+            try {
+                const detailRes = await getGroupDetail(storedId);
+                const group = mapGroupFromApi(detailRes?.data);
+                if (group) {
+                    setCurrentGroup(group);
+                    return;
+                }
+            } catch {
+                // ignore
             }
         }
 
         if (storedCode) {
-            const detailRes = await getGroupByCode(storedCode);
-            const group = mapGroupFromApi(detailRes?.data);
-            if (group) {
-                setCurrentGroup(group);
-                return;
+            try {
+                const detailRes = await getGroupByCode(storedCode);
+                const group = mapGroupFromApi(detailRes?.data);
+                if (group) {
+                    setCurrentGroup(group);
+                    return;
+                }
+            } catch {
+                // ignore
             }
         }
 
-        // Fallback: pick first group from list
+        // Supervisor with no stored selection: leave currentGroup null (they must select cluster/group)
+        if (supervisorMode) {
+            _setCurrentGroup(null);
+            return;
+        }
+
+        // Fallback for group user: pick first group from list
         const listRes = await getGroups();
         const first = Array.isArray(listRes?.data) ? listRes.data[0] : null;
         if (!first?._id) {
@@ -161,7 +180,7 @@ export const GroupProvider = ({ children }) => {
     }, []);
 
     return (
-        <GroupContext.Provider value={{ currentGroup, setCurrentGroup, isOnline, isGroupPanel: true, isGroupLoading }}>
+        <GroupContext.Provider value={{ currentGroup, setCurrentGroup, isOnline, isGroupPanel: true, isGroupLoading, isSupervisor }}>
             {children}
         </GroupContext.Provider>
     );

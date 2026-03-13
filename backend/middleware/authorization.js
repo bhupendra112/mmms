@@ -51,6 +51,13 @@ export default async function authAdmin(req, res, next) {
                     place: null
                 };
             }
+        } else if (decoded.type === "supervisor") {
+            req.user = {
+                id: decoded.id,
+                type: "supervisor",
+                email: decoded.email,
+                place: decoded.place
+            };
         } else {
             // For admin tokens, set req.user with id, email, and place
             req.user = {

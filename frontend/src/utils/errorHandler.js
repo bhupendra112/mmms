@@ -19,7 +19,7 @@ export const getErrorMessage = (error) => {
             case 400:
                 return message || "Invalid request. Please check your input and try again.";
             case 401:
-                return "Your session has expired. Please log in again.";
+                return message || "Your session has expired. Please log in again.";
             case 403:
                 return message || "You don't have permission to perform this action.";
             case 404:

@@ -5,9 +5,10 @@ import { useOffline } from "../../contexts/OfflineContext";
 import { getMembersByGroup } from "../../services/memberServiceOffline";
 import { getLoans } from "../../services/loanServiceOffline";
 import { getRecoveries } from "../../services/recoveryServiceOffline";
+import { getClusters, getGroups } from "../../services/groupService";
 
 export default function GroupDashboard() {
-    const { currentGroup, isGroupLoading } = useGroup();
+    const { currentGroup, setCurrentGroup, isGroupLoading, isSupervisor } = useGroup();
     const { lastRefreshedAt } = useOffline();
     const [stats, setStats] = useState([
         {
@@ -41,6 +42,10 @@ export default function GroupDashboard() {
     ]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [clusters, setClusters] = useState([]);
+    const [groups, setGroups] = useState([]);
+    const [selectedCluster, setSelectedCluster] = useState("");
+    const [selectorLoading, setSelectorLoading] = useState(false);
 
     useEffect(() => {
         if (currentGroup?.id) {
@@ -49,6 +54,52 @@ export default function GroupDashboard() {
             setLoading(false);
         }
     }, [currentGroup, isGroupLoading, lastRefreshedAt]);
+
+    // When supervisor has no group selected (initial or after "Change group"), reset cluster so they pick again and groups reload
+    useEffect(() => {
+        if (isSupervisor && !currentGroup) {
+            setSelectedCluster("");
+        }
+    }, [isSupervisor, currentGroup]);
+
+    useEffect(() => {
+        if (isSupervisor && !currentGroup) {
+            setSelectorLoading(true);
+            getClusters()
+                .then((res) => {
+                    const data = res?.data ?? res;
+                    setClusters(Array.isArray(data) ? data : []);
+                })
+                .catch(() => setClusters([]))
+                .finally(() => setSelectorLoading(false));
+        }
+    }, [isSupervisor, currentGroup]);
+
+    useEffect(() => {
+        if (!isSupervisor || !selectedCluster) {
+            setGroups([]);
+            return;
+        }
+        setSelectorLoading(true);
+        getGroups()
+            .then((res) => {
+                const data = res?.data ?? res;
+                const list = Array.isArray(data) ? data : [];
+                setGroups(list.filter((g) => g.cluster_name === selectedCluster || g.cluster_code === selectedCluster));
+            })
+            .catch(() => setGroups([]))
+            .finally(() => setSelectorLoading(false));
+    }, [isSupervisor, selectedCluster]);
+
+    const mapGroupForContext = (g) => ({
+        id: g._id || g.id,
+        code: g.group_code || g.code,
+        name: g.group_name || g.name,
+        village: g.village,
+        cluster: g.cluster_name || g.cluster_code || g.cluster,
+        noMembers: g.no_members,
+        memberCount: g.memberCount ?? g.no_members ?? 0,
+    });
 
     const loadDashboardStats = async () => {
         try {
@@ -141,6 +192,63 @@ export default function GroupDashboard() {
         }
     };
 
+    if (isSupervisor && !currentGroup) {
+        return (
+            <div className="w-full">
+                <div className="mb-6">
+                    <h1 className="text-xl md:text-2xl font-bold text-gray-800">Select cluster and group</h1>
+                    <p className="text-sm text-gray-600 mt-1">Supervisor: choose a cluster, then a group to view.</p>
+                </div>
+                {selectorLoading && !clusters.length ? (
+                    <p className="text-gray-500">Loading clusters...</p>
+                ) : (
+                    <div className="space-y-6 max-w-2xl">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Cluster</label>
+                            <select
+                                value={selectedCluster}
+                                onChange={(e) => setSelectedCluster(e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                            >
+                                <option value="">Select cluster</option>
+                                {clusters.map((c, i) => (
+                                    <option key={i} value={c.cluster_name || c.cluster_code || ""}>
+                                        {c.cluster_name || c.cluster_code || "Unnamed"}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        {selectedCluster && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Group</label>
+                                {selectorLoading ? (
+                                    <p className="text-gray-500">Loading groups...</p>
+                                ) : groups.length === 0 ? (
+                                    <p className="text-gray-500">No groups in this cluster.</p>
+                                ) : (
+                                    <ul className="border border-gray-200 rounded-lg divide-y divide-gray-200 bg-white">
+                                        {groups.map((g) => (
+                                            <li key={g._id || g.id}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCurrentGroup(mapGroupForContext(g))}
+                                                    className="w-full text-left px-4 py-3 hover:bg-green-50 flex justify-between items-center"
+                                                >
+                                                    <span className="font-medium text-gray-800">{g.group_name || g.name}</span>
+                                                    <span className="text-sm text-gray-500">{(g.group_code || g.code) || ""}</span>
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     return (
         <div className="w-full">
             <div className="mb-4 md:mb-6">
@@ -152,6 +260,15 @@ export default function GroupDashboard() {
                             ? `Manage ${currentGroup.name}${currentGroup.village ? ` (${currentGroup.village})` : ""}`
                             : "Manage your village samooh group"}
                 </p>
+                {isSupervisor && currentGroup && (
+                    <button
+                        type="button"
+                        onClick={() => setCurrentGroup(null)}
+                        className="mt-2 text-sm text-slate-600 hover:text-slate-800 underline"
+                    >
+                        Change group
+                    </button>
+                )}
             </div>
 
             {error && (

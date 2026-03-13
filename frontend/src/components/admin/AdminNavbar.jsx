@@ -8,6 +8,7 @@ import {
     Building2,
     MapPin,
     Users,
+    UserCheck,
     Settings,
     Banknote,
     PlusCircle,
@@ -91,6 +92,12 @@ export default function AdminNavbar() {
                     label: "Group Management",
                     path: "/admin/group-management",
                     description: "Manage all groups, members, bank & finance"
+                },
+                {
+                    icon: UserCheck,
+                    label: "Supervisor Management",
+                    path: "/admin/supervisor-management",
+                    description: "Create and manage supervisors for your place"
                 },
                 {
                     icon: Banknote,

@@ -176,27 +176,16 @@ export const listBanksByGroup = async (req, res) => {
         const { groupId } = req.params;
         if (!groupId) return apiResponse.error(res, "groupId is required", 400);
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:132', message: 'listBanksByGroup - ENTRY', data: { groupId, userType: req.user?.type, adminType: req.admin?.type }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-        // #endregion
-
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
 
         // Verify group access
         const accessCheck = await verifyGroupAccess(groupId, adminPlace);
         if (!accessCheck.valid) {
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:142', message: 'listBanksByGroup - ACCESS DENIED', data: { groupId, error: accessCheck.error }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-            // #endregion
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
 
         const group = accessCheck.group;
-
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:153', message: 'listBanksByGroup - GROUP DOCUMENT', data: { groupId, groupName: group?.group_name, groupCode: group?.group_code, hasBankmasters: !!group?.bankmasters, bankmastersType: typeof group?.bankmasters, bankmastersIsArray: Array.isArray(group?.bankmasters), bankmastersLength: group?.bankmasters?.length || 0, bankmastersRaw: group?.bankmasters, hasBankmaster: !!group?.bankmaster, bankmasterRaw: group?.bankmaster }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-        // #endregion
 
         // Get banks for the group - check both BankMaster.group_id AND GroupMaster.bankmasters array
         const mongoose = (await import("mongoose")).default;
@@ -230,17 +219,9 @@ export const listBanksByGroup = async (req, res) => {
             }
         }
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:155', message: 'listBanksByGroup - QUERY CONDITIONS', data: { groupId, groupObjectId: groupObjectId.toString(), bankIdsFromGroup, queryConditionCount: queryConditions.length, hasBankmastersArray: group.bankmasters?.length > 0, bankmastersCount: group.bankmasters?.length || 0 }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-        // #endregion
-
         let banks = await BankMaster.find({
             $or: queryConditions
         }).sort({ createdAt: -1 }).lean();
-
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:195', message: 'listBanksByGroup - BANKS QUERIED (PRIMARY)', data: { groupId, groupObjectId: groupObjectId.toString(), bankCount: banks.length, bankIds: banks.map(b => b._id?.toString()), foundViaGroupId: banks.filter(b => b.group_id?.toString() === groupObjectId.toString()).length, foundViaBankmasters: banks.filter(b => bankIdsFromGroup.includes(b._id?.toString())).length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-        // #endregion
 
         // Fallback: If no banks found via primary methods, check banks used in transactions for this group
         if (banks.length === 0) {
@@ -263,13 +244,6 @@ export const listBanksByGroup = async (req, res) => {
                 .select('bankId')
                 .lean();
 
-            // #region agent log - Detailed inspection
-            const paymentSamples = payments.slice(0, 3).map(p => ({ id: p._id?.toString(), paymentMode: p.paymentMode, bankId: p.bankId?.toString(), hasBankId: !!p.bankId }));
-            const loanSamples = loans.slice(0, 3).map(l => ({ id: l._id?.toString(), paymentMode: l.paymentMode, bankId: l.bankId?.toString(), hasBankId: !!l.bankId }));
-            const fdSamples = fds.slice(0, 3).map(f => ({ id: f._id?.toString(), bankId: f.bankId?.toString(), hasBankId: !!f.bankId }));
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:224', message: 'listBanksByGroup - FALLBACK DETAILED INSPECTION', data: { groupId, transactionCount: bankTransactions.length, paymentCount: payments.length, paymentSamples, loanCount: loans.length, loanSamples, fdCount: fds.length, fdSamples, expenseCount: expenses.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-            // #endregion
-
             const transactionBankIds = [...new Set([
                 ...bankTransactions.map(t => t.bankId?.toString()).filter(Boolean),
                 ...payments.filter(p => p.paymentMode === 'Bank').map(p => p.bankId?.toString()).filter(Boolean),
@@ -277,10 +251,6 @@ export const listBanksByGroup = async (req, res) => {
                 ...loans.filter(l => l.paymentMode === 'Bank').map(l => l.bankId?.toString()).filter(Boolean),
                 ...fds.map(f => f.bankId?.toString()).filter(Boolean)
             ])];
-
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:235', message: 'listBanksByGroup - FALLBACK CHECK', data: { groupId, transactionBankIds, transactionCount: bankTransactions.length, paymentCount: payments.length, expenseCount: expenses.length, loanCount: loans.length, fdCount: fds.length, paymentBankCount: payments.filter(p => p.paymentMode === 'Bank' && p.bankId).length, expenseBankCount: expenses.filter(e => e.paymentMode === 'Bank' && e.bankId).length, loanBankCount: loans.filter(l => l.paymentMode === 'Bank' && l.bankId).length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-            // #endregion
 
             if (transactionBankIds.length > 0) {
                 const fallbackBankObjectIds = transactionBankIds
@@ -291,10 +261,6 @@ export const listBanksByGroup = async (req, res) => {
                     banks = await BankMaster.find({
                         _id: { $in: fallbackBankObjectIds }
                     }).sort({ createdAt: -1 }).lean();
-
-                    // #region agent log
-                    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:220', message: 'listBanksByGroup - BANKS FOUND VIA FALLBACK', data: { groupId, bankCount: banks.length, bankIds: banks.map(b => b._id?.toString()) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-                    // #endregion
                 }
             }
         }
@@ -321,10 +287,6 @@ export const listBanksByGroup = async (req, res) => {
                 bank.pending_credits = 0;
             }
         }
-
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'groupController.js:174', message: 'listBanksByGroup - RESPONSE', data: { groupId, bankCount: banks.length, banks: banks.map(b => ({ id: b._id?.toString(), name: b.bank_name, accountNo: b.account_no, current_balance: b.current_balance, available_balance: b.available_balance })) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'H8' }) }).catch(() => { });
-        // #endregion
 
         return apiResponse.success(res, "Banks fetched successfully", banks);
     } catch (error) {

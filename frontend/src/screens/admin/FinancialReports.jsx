@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { FileText, Building2, Calendar, Loader2, LayoutGrid } from "lucide-react";
 import { getGroups } from "../../services/groupService";
 import {
@@ -12,66 +12,6 @@ import BalanceSheet from "../../components/reports/BalanceSheet";
 import Loader, { OverlayLoader } from "../../components/common/Loader";
 import ErrorMessage from "../../components/common/ErrorMessage";
 import { handleApiError } from "../../utils/apiErrorHandler";
-
-const DEBUG_INGEST =
-    "http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22";
-
-// #region agent log
-function debugIngest(payload) {
-    try {
-        fetch(DEBUG_INGEST, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                ...payload,
-                timestamp: payload.timestamp ?? Date.now(),
-                sessionId: payload.sessionId ?? "debug-session",
-                runId: payload.runId ?? "initial",
-            }),
-        }).catch(() => { });
-    } catch (_) { }
-}
-// #endregion
-
-// Viewport debug
-function useViewportDebug(enable = true) {
-    const log = useCallback(() => {
-        if (!enable || typeof window === "undefined") return;
-        const w = window.innerWidth;
-        const bodyScroll = document.body?.scrollWidth ?? 0;
-        const bodyClient = document.body?.clientWidth ?? 0;
-        const breakpoint = w < 640 ? "phone" : w < 1024 ? "tablet" : "desktop";
-        const overflow = bodyScroll > bodyClient;
-        const payload = {
-            location: "FinancialReports",
-            windowInnerWidth: w,
-            breakpoint,
-            bodyScrollWidth: bodyScroll,
-            bodyClientWidth: bodyClient,
-            hasHorizontalOverflow: overflow,
-            ts: Date.now(),
-        };
-        try {
-            if (!window.__financialReportsViewportLog) window.__financialReportsViewportLog = [];
-            window.__financialReportsViewportLog.push(payload);
-            if (window.__financialReportsViewportLog.length > 50) window.__financialReportsViewportLog.shift();
-        } catch (_) { }
-    }, [enable]);
-
-    useEffect(() => {
-        log();
-        let timeoutId;
-        const onResize = () => {
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(log, 150);
-        };
-        window.addEventListener("resize", onResize);
-        return () => {
-            window.removeEventListener("resize", onResize);
-            clearTimeout(timeoutId);
-        };
-    }, [log]);
-}
 
 export default function FinancialReports() {
     const [groups, setGroups] = useState([]);
@@ -100,91 +40,6 @@ export default function FinancialReports() {
         incomeExpense: false,
         balanceSheet: false,
     });
-
-    useViewportDebug(true);
-
-    // #region agent log
-    useEffect(() => {
-        const run = () => {
-            const w = window.innerWidth;
-            const bodyScroll = document.body?.scrollWidth ?? 0;
-            const bodyClient = document.body?.clientWidth ?? 0;
-            const breakpoint = w < 640 ? "phone" : w < 1024 ? "tablet" : "desktop";
-            const overflow = bodyScroll > bodyClient;
-            const screen = selectedGroup ? "report" : "cluster";
-            debugIngest({
-                location: "FinancialReports.jsx:viewport",
-                message: "Viewport and screen",
-                data: {
-                    windowInnerWidth: w,
-                    breakpoint,
-                    bodyScrollWidth: bodyScroll,
-                    bodyClientWidth: bodyClient,
-                    hasHorizontalOverflow: overflow,
-                    screen,
-                    activeTab: selectedGroup ? activeTab : null,
-                },
-                hypothesisId: overflow ? "H1" : "H2",
-            });
-
-            setTimeout(() => {
-                const tabs = document.querySelector("[data-debug='fr-tabs']");
-                const report = document.querySelector("[data-debug='fr-report']");
-                if (tabs) {
-                    const tw = tabs.scrollWidth;
-                    const tc = tabs.clientWidth;
-                    debugIngest({
-                        location: "FinancialReports.jsx:tabs",
-                        message: "Tabs container dimensions",
-                        data: {
-                            scrollWidth: tw,
-                            clientWidth: tc,
-                            overflows: tw > tc,
-                            windowInnerWidth: w,
-                            breakpoint,
-                        },
-                        hypothesisId: "H4",
-                    });
-                }
-                if (report) {
-                    const rw = report.scrollWidth;
-                    const rc = report.clientWidth;
-                    const table = report.querySelector("table");
-                    const tScroll = table ? table.scrollWidth : null;
-                    const tClient = table ? table.clientWidth : null;
-                    debugIngest({
-                        location: "FinancialReports.jsx:report",
-                        message: "Report container and table",
-                        data: {
-                            containerScrollWidth: rw,
-                            containerClientWidth: rc,
-                            containerOverflows: rw > rc,
-                            tableScrollWidth: tScroll,
-                            tableClientWidth: tClient,
-                            tableOverflows: tScroll != null && tClient != null && tScroll > tClient,
-                            windowInnerWidth: w,
-                            breakpoint,
-                            activeTab,
-                        },
-                        hypothesisId: "H3",
-                    });
-                }
-            }, 120);
-        };
-
-        run();
-        let t;
-        const onResize = () => {
-            clearTimeout(t);
-            t = setTimeout(run, 200);
-        };
-        window.addEventListener("resize", onResize);
-        return () => {
-            window.removeEventListener("resize", onResize);
-            clearTimeout(t);
-        };
-    }, [selectedGroup, activeTab]);
-    // #endregion
 
     // ----------------------------
     // Fetch groups

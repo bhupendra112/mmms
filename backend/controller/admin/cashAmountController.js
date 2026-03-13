@@ -13,10 +13,6 @@ import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 export const addCashAmountInternal = async (groupId, amount) => {
     console.log("[CASH_AMOUNT] addCashAmountInternal called:", { groupId, amount, groupIdType: typeof groupId });
 
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'cashAmountController.js:12', message: 'addCashAmountInternal entry', data: { groupId: groupId?.toString(), amount }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) }).catch(() => { });
-    // #endregion
-
     try {
         // Convert groupId to ObjectId
         let groupObjectId;
@@ -89,17 +85,9 @@ export const addCashAmountInternal = async (groupId, amount) => {
 
         console.log("[CASH_AMOUNT] addCashAmountInternal result:", result);
 
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'cashAmountController.js:56', message: 'addCashAmountInternal success', data: result, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) }).catch(() => { });
-        // #endregion
-
         return result;
     } catch (error) {
         console.error("[CASH_AMOUNT] Error adding cash amount internally:", error);
-
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'cashAmountController.js:58', message: 'addCashAmountInternal error', data: { error: error.message, stack: error.stack }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) }).catch(() => { });
-        // #endregion
 
         throw error;
     }

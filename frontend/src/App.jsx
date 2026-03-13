@@ -5,14 +5,17 @@ import { AdminProvider } from "./contexts/AdminContext";
 import PreSyncBlocker from "./components/PreSyncBlocker";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute";
 import ProtectedGroupRoute from "./components/ProtectedGroupRoute";
+import ProtectedSupervisorRoute from "./components/ProtectedSupervisorRoute";
 
 // Layouts
 import AdminNavbar from "./components/admin/AdminNavbar";
 import GroupNavbar from "./components/group/GroupNavbar";
+import SupervisorNavbar from "./components/supervisor/SupervisorNavbar";
 
 // Auth Screens
 import LoginAdmin from "./screens/LoginAdmin";
 import LoginGroup from "./screens/LoginGroup";
+import LoginSupervisor from "./screens/LoginSupervisor";
 import RegisterAdmin from "./screens/RegisterAdmin";
 
 // Admin Screens
@@ -42,6 +45,11 @@ import GroupPaymentManagement from "./screens/group/PaymentManagement";
 import GroupExpenseManagement from "./screens/group/ExpenseManagement";
 import GroupLoanManagement from "./screens/group/LoanManagement";
 import GroupLedger from "./screens/GroupLedger";
+import SupervisorDashboard from "./screens/supervisor/SupervisorDashboard";
+import SupervisorClusters from "./screens/supervisor/SupervisorClusters";
+import SupervisorGroups from "./screens/supervisor/SupervisorGroups";
+import SupervisorGroupDetail from "./screens/supervisor/SupervisorGroupDetail";
+import SupervisorManagement from "./screens/admin/SupervisorManagement";
 
 function App() {
   return (
@@ -53,6 +61,7 @@ function App() {
               {/* Public Auth Routes */}
               <Route path="/login-admin" element={<LoginAdmin />} />
               <Route path="/group/login" element={<LoginGroup />} />
+              <Route path="/supervisor/login" element={<LoginSupervisor />} />
 
               {/* Admin Routes */}
               <Route
@@ -84,6 +93,7 @@ function App() {
                 <Route path="bank-details" element={<BankDetails />} />
                 <Route path="cash-to-bank" element={<CashToBankConversion />} />
                 <Route path="create-group" element={<CreateGroup />} />
+                <Route path="supervisor-management" element={<SupervisorManagement />} />
                 <Route path="add-place" element={<RegisterAdmin />} />
                 <Route path="demand-recovery" element={<DemandRecovery />} />
               </Route>
@@ -112,6 +122,22 @@ function App() {
                 <Route path="expenses" element={<GroupExpenseManagement />} />
                 <Route path="ledger" element={<GroupLedger />} />
                 <Route path="cash-to-bank" element={<CashToBankConversion />} />
+              </Route>
+
+              {/* Supervisor Routes */}
+              <Route
+                path="/supervisor/*"
+                element={
+                  <ProtectedSupervisorRoute>
+                    <SupervisorNavbar />
+                  </ProtectedSupervisorRoute>
+                }
+              >
+                <Route index element={<Navigate to="/supervisor/dashboard" replace />} />
+                <Route path="dashboard" element={<SupervisorDashboard />} />
+                <Route path="clusters" element={<SupervisorClusters />} />
+                <Route path="groups" element={<SupervisorGroups />} />
+                <Route path="group/:groupId" element={<SupervisorGroupDetail />} />
               </Route>
 
               {/* Default redirect */}

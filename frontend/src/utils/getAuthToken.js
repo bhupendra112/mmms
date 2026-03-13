@@ -1,23 +1,24 @@
 /**
  * Centralized function to get auth token
- * Checks for group token first (if in group context), then admin token
+ * Checks for group/supervisor token first (if in that context), then admin token
  * This ensures consistency across all HTTP clients
  */
 export const getAuthToken = () => {
-  // Check if we're in a group context (group routes start with /group)
-  const isGroupRoute = window.location.pathname.startsWith("/group");
-  
-  // For group routes, prefer group token
-  if (isGroupRoute) {
-    const groupToken = localStorage.getItem("groupToken");
-    if (groupToken) {
-      return groupToken;
-    }
+  const pathname = window.location?.pathname || "";
+
+  if (pathname.startsWith("/supervisor")) {
+    const supervisorToken = localStorage.getItem("supervisorToken");
+    if (supervisorToken) return supervisorToken;
   }
-  
-  // Fall back to admin token
-  const adminToken = localStorage.getItem("adminToken");
-  return adminToken;
+
+  if (pathname.startsWith("/group")) {
+    const supervisorToken = localStorage.getItem("supervisorToken");
+    if (supervisorToken) return supervisorToken;
+    const groupToken = localStorage.getItem("groupToken");
+    if (groupToken) return groupToken;
+  }
+
+  return localStorage.getItem("adminToken");
 };
 
 /**

@@ -6,6 +6,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import connectDB from "./config/dbConfig.js";
 import adminRouter from "./router/admin/index.js";
+import supervisorAuthRouter from "./router/supervisorAuthRouter.js";
 
 dotenv.config();
 
@@ -114,6 +115,9 @@ const startServer = async () => {
 
         // Admin Routes
         app.use("/api/admin", adminRouter);
+
+        // Supervisor auth (public login)
+        app.use("/api/supervisor", supervisorAuthRouter);
 
         app.listen(PORT, () => {
             // Log server start (keep for production monitoring)

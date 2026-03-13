@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import { logoutGroup } from "../../store/groupAuthSlice";
+import { logoutSupervisor, selectSupervisor } from "../../store/supervisorAuthSlice";
 import {
     Menu,
     Search,
@@ -20,7 +21,8 @@ import UserDropdown from "../common/UserDropdown";
 import { getGroupApprovalOutcomes } from "../../services/approvalNotificationService";
 
 export default function GroupNavbar() {
-    const { currentGroup } = useGroup();
+    const { currentGroup, isSupervisor } = useGroup();
+    const supervisor = useSelector(selectSupervisor);
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [notificationCount, setNotificationCount] = useState(0);
     const [notificationItems, setNotificationItems] = useState([]);
@@ -71,7 +73,11 @@ export default function GroupNavbar() {
     }, [sidebarOpen]);
 
     const handleLogout = () => {
-        dispatch(logoutGroup());
+        if (isSupervisor) {
+            dispatch(logoutSupervisor());
+        } else {
+            dispatch(logoutGroup());
+        }
         navigate("/group/login", { replace: true });
     };
 
@@ -114,9 +120,11 @@ export default function GroupNavbar() {
                     <div className="bg-green-600 w-10 h-10 rounded-md flex items-center justify-center text-lg font-bold">
                         GS
                     </div>
-                    <div>
-                        <h1 className="text-lg font-semibold">Samooh</h1>
-                        <p className="text-gray-400 text-sm">Group Panel</p>
+                    <div className="min-w-0">
+                        <h1 className="text-lg font-semibold truncate">Samooh</h1>
+                        <p className="text-gray-400 text-sm truncate">
+                            {isSupervisor ? `Supervisor: ${supervisor?.name || supervisor?.email || "—"}` : "Group Panel"}
+                        </p>
                     </div>
                 </div>
 

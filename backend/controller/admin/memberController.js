@@ -2221,32 +2221,6 @@ const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate, t
     if (txnSession) openDemandsQuery.session(txnSession);
     const openDemands = await openDemandsQuery;
 
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            location: 'memberController.js:finalizeMemberExitObligations:beforeUpdateDemands',
-            message: 'Finalizing member exit obligations (demands)',
-            data: {
-                memberId: memberId?.toString?.() || String(memberId),
-                groupId: groupId?.toString?.() || String(groupId),
-                openDemandCount: openDemands.length,
-                sampleDemand: openDemands[0]
-                    ? {
-                        id: openDemands[0]._id,
-                        revenueType: openDemands[0].revenueType,
-                        amount: openDemands[0].amount,
-                        paidAmount: openDemands[0].paidAmount,
-                        isPaid: openDemands[0].isPaid,
-                    }
-                    : null,
-            },
-            timestamp: Date.now(),
-        }),
-    }).catch(() => { });
-    // #endregion agent log
-
     for (const demand of openDemands) {
         demand.paidAmount = demand.amount || 0;
         demand.paidDate = ts;
@@ -2262,23 +2236,6 @@ const finalizeMemberExitObligations = async (memberId, groupId, effectiveDate, t
     });
     if (txnSession) sessionsQuery.session(txnSession);
     const sessions = await sessionsQuery;
-
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/6ff7e0a4-0281-4088-97c4-e91f6a0f6b22', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            location: 'memberController.js:finalizeMemberExitObligations:beforeUpdateRecovery',
-            message: 'Finalizing member exit obligations (recovery sessions)',
-            data: {
-                memberId: memberIdStr,
-                groupId: groupId?.toString?.() || String(groupId),
-                sessionCount: sessions.length,
-            },
-            timestamp: Date.now(),
-        }),
-    }).catch(() => { });
-    // #endregion agent log
 
     const zeroDemandHead = (d) => {
         if (!d || typeof d !== "object") return;

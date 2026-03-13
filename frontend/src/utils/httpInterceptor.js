@@ -10,30 +10,33 @@ export const createErrorInterceptor = (isAdmin = true) => {
 
         // Handle 401 Unauthorized - redirect to appropriate login
         if (status === 401) {
-            // Auto-detect if we're in group context based on current route
-            const isGroupRoute = window.location.pathname.startsWith("/group");
-            // Also check if group token exists (more reliable than just route)
+            const pathname = window.location.pathname || "";
+            const isSupervisorRoute = pathname.startsWith("/supervisor");
+            const hasSupervisorToken = !!localStorage.getItem("supervisorToken");
+            const isGroupRoute = pathname.startsWith("/group");
             const hasGroupToken = !!localStorage.getItem("groupToken");
             const useGroupAuth = isGroupRoute || (hasGroupToken && !isAdmin);
+            const useSupervisorAuth = isSupervisorRoute || hasSupervisorToken;
 
-            // Clear tokens
-            if (useGroupAuth) {
-                // For group authentication, clear group tokens
+            if (useSupervisorAuth) {
+                localStorage.removeItem("supervisorToken");
+                localStorage.removeItem("supervisorData");
+                if (pathname !== "/supervisor/login") {
+                    window.location.href = "/supervisor/login";
+                }
+            } else if (useGroupAuth) {
                 localStorage.removeItem("groupToken");
                 localStorage.removeItem("groupData");
                 localStorage.removeItem("activeGroupId");
                 localStorage.removeItem("activeGroupCode");
                 localStorage.removeItem("activeGroupCache");
-                // Redirect to group login if not already there
-                if (window.location.pathname !== "/login" && window.location.pathname !== "/group/login") {
-                    window.location.href = "/login";
+                if (pathname !== "/login" && pathname !== "/group/login") {
+                    window.location.href = "/group/login";
                 }
             } else {
-                // For admin authentication
                 localStorage.removeItem("adminToken");
                 localStorage.removeItem("adminData");
-                // Redirect to admin login if not already there
-                if (window.location.pathname !== "/login-admin") {
+                if (pathname !== "/login-admin") {
                     window.location.href = "/login-admin";
                 }
             }
