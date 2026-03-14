@@ -712,11 +712,11 @@ export default function MemberRegistration() {
         {/* Family Information */}
         <FormSection title="Family Information" icon={Users}>
           <Input
-            label="Father/Husband Name"
+            label="Husband Name"
             name="F_H_Name"
             value={form.F_H_Name}
             handleChange={handleChange}
-            placeholder="Enter father/husband name"
+            placeholder="husband name"
           />
           <Input
             label="Father's Father Name"

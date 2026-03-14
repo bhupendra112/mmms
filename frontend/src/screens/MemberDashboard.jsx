@@ -301,7 +301,13 @@ export default function MemberDashboard() {
 
     let currentSavings = openingSaving;
     let currentLoan = loanDetails?.amount || 0;
-    let currentFD = fdDetails?.amount || 0;
+    // When FDMaster records exist, use only active FD sum (avoids double-count with memberDoc.fdDetails)
+    const hasFDMasterRecords = Array.isArray(memberFDs) && memberFDs.length > 0;
+    let currentFD = hasFDMasterRecords
+      ? memberFDs
+          .filter((fd) => fd.status === "active")
+          .reduce((sum, fd) => sum + parseFloat(fd.amount || fd.principal || 0), 0)
+      : (fdDetails?.amount || 0);
     let currentInterest = loanDetails?.overdueInterest || 0;
     let lastRecoveryDate = null;
     let totalPenaltyPaid = 0;
@@ -316,7 +322,7 @@ export default function MemberDashboard() {
 
       currentSavings += savingAmt;
       currentLoan = Math.max(0, currentLoan - loanAmt);
-      currentFD += fdAmt;
+      if (!hasFDMasterRecords) currentFD += fdAmt;
       currentInterest = Math.max(0, currentInterest - interestAmt);
       totalPenaltyPaid += penaltyAmt;
 
@@ -330,17 +336,19 @@ export default function MemberDashboard() {
     memberLoans.forEach((loan) => {
       if (loan.transactionType === "Saving") currentSavings += parseFloat(loan.amount || 0);
       else if (loan.transactionType === "Loan") currentLoan += parseFloat(loan.amount || 0);
-      else if (loan.transactionType === "FD") currentFD += parseFloat(loan.amount || 0);
+      else if (!hasFDMasterRecords && loan.transactionType === "FD") currentFD += parseFloat(loan.amount || 0);
     });
 
-    memberFDs.forEach((fd) => {
-      currentFD += parseFloat(fd.amount || fd.principal || 0);
-    });
+    if (!hasFDMasterRecords) {
+      memberFDs.forEach((fd) => {
+        currentFD += parseFloat(fd.amount || fd.principal || 0);
+      });
+    }
 
     memberPayments.forEach((payment) => {
       const amount = parseFloat(payment.amount || 0);
       if (payment.paymentType === "saving_withdrawal") currentSavings = Math.max(0, currentSavings - amount);
-      else if (payment.paymentType === "fd_maturity") currentFD = Math.max(0, currentFD - amount);
+      else if (!hasFDMasterRecords && payment.paymentType === "fd_maturity") currentFD = Math.max(0, currentFD - amount);
     });
 
     return {
