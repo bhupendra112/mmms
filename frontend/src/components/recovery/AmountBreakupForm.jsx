@@ -59,8 +59,18 @@ export default function AmountBreakupForm({
             const loanCurr = parseFloat(currentMemberSummary?.loan?.curr ?? 0) || 0;
             const currentLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
             const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
+            const totalNum = parseFloat(totalAmount) || 0;
+            // Loan can go up to total amount (so admin can allocate total to loan); cap by remaining loan
+            const effectiveLoanMax =
+              remainingLoanAmount > 0 && totalNum > 0
+                ? Math.min(remainingLoanAmount, totalNum)
+                : remainingLoanAmount > 0
+                  ? remainingLoanAmount
+                  : (currentMemberSummary?.loan?.total || undefined);
             const hasLoanDemand = loanTotal > 0 || loanUnpaid > 0 || loanCurr > 0 || remainingLoanAmount > 0;
             if (!hasLoanDemand) return null;
+            const fillRemainingValue =
+              totalNum > 0 ? Math.min(remainingLoanAmount, totalNum) : remainingLoanAmount;
             return (
               <div className="relative">
                 <Input
@@ -71,18 +81,22 @@ export default function AmountBreakupForm({
                   handleChange={(e) => onAmountChange('loan', e.target.value)}
                   placeholder="Enter loan payment"
                   step="1"
-                  max={remainingLoanAmount > 0 ? remainingLoanAmount : (currentMemberSummary?.loan?.total || undefined)}
+                  max={effectiveLoanMax}
                 />
                 {remainingLoanAmount > 0 && (
                   <button
                     type="button"
                     onClick={() => {
-                      const remainingLoanValue = Math.round(remainingLoanAmount);
+                      const remainingLoanValue = Math.round(fillRemainingValue);
                       onAmountChange('loan', remainingLoanValue.toString());
                       onSetAutoCalculated(false);
                     }}
                     className="absolute right-2 top-9 sm:top-10 px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors"
-                    title={`Fill full remaining loan amount: ₹${Math.round(remainingLoanAmount).toLocaleString()} (same as shown in Loan Details)`}
+                    title={
+                      totalNum > 0
+                        ? `Fill loan up to ₹${Math.round(fillRemainingValue).toLocaleString()} (min of remaining loan and total amount)`
+                        : `Fill full remaining loan amount: ₹${Math.round(remainingLoanAmount).toLocaleString()} (same as shown in Loan Details)`
+                    }
                   >
                     Fill Remaining
                   </button>

@@ -110,6 +110,9 @@ export const updateMemberSchema = Joi.object({
     res_add2: Joi.string().optional(),
     Village: Joi.string().optional(),
     Group_Name: Joi.string().optional(),
+    // Allowed in payload but stripped in controller (updated via dedicated updateOpeningSaving API)
+    openingSaving: Joi.number().optional(),
+    openingSavingAdjustments: Joi.array().optional(),
 }).min(1); // At least one field is required for update
 
 // ======================

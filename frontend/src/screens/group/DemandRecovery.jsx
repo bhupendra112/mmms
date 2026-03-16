@@ -457,7 +457,10 @@ export default function DemandRecovery() {
     let maxValue = 0;
     if (fieldName === "loan" && currentMember) {
       const currentLoanTotals = memberLoanTotals[currentMember.id];
-      maxValue = currentLoanTotals?.remainingLoanAmount ?? 0;
+      const remainingLoan = currentLoanTotals?.remainingLoanAmount ?? 0;
+      const totalNum = parseFloat(totalAmount) || 0;
+      // Loan can go up to total amount (admin/group can allocate total to loan); cap by remaining loan
+      maxValue = totalNum > 0 ? Math.min(remainingLoan, totalNum) : remainingLoan;
     } else {
       maxValue = currentMemberSummary?.[fieldName]?.total || 0;
     }
@@ -466,11 +469,16 @@ export default function DemandRecovery() {
       ? { ...amountBreakup, charges: value || {} }
       : { ...amountBreakup, [fieldName]: value };
 
-    // Saving is the flexible bucket: editing it just recalculates total from all fields
+    // Saving change: keep total unchanged; apply delta to loan (so loan can go up to remaining loan)
     if (fieldName === "saving") {
+      const currentTotal = totalFromBreakup(amountBreakup);
+      const delta = (parseFloat(amountBreakup.saving) || 0) - (parseFloat(value) || 0);
+      const remainingLoan = currentMember ? (memberLoanTotals[currentMember.id]?.remainingLoanAmount ?? 0) : 0;
+      const currentLoan = parseFloat(amountBreakup.loan) || 0;
+      const newLoan = Math.max(0, Math.min(remainingLoan, currentLoan + delta));
+      nextBreakup.loan = String(roundAmount(newLoan));
       setAmountBreakup(nextBreakup);
-      const tot = totalFromBreakup(nextBreakup);
-      setTotalAmount(tot > 0 ? String(roundAmount(tot)) : "");
+      setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
       setAutoCalculated(false);
       return;
     }
@@ -489,7 +497,16 @@ export default function DemandRecovery() {
       return;
     }
 
-    // For Loan, Interest, Yogdan, etc.: keep total unchanged, add cut amount to Saving
+    // Loan change: total should reflect sum (so increasing loan increases total)
+    if (fieldName === "loan") {
+      setAmountBreakup(nextBreakup);
+      const tot = totalFromBreakup(nextBreakup);
+      setTotalAmount(tot > 0 ? String(roundAmount(tot)) : "");
+      setAutoCalculated(false);
+      return;
+    }
+
+    // For Interest, Yogdan, etc.: keep total unchanged, add cut amount to Saving
     const currentTotal = totalFromBreakup(amountBreakup);
     const sumOthers = sumExceptSaving(nextBreakup);
     const newSaving = Math.max(0, currentTotal - sumOthers);
@@ -1459,9 +1476,22 @@ export default function DemandRecovery() {
                         onTotalAmountChange={handleTotalAmountChange}
                         onAmountChange={handleAmountChange}
                         onAmountBreakupChange={(nextBreakup) => {
-                          setAmountBreakup(nextBreakup);
-                          const total = totalFromBreakup(nextBreakup);
-                          setTotalAmount(total > 0 ? String(roundAmount(total)) : "");
+                          // Saving field uses this path: keep total unchanged, apply saving delta to loan (up to remaining loan)
+                          const savingChanged = String(nextBreakup.saving ?? "") !== String(amountBreakup.saving ?? "");
+                          if (savingChanged) {
+                            const currentTotal = totalFromBreakup(amountBreakup);
+                            const delta = (parseFloat(amountBreakup.saving) || 0) - (parseFloat(nextBreakup.saving) || 0);
+                            const remainingLoan = currentMember ? (memberLoanTotals[currentMember.id]?.remainingLoanAmount ?? 0) : 0;
+                            const currentLoan = parseFloat(amountBreakup.loan) || 0;
+                            const newLoan = Math.max(0, Math.min(remainingLoan, currentLoan + delta));
+                            nextBreakup = { ...nextBreakup, loan: String(roundAmount(newLoan)) };
+                            setAmountBreakup(nextBreakup);
+                            setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
+                          } else {
+                            setAmountBreakup(nextBreakup);
+                            const total = totalFromBreakup(nextBreakup);
+                            setTotalAmount(total > 0 ? String(roundAmount(total)) : "");
+                          }
                           setAutoCalculated(false);
                         }}
                         onSetAutoCalculated={setAutoCalculated}
