@@ -1,4 +1,5 @@
-import { CheckCircle, Download, FileText, Camera, X, User, Wallet } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle, Download, FileText, Camera, X, User, Printer } from "lucide-react";
 import { getImageUrl } from "../../utils/recoveryUtils";
 import CashDenominationsSection from "./CashDenominationsSection";
 
@@ -11,22 +12,48 @@ export default function RecoverySummaryStep({
   activeGroup,
   onExportExcel,
   onExportPDF,
+  onPrintPDF,
   onCapturePhoto,
   onRemovePhoto,
   onCashDenominationsChange,
   onFinalize,
 }) {
+  const [printBusy, setPrintBusy] = useState(false);
+
+  const handlePrintClick = async () => {
+    if (!onPrintPDF) return;
+    try {
+      setPrintBusy(true);
+      await onPrintPDF();
+    } finally {
+      setPrintBusy(false);
+    }
+  };
+
+  const groupLabel =
+    activeGroup?.name ||
+    activeGroup?.group_name ||
+    activeGroup?.raw?.group_name ||
+    "Group";
+  const printDate = new Date().toLocaleDateString("en-GB");
+
   return (
     <div className="space-y-4 sm:space-y-5 md:space-y-6">
       {/* Summary */}
       <div className="bg-white rounded-lg shadow-md p-4 sm:p-5 md:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center gap-2">
-            <CheckCircle className="text-green-600 shrink-0 w-6 h-6 sm:w-7 sm:h-7" />
-            Recovery Summary
-          </h2>
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center gap-2">
+              <CheckCircle className="text-green-600 shrink-0 w-6 h-6 sm:w-7 sm:h-7" />
+              Recovery Summary
+            </h2>
+            <p className="text-xs sm:text-sm text-gray-600 mt-1">
+              {groupLabel} · {printDate}
+            </p>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
+              type="button"
               onClick={onExportExcel}
               className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-xs sm:text-sm w-full sm:w-auto"
             >
@@ -34,11 +61,22 @@ export default function RecoverySummaryStep({
               Export Excel
             </button>
             <button
+              type="button"
               onClick={onExportPDF}
               className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-xs sm:text-sm w-full sm:w-auto"
             >
               <FileText size={18} className="shrink-0" />
               Export PDF
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintClick}
+              disabled={printBusy || !onPrintPDF}
+              className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-60 font-medium text-xs sm:text-sm w-full sm:w-auto"
+              title="Prints the same document as Export PDF — choose printer in the dialog"
+            >
+              <Printer size={18} className="shrink-0" />
+              {printBusy ? "Preparing…" : "Print"}
             </button>
           </div>
         </div>
@@ -92,7 +130,7 @@ export default function RecoverySummaryStep({
                 >
                   {/* Member Photo */}
                   {memberPhoto ? (
-                    <div className="mb-2 sm:mb-3 w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-full overflow-hidden border-2 border-gray-300 flex-shrink-0">
+                    <div className="mb-2 sm:mb-3 w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-full overflow-hidden border-2 border-gray-300 shrink-0">
                       <img
                         src={getImageUrl(memberPhoto)}
                         alt={`${member?.name || "Member"} Photo`}
@@ -107,7 +145,7 @@ export default function RecoverySummaryStep({
                       </div>
                     </div>
                   ) : (
-                    <div className="mb-2 sm:mb-3 w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-full bg-gray-200 flex items-center justify-center border-2 border-gray-300 flex-shrink-0">
+                    <div className="mb-2 sm:mb-3 w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 rounded-full bg-gray-200 flex items-center justify-center border-2 border-gray-300 shrink-0">
                       <User size={24} className="text-gray-400" />
                     </div>
                   )}
@@ -141,6 +179,7 @@ export default function RecoverySummaryStep({
                 className="max-w-full h-auto rounded-lg border-2 border-gray-300"
               />
               <button
+                type="button"
                 onClick={onRemovePhoto}
                 className="absolute top-2 right-2 bg-red-600 text-white p-1.5 sm:p-2 rounded-full hover:bg-red-700"
               >
@@ -149,6 +188,7 @@ export default function RecoverySummaryStep({
             </div>
           ) : (
             <button
+              type="button"
               onClick={onCapturePhoto}
               className="flex flex-col items-center gap-2 sm:gap-3 p-6 sm:p-8 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors w-full max-w-md"
             >
@@ -162,6 +202,7 @@ export default function RecoverySummaryStep({
       {/* Finalize Button */}
       <div className="bg-white rounded-lg shadow-md p-4 sm:p-5 md:p-6">
         <button
+          type="button"
           onClick={onFinalize}
           disabled={!groupPhoto}
           className="w-full px-4 sm:px-8 py-3 sm:py-4 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-base sm:text-lg shadow-md"

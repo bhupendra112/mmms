@@ -26,6 +26,9 @@ import MemberRecoveryForm from "../../components/recovery/MemberRecoveryForm";
 import RecoverySummaryStep from "../../components/recovery/RecoverySummaryStep";
 import FullLoanRecoveryModal from "../../components/recovery/FullLoanRecoveryModal";
 
+/** Default payment mode for meetings (most groups use cash) */
+const DEFAULT_PAYMENT_MODE_CASH = { cash: true, online: false };
+
 export default function DemandRecovery() {
   const { currentGroup, isGroupPanel, isGroupLoading } = useGroup();
   const { isOnline, triggerRefresh, lastRefreshedAt } = useOffline();
@@ -66,7 +69,7 @@ export default function DemandRecovery() {
   const [autoCalculated, setAutoCalculated] = useState(false);
   const [fdTimePeriod, setFdTimePeriod] = useState("");
 
-  const [paymentMode, setPaymentMode] = useState({ cash: false, online: false });
+  const [paymentMode, setPaymentMode] = useState(DEFAULT_PAYMENT_MODE_CASH);
   const [onlineRef, setOnlineRef] = useState("");
   const [selectedBankId, setSelectedBankId] = useState("");
   const [groupBanks, setGroupBanks] = useState([]);
@@ -89,10 +92,7 @@ export default function DemandRecovery() {
   });
 
   const [showFullLoanRecovery, setShowFullLoanRecovery] = useState(false);
-  const [fullLoanRecoveryPaymentMode, setFullLoanRecoveryPaymentMode] = useState({
-    cash: false,
-    online: false,
-  });
+  const [fullLoanRecoveryPaymentMode, setFullLoanRecoveryPaymentMode] = useState(DEFAULT_PAYMENT_MODE_CASH);
   const [fullLoanRecoveryBankId, setFullLoanRecoveryBankId] = useState("");
   const [fullLoanRecoveryOnlineRef, setFullLoanRecoveryOnlineRef] = useState("");
   const [fullLoanRecoveryScreenshot, setFullLoanRecoveryScreenshot] = useState(null);
@@ -152,7 +152,7 @@ export default function DemandRecovery() {
     setTotalAmount("");
     setAutoCalculated(false);
     setFdTimePeriod("");
-    setPaymentMode({ cash: false, online: false });
+    setPaymentMode(DEFAULT_PAYMENT_MODE_CASH);
     setOnlineRef("");
     setSelectedBankId("");
     setScreenshot(null);
@@ -806,7 +806,7 @@ export default function DemandRecovery() {
       setOtherMemberId(memberRecovery.otherMemberId || "");
       setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "", charges: {} });
       setFdTimePeriod(memberRecovery.fd_time_period ? String(memberRecovery.fd_time_period / 12) : "");
-      setPaymentMode(memberRecovery.paymentMode || { cash: false, online: false });
+      setPaymentMode(memberRecovery.paymentMode || DEFAULT_PAYMENT_MODE_CASH);
       setOnlineRef(memberRecovery.onlineRef || "");
       setSelectedBankId(memberRecovery.bankId || "");
       if (memberRecovery.screenshot) setScreenshot(memberRecovery.screenshot);
@@ -1066,7 +1066,7 @@ export default function DemandRecovery() {
       await loadRecoveries();
 
       setShowFullLoanRecovery(false);
-      setFullLoanRecoveryPaymentMode({ cash: false, online: false });
+      setFullLoanRecoveryPaymentMode(DEFAULT_PAYMENT_MODE_CASH);
       setFullLoanRecoveryBankId("");
       setFullLoanRecoveryOnlineRef("");
       setFullLoanRecoveryScreenshot(null);
@@ -1534,8 +1534,16 @@ export default function DemandRecovery() {
               onExportPDF={async () => {
                 try {
                   const today = new Date().toLocaleDateString("en-GB");
-                  const blob = await recovery.exportRecoveryPDF(activeGroup.id, today);
-                  const url = window.URL.createObjectURL(blob);
+                  const result = await recovery.exportRecoveryPDF(activeGroup.id, today);
+                  if (!(result instanceof Blob)) {
+                    const msg =
+                      result && typeof result === "object" && typeof result.message === "string"
+                        ? result.message
+                        : "PDF export requires an online connection.";
+                    alert(msg);
+                    return;
+                  }
+                  const url = window.URL.createObjectURL(result);
                   const a = document.createElement("a");
                   a.href = url;
                   a.download = `${activeGroup.name || "Recovery"}_${today.replace(/\//g, "-")}.pdf`;
@@ -1546,6 +1554,54 @@ export default function DemandRecovery() {
                 } catch (error) {
                   console.error("Error exporting PDF:", error);
                   alert("Failed to export PDF. Please try again.");
+                }
+              }}
+              onPrintPDF={async () => {
+                try {
+                  const today = new Date().toLocaleDateString("en-GB");
+                  const result = await recovery.exportRecoveryPDF(activeGroup.id, today);
+                  if (!(result instanceof Blob)) {
+                    const msg =
+                      result && typeof result === "object" && typeof result.message === "string"
+                        ? result.message
+                        : "Printing the PDF requires an online connection. Use Export PDF when connected.";
+                    alert(msg);
+                    return;
+                  }
+                  const url = window.URL.createObjectURL(result);
+                  const iframe = document.createElement("iframe");
+                  iframe.setAttribute(
+                    "style",
+                    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden"
+                  );
+                  iframe.setAttribute("title", "Recovery PDF print preview");
+                  let printed = false;
+                  const cleanup = () => {
+                    window.URL.revokeObjectURL(url);
+                    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                  };
+                  const tryPrint = () => {
+                    if (printed) return;
+                    printed = true;
+                    try {
+                      iframe.contentWindow?.focus();
+                      iframe.contentWindow?.print();
+                    } catch {
+                      window.open(url, "_blank", "noopener,noreferrer");
+                    }
+                    setTimeout(cleanup, 2000);
+                  };
+                  iframe.onload = () => {
+                    setTimeout(tryPrint, 250);
+                  };
+                  document.body.appendChild(iframe);
+                  iframe.src = url;
+                  setTimeout(() => {
+                    if (!printed) tryPrint();
+                  }, 2000);
+                } catch (error) {
+                  console.error("Error printing PDF:", error);
+                  alert(error?.message || "Failed to print. Try Export PDF and print from the downloaded file.");
                 }
               }}
               onCapturePhoto={handleCapturePhoto}
@@ -1603,7 +1659,7 @@ export default function DemandRecovery() {
           groupBanks={groupBanks}
           onClose={() => {
             setShowFullLoanRecovery(false);
-            setFullLoanRecoveryPaymentMode({ cash: false, online: false });
+            setFullLoanRecoveryPaymentMode(DEFAULT_PAYMENT_MODE_CASH);
             setFullLoanRecoveryBankId("");
             setFullLoanRecoveryOnlineRef("");
             setFullLoanRecoveryScreenshot(null);

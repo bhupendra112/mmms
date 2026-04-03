@@ -49,6 +49,15 @@ export default function MemberRecoveryForm({
 
   return (
     <div className="bg-white rounded-lg shadow-md p-4 sm:p-5 md:p-6">
+      {/* Mobile: sticky member bar so name stays visible while scrolling / using keyboard */}
+      <div className="sm:hidden sticky top-0 z-30 -mx-4 -mt-4 px-4 py-2.5 mb-3 rounded-t-lg bg-emerald-50/95 backdrop-blur-sm border-b border-emerald-200/80 shadow-sm">
+        <p className="text-xs font-semibold text-gray-900 leading-snug">
+          <span className="text-emerald-800">Recovery · </span>
+          <span className="wrap-break-word">{currentMember.name}</span>
+          <span className="font-normal text-gray-600"> ({currentMember.code})</span>
+        </p>
+      </div>
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
         <div className="min-w-0">
           <h3 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center gap-2 truncate">
@@ -134,6 +143,16 @@ export default function MemberRecoveryForm({
       {/* Amount Breakup - Only show if present or absent with recovery by other */}
       {(attendance === "present" || (attendance === "absent" && recoveryByOther)) && !isAlreadyRecovered && (
         <>
+          {/* Mobile: repeat member context next to amount inputs (keyboard often hides top of screen) */}
+          <div
+            className="sm:hidden mb-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200"
+            aria-hidden="true"
+          >
+            <p className="text-[11px] font-medium text-gray-700">
+              Amount for: <span className="text-gray-900 font-semibold">{currentMember.name}</span>
+              <span className="text-gray-500"> · {currentMember.code}</span>
+            </p>
+          </div>
           <AmountBreakupForm
             amountBreakup={amountBreakup}
             totalAmount={totalAmount}
