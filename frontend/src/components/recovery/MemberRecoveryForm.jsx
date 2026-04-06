@@ -16,7 +16,6 @@ export default function MemberRecoveryForm({
   allMembers,
   amountBreakup,
   totalAmount,
-  autoCalculated,
   paymentMode,
   selectedBankId,
   onlineRef,
@@ -36,7 +35,6 @@ export default function MemberRecoveryForm({
   onTotalAmountChange,
   onAmountChange,
   onAmountBreakupChange,
-  onSetAutoCalculated,
   onPaymentModeChange,
   onBankIdChange,
   onOnlineRefChange,
@@ -156,14 +154,12 @@ export default function MemberRecoveryForm({
           <AmountBreakupForm
             amountBreakup={amountBreakup}
             totalAmount={totalAmount}
-            autoCalculated={autoCalculated}
             currentMemberSummary={currentMemberSummary}
             currentMember={currentMember}
             memberLoanTotals={memberLoanTotals}
             onTotalAmountChange={onTotalAmountChange}
             onAmountChange={onAmountChange}
             onAmountBreakupChange={onAmountBreakupChange}
-            onSetAutoCalculated={onSetAutoCalculated}
           />
 
           <PaymentModeSection

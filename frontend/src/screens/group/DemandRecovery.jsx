@@ -66,7 +66,6 @@ export default function DemandRecovery() {
     charges: {},
   });
   const [totalAmount, setTotalAmount] = useState("");
-  const [autoCalculated, setAutoCalculated] = useState(false);
   const [fdTimePeriod, setFdTimePeriod] = useState("");
 
   const [paymentMode, setPaymentMode] = useState(DEFAULT_PAYMENT_MODE_CASH);
@@ -150,7 +149,6 @@ export default function DemandRecovery() {
       charges: {},
     });
     setTotalAmount("");
-    setAutoCalculated(false);
     setFdTimePeriod("");
     setPaymentMode(DEFAULT_PAYMENT_MODE_CASH);
     setOnlineRef("");
@@ -426,31 +424,10 @@ export default function DemandRecovery() {
     }
   };
 
-  // Compute total from amount breakup (for auto-calc when user edits breakup fields)
-  const totalFromBreakup = (breakup) => {
-    const saving = parseFloat(breakup.saving ?? 0) || 0;
-    const loan = parseFloat(breakup.loan ?? 0) || 0;
-    const fd = parseFloat(breakup.fd ?? 0) || 0;
-    const interest = parseFloat(breakup.interest ?? 0) || 0;
-    const yogdan = parseFloat(breakup.yogdan ?? 0) || 0;
-    const memFeesSHG = parseFloat(breakup.memFeesSHG ?? 0) || 0;
-    const memFeesSamiti = parseFloat(breakup.memFeesSamiti ?? 0) || 0;
-    const memFeesGroup = parseFloat(breakup.memFeesGroup ?? 0) || 0;
-    const penalty = parseFloat(breakup.penalty ?? 0) || 0;
-    const other = parseFloat(breakup.other ?? 0) || 0;
-    const chargesTotal = breakup.charges && typeof breakup.charges === "object"
-      ? Object.values(breakup.charges).reduce((sum, amt) => sum + (parseFloat(amt ?? 0) || 0), 0)
-      : 0;
-    return saving + loan + fd + interest + yogdan + memFeesSHG + memFeesSamiti + memFeesGroup + penalty + other + chargesTotal;
-  };
-
-  // Sum of all breakup fields except saving (cut from any field → add to saving, total unchanged)
-  const sumExceptSaving = (breakup) => totalFromBreakup({ ...breakup, saving: 0 });
-
-  // Fixed integer amount: if decimal >= 0.5 round up, else round down (no float display)
+  // Fixed integer for caps / display
   const roundAmount = (n) => Math.round(Number(n) || 0);
 
-  // Amount change: when admin edits a non-Saving field, keep total unchanged and add the cut amount to Saving
+  /** Manual entry only: update one field; cap at demand/remaining when applicable (no auto-fill from total, no saving↔loan sync). */
   const handleAmountChange = (fieldName, value) => {
     const numValue = parseFloat(value) || 0;
 
@@ -458,224 +435,36 @@ export default function DemandRecovery() {
     if (fieldName === "loan" && currentMember) {
       const currentLoanTotals = memberLoanTotals[currentMember.id];
       const remainingLoan = currentLoanTotals?.remainingLoanAmount ?? 0;
-      const totalNum = parseFloat(totalAmount) || 0;
-      // Loan can go up to total amount (admin/group can allocate total to loan); cap by remaining loan
-      maxValue = totalNum > 0 ? Math.min(remainingLoan, totalNum) : remainingLoan;
+      const loanDue = parseFloat(currentMemberSummary?.loan?.total ?? 0) || 0;
+      const loanUnpaid = parseFloat(currentMemberSummary?.loan?.unpaid ?? 0) || 0;
+      const loanCurr = parseFloat(currentMemberSummary?.loan?.curr ?? 0) || 0;
+      const maxFromSummary = Math.max(loanDue, loanUnpaid, loanCurr);
+      if (remainingLoan > 0) {
+        maxValue = maxFromSummary > 0 ? Math.min(remainingLoan, maxFromSummary) : remainingLoan;
+      } else {
+        maxValue = maxFromSummary;
+      }
     } else {
-      maxValue = currentMemberSummary?.[fieldName]?.total || 0;
+      maxValue = parseFloat(currentMemberSummary?.[fieldName]?.total ?? 0) || 0;
     }
 
-    const nextBreakup = fieldName === "charges" && typeof value === "object"
-      ? { ...amountBreakup, charges: value || {} }
-      : { ...amountBreakup, [fieldName]: value };
+    const nextBreakup =
+      fieldName === "charges" && typeof value === "object"
+        ? { ...amountBreakup, charges: value || {} }
+        : { ...amountBreakup, [fieldName]: value };
 
-    // Saving change: keep total unchanged; apply delta to loan (so loan can go up to remaining loan)
-    if (fieldName === "saving") {
-      const currentTotal = totalFromBreakup(amountBreakup);
-      const delta = (parseFloat(amountBreakup.saving) || 0) - (parseFloat(value) || 0);
-      const remainingLoan = currentMember ? (memberLoanTotals[currentMember.id]?.remainingLoanAmount ?? 0) : 0;
-      const currentLoan = parseFloat(amountBreakup.loan) || 0;
-      const newLoan = Math.max(0, Math.min(remainingLoan, currentLoan + delta));
-      nextBreakup.loan = String(roundAmount(newLoan));
-      setAmountBreakup(nextBreakup);
-      setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
-      setAutoCalculated(false);
-      return;
-    }
-
-    // Cap if value exceeds due amount
-    if (value !== "" && value != null && numValue > maxValue) {
+    if (value !== "" && value != null && maxValue > 0 && numValue > maxValue) {
       alert(`Amount cannot exceed the due amount of ₹${maxValue.toLocaleString()}`);
-      const capped = { ...amountBreakup, [fieldName]: String(maxValue) };
-      const currentTotal = totalFromBreakup(amountBreakup);
-      const sumOthers = sumExceptSaving(capped);
-      const newSaving = Math.max(0, currentTotal - sumOthers);
-      capped.saving = String(roundAmount(newSaving));
-      setAmountBreakup(capped);
-      setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
-      setAutoCalculated(false);
+      setAmountBreakup({ ...nextBreakup, [fieldName]: String(roundAmount(maxValue)) });
       return;
     }
 
-    // Loan change: total should reflect sum (so increasing loan increases total)
-    if (fieldName === "loan") {
-      setAmountBreakup(nextBreakup);
-      const tot = totalFromBreakup(nextBreakup);
-      setTotalAmount(tot > 0 ? String(roundAmount(tot)) : "");
-      setAutoCalculated(false);
-      return;
-    }
-
-    // For Interest, Yogdan, etc.: keep total unchanged, add cut amount to Saving
-    const currentTotal = totalFromBreakup(amountBreakup);
-    const sumOthers = sumExceptSaving(nextBreakup);
-    const newSaving = Math.max(0, currentTotal - sumOthers);
-    nextBreakup.saving = String(roundAmount(newSaving));
     setAmountBreakup(nextBreakup);
-    setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
-    setAutoCalculated(false);
   };
 
-  // FIX: this was calling getDemandSummary incorrectly earlier.
+  /** Total amount is manual reference only — does not auto-distribute into breakup fields. */
   const handleTotalAmountChange = (value) => {
     setTotalAmount(value);
-    const total = parseFloat(value) || 0;
-
-    if (!(total > 0) || !currentMember) {
-      setAmountBreakup({
-        saving: "",
-        loan: "",
-        interest: "",
-        yogdan: "",
-        memFeesSHG: "",
-        memFeesSamiti: "",
-        memFeesGroup: "",
-        penalty: "",
-        other: "",
-        fd: "",
-        charges: {},
-      });
-      setAutoCalculated(false);
-      return;
-    }
-
-    const summary = getMemberDemandSummary(currentMember.id);
-
-    const savingDue = parseFloat(summary?.saving?.total ?? 0) || 0;
-    const loanDue = parseFloat(summary?.loan?.total ?? 0) || 0;
-    const loanCurr = parseFloat(summary?.loan?.curr ?? 0) || 0;
-    const loanUnpaid = parseFloat(summary?.loan?.unpaid ?? 0) || 0;
-    const interestDue = parseFloat(summary?.interest?.total ?? 0) || 0;
-    const yogdanDue = parseFloat(summary?.yogdan?.total ?? summary?.yogdan?.unpaid ?? 0) || 0;
-
-    const membershipFeesDue = parseFloat(summary?.memFeesSHG?.curr ?? 0) || 0;
-    const membershipGroupDue = parseFloat(summary?.memFeesGroup?.curr ?? 0) || 0;
-    const memFeesSamitiDue = parseFloat(summary?.memFeesSamiti?.curr ?? 0) || 0;
-
-    let remaining = total;
-    const calculated = {
-      saving: "",
-      loan: "",
-      interest: "",
-      yogdan: "",
-      memFeesSHG: "",
-      memFeesSamiti: "",
-      memFeesGroup: "",
-      penalty: "",
-      other: "",
-      fd: "",
-      charges: {},
-    };
-
-    const chargesDue = summary?.charges?.chargesDue || {};
-
-    // Priority: Yogdan -> MemFeesGroup -> MemFeesSHG -> MemFeesSamiti -> Charges -> Interest -> Saving -> Loan
-    // Any extra after loan also goes to Saving (no auto FD/penalty from total). Amounts fixed integers (>= 0.5 rounds up).
-    const roundAmt = (n) => Math.round(Number(n) || 0);
-    if (yogdanDue > 0 && remaining > 0) {
-      const v = Math.min(yogdanDue, remaining);
-      calculated.yogdan = String(roundAmt(v));
-      remaining -= v;
-    }
-
-    if (membershipGroupDue > 0 && remaining > 0) {
-      const v = Math.min(membershipGroupDue, remaining);
-      calculated.memFeesGroup = String(roundAmt(v));
-      remaining -= v;
-    }
-
-    if (membershipFeesDue > 0 && remaining > 0) {
-      const v = Math.min(membershipFeesDue, remaining);
-      calculated.memFeesSHG = String(roundAmt(v));
-      remaining -= v;
-    }
-
-    if (memFeesSamitiDue > 0 && remaining > 0) {
-      const v = Math.min(memFeesSamitiDue, remaining);
-      calculated.memFeesSamiti = String(roundAmt(v));
-      remaining -= v;
-    }
-
-    if (Object.keys(chargesDue).length > 0 && remaining > 0) {
-      const calculatedCharges = {};
-      Object.keys(chargesDue).forEach((chargeName) => {
-        const due = parseFloat(chargesDue[chargeName] ?? 0) || 0;
-        if (due > 0 && remaining > 0) {
-          const v = Math.min(due, remaining);
-          calculatedCharges[chargeName] = String(roundAmt(v));
-          remaining -= v;
-        }
-      });
-      calculated.charges = calculatedCharges;
-    }
-
-    if (interestDue > 0 && remaining > 0) {
-      const v = Math.min(interestDue, remaining);
-      calculated.interest = String(roundAmt(v));
-      remaining -= v;
-    }
-
-    // NEW: Calculate saving BEFORE loan
-    if (savingDue > 0 && remaining > 0) {
-      const v = Math.min(savingDue, remaining);
-      calculated.saving = String(roundAmt(v));
-      remaining -= v;
-    }
-
-    // Then calculate loan
-    const currentLoanTotals = memberLoanTotals[currentMember.id];
-    const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
-    // Only consider loan fully paid if we have loan totals AND remaining amount is 0 or fully recovered
-    const isLoanFullyPaid = currentLoanTotals
-      ? (remainingLoanAmount <= 0 ||
-        currentLoanTotals.totalLoanRecovered >= currentLoanTotals.totalLoanAmount)
-      : false;
-
-    // Calculate effective loan due with multiple fallbacks:
-    // 1. Use remainingLoanAmount from memberLoanTotals (most accurate - actual remaining loan)
-    // 2. Fallback to loanDue from summary (total demand)
-    // 3. Fallback to loanUnpaid from summary (unpaid demand)
-    // 4. Fallback to loanCurr from summary (current demand)
-    // This ensures loan is calculated even if one source is 0 or not loaded yet
-    let effectiveLoanDue = 0;
-
-    // Get the maximum loan amount from summary (use the highest available)
-    const maxLoanFromSummary = Math.max(loanDue, loanUnpaid, loanCurr);
-
-    if (remainingLoanAmount > 0) {
-      // If we have remaining loan amount, use it (capped by maxLoanFromSummary if it's smaller and > 0)
-      // This ensures we don't exceed the actual remaining loan, but use summary data if it's more restrictive
-      effectiveLoanDue = maxLoanFromSummary > 0
-        ? Math.min(maxLoanFromSummary, remainingLoanAmount)
-        : remainingLoanAmount;
-    } else if (maxLoanFromSummary > 0) {
-      // Fallback to summary data if no remainingLoanAmount available or it's 0
-      effectiveLoanDue = maxLoanFromSummary;
-    }
-
-    // Calculate loan if we have effective loan due and remaining amount
-    // Only skip if loan is explicitly marked as fully paid from loan totals AND we don't have summary data
-    // If we have loan due from summary, always allow calculation (summary is more up-to-date)
-    const hasLoanFromSummary = loanDue > 0 || loanUnpaid > 0 || loanCurr > 0;
-
-    // Always calculate if we have effective loan due and remaining, unless:
-    // - Loan is fully paid from loan totals AND we don't have summary data suggesting otherwise
-    if (effectiveLoanDue > 0 && remaining > 0) {
-      if (!isLoanFullyPaid || hasLoanFromSummary) {
-        const v = Math.min(effectiveLoanDue, remaining);
-        calculated.loan = String(roundAmt(v));
-        remaining -= v;
-      }
-    }
-
-    // Any remaining extra after loan goes to Saving (not FD or penalty)
-    if (remaining > 0) {
-      const cur = parseFloat(calculated.saving ?? 0) || 0;
-      calculated.saving = String(roundAmt(cur + remaining));
-    }
-
-    setAmountBreakup(calculated);
-    setAutoCalculated(true);
   };
 
   const handleAttendanceChange = (value) => {
@@ -795,6 +584,39 @@ export default function DemandRecovery() {
     return allMembers.every((m) => recoveries.some((r) => r.memberId === m.id));
   }, [allMembers, recoveries]);
 
+  const sumRecoveryAmounts = (a) => {
+    if (!a) return 0;
+    const saving = parseFloat(a.saving ?? 0) || 0;
+    const loan = parseFloat(a.loan ?? 0) || 0;
+    const fd = parseFloat(a.fd ?? 0) || 0;
+    const interest = parseFloat(a.interest ?? 0) || 0;
+    const yogdan = parseFloat(a.yogdan ?? 0) || 0;
+    const memFeesSHG = parseFloat(a.memFeesSHG ?? 0) || 0;
+    const memFeesSamiti = parseFloat(a.memFeesSamiti ?? 0) || 0;
+    const memFeesGroup = parseFloat(a.memFeesGroup ?? 0) || 0;
+    const penalty = parseFloat(a.penalty ?? 0) || 0;
+    const other =
+      (parseFloat(a.other1 ?? 0) || 0) +
+      (parseFloat(a.other2 ?? 0) || 0) +
+      (parseFloat(a.other ?? 0) || 0);
+    const chargesTotal = a.charges
+      ? Object.values(a.charges).reduce((sum, amt) => sum + (parseFloat(amt ?? 0) || 0), 0)
+      : 0;
+    return (
+      saving +
+      loan +
+      fd +
+      interest +
+      yogdan +
+      memFeesSHG +
+      memFeesSamiti +
+      memFeesGroup +
+      penalty +
+      other +
+      chargesTotal
+    );
+  };
+
   const goToMember = (index) => {
     setCurrentMemberIndex(index);
     resetForm();
@@ -805,6 +627,8 @@ export default function DemandRecovery() {
       setRecoveryByOther(Boolean(memberRecovery.recoveryByOther));
       setOtherMemberId(memberRecovery.otherMemberId || "");
       setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "", charges: {} });
+      const sum = sumRecoveryAmounts(memberRecovery.amounts);
+      setTotalAmount(sum > 0 ? String(Math.round(sum)) : "");
       setFdTimePeriod(memberRecovery.fd_time_period ? String(memberRecovery.fd_time_period / 12) : "");
       setPaymentMode(memberRecovery.paymentMode || DEFAULT_PAYMENT_MODE_CASH);
       setOnlineRef(memberRecovery.onlineRef || "");
@@ -1440,7 +1264,6 @@ export default function DemandRecovery() {
                         allMembers={allMembers}
                         amountBreakup={amountBreakup}
                         totalAmount={totalAmount}
-                        autoCalculated={autoCalculated}
                         paymentMode={paymentMode}
                         selectedBankId={selectedBankId}
                         onlineRef={onlineRef}
@@ -1476,25 +1299,8 @@ export default function DemandRecovery() {
                         onTotalAmountChange={handleTotalAmountChange}
                         onAmountChange={handleAmountChange}
                         onAmountBreakupChange={(nextBreakup) => {
-                          // Saving field uses this path: keep total unchanged, apply saving delta to loan (up to remaining loan)
-                          const savingChanged = String(nextBreakup.saving ?? "") !== String(amountBreakup.saving ?? "");
-                          if (savingChanged) {
-                            const currentTotal = totalFromBreakup(amountBreakup);
-                            const delta = (parseFloat(amountBreakup.saving) || 0) - (parseFloat(nextBreakup.saving) || 0);
-                            const remainingLoan = currentMember ? (memberLoanTotals[currentMember.id]?.remainingLoanAmount ?? 0) : 0;
-                            const currentLoan = parseFloat(amountBreakup.loan) || 0;
-                            const newLoan = Math.max(0, Math.min(remainingLoan, currentLoan + delta));
-                            nextBreakup = { ...nextBreakup, loan: String(roundAmount(newLoan)) };
-                            setAmountBreakup(nextBreakup);
-                            setTotalAmount(currentTotal > 0 ? String(roundAmount(currentTotal)) : "");
-                          } else {
-                            setAmountBreakup(nextBreakup);
-                            const total = totalFromBreakup(nextBreakup);
-                            setTotalAmount(total > 0 ? String(roundAmount(total)) : "");
-                          }
-                          setAutoCalculated(false);
+                          setAmountBreakup(nextBreakup);
                         }}
-                        onSetAutoCalculated={setAutoCalculated}
                         onPaymentModeChange={handlePaymentModeChange}
                         onBankIdChange={setSelectedBankId}
                         onOnlineRefChange={setOnlineRef}
