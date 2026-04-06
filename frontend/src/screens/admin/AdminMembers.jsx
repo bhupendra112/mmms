@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { getGroups } from "../../services/groupService";
 import { getMembersByGroup, exportMemberLedger } from "../../services/memberService";
 import { exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../../utils/exportUtils";
+import { sortMembersAscending, getFatherOrHusbandLabel } from "../../utils/memberListUtils";
 
 const STORAGE_KEY_CLUSTER = "adminMembers_selectedCluster";
 const STORAGE_KEY_GROUP = "adminMembers_selectedGroup";
@@ -146,6 +147,8 @@ export default function AdminMembers() {
                 (group.code || "").toLowerCase().includes(q)
         );
     }, [groups, searchTerm, selectedClusterKey]);
+
+    const sortedMembers = useMemo(() => sortMembersAscending(members), [members]);
 
     // Restore cluster/group from URL or sessionStorage when returning (e.g. after Back from member detail)
     useEffect(() => {
@@ -329,12 +332,16 @@ export default function AdminMembers() {
                         <>
                             {/* Mobile Card View */}
                             <div className="block sm:hidden space-y-3 sm:space-y-4">
-                                {members.map((member) => (
+                                {sortedMembers.map((member, idx) => (
                                     <div key={member._id} className="bg-white border rounded-lg p-4 shadow-sm">
                                         <div className="flex justify-between items-start gap-3 mb-3">
                                             <div className="min-w-0 flex-1">
+                                                <p className="text-xs text-gray-500 mb-1">Sr. {idx + 1}</p>
                                                 <h3 className="font-semibold text-gray-800 text-sm sm:text-base truncate">{member.Member_Nm}</h3>
                                                 <p className="text-xs sm:text-sm text-gray-600">Code: {member.Member_Id}</p>
+                                                <p className="text-xs sm:text-sm text-gray-600 truncate">
+                                                    Father / Husband: {getFatherOrHusbandLabel(member) || "—"}
+                                                </p>
                                                 {member.Village && (
                                                     <p className="text-xs sm:text-sm text-gray-600 truncate">Village: {member.Village}</p>
                                                 )}
@@ -372,20 +379,24 @@ export default function AdminMembers() {
 
                             {/* Tablet / Desktop Table View */}
                             <div className="hidden sm:block w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
-                                <table className="min-w-[580px] sm:min-w-[640px] w-full border-collapse text-xs sm:text-sm">
+                                <table className="min-w-[720px] sm:min-w-[800px] w-full border-collapse text-xs sm:text-sm">
                                     <thead>
                                         <tr className="bg-gray-100">
+                                            <th className="border border-gray-200 p-2 sm:p-3 text-center font-semibold text-gray-700 w-12">Sr.</th>
                                             <th className="border border-gray-200 p-2 sm:p-3 text-left font-semibold text-gray-700">Code</th>
                                             <th className="border border-gray-200 p-2 sm:p-3 text-left font-semibold text-gray-700">Name</th>
+                                            <th className="border border-gray-200 p-2 sm:p-3 text-left font-semibold text-gray-700">Father / Husband</th>
                                             <th className="border border-gray-200 p-2 sm:p-3 text-left font-semibold text-gray-700 hidden md:table-cell">Village</th>
                                             <th className="border border-gray-200 p-2 sm:p-3 text-center font-semibold text-gray-700">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {members.map((member) => (
+                                        {sortedMembers.map((member, idx) => (
                                             <tr key={member._id} className="hover:bg-gray-50">
+                                                <td className="border border-gray-200 p-2 sm:p-3 text-center text-gray-600 tabular-nums">{idx + 1}</td>
                                                 <td className="border border-gray-200 p-2 sm:p-3 text-gray-800">{member.Member_Id}</td>
                                                 <td className="border border-gray-200 p-2 sm:p-3 text-gray-800">{member.Member_Nm}</td>
+                                                <td className="border border-gray-200 p-2 sm:p-3 text-gray-700">{getFatherOrHusbandLabel(member) || "—"}</td>
                                                 <td className="border border-gray-200 p-2 sm:p-3 text-gray-600 hidden md:table-cell">{member.Village || "-"}</td>
                                                 <td className="border border-gray-200 p-2 sm:p-3">
                                                     <div className="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">

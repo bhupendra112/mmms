@@ -9,6 +9,7 @@ import { getFDsByGroup } from "../../services/fdService";
 import { exportMemberSummaryToExcel, exportMemberSummaryToPDF, exportRecoveryDetailsToExcel, exportRecoveryDetailsToPDF } from "../../utils/exportUtils";
 import BankPresetQuickFill from "../../components/common/BankPresetQuickFill";
 import VillageCombobox from "../../components/common/VillageCombobox";
+import { sortMembersAscending, getFatherOrHusbandLabel } from "../../utils/memberListUtils";
 
 // Helper function to get full image URL
 const getImageUrl = (imagePath) => {
@@ -323,6 +324,11 @@ export default function GroupManagement() {
                 (group.village || "").toLowerCase().includes(q)
         );
     }, [groups, searchTerm, selectedClusterKey]);
+
+    const sortedGroupMembers = useMemo(
+        () => sortMembersAscending(groupMembers),
+        [groupMembers]
+    );
 
     const loadGroupDetail = async (groupId) => {
         if (!groupId) return;
@@ -1399,20 +1405,24 @@ export default function GroupManagement() {
                                         <p className="text-sm md:text-base text-gray-600 mb-4">Loading members…</p>
                                     )}
                                     <div className="w-full overflow-x-auto rounded-lg border bg-white">
-                                        <table className="min-w-[600px] w-full border-collapse text-xs md:text-sm">
+                                        <table className="min-w-[720px] w-full border-collapse text-xs md:text-sm">
                                             <thead>
                                                 <tr className="bg-gray-100">
+                                                    <th className="border p-2 md:p-3 text-center font-semibold text-gray-700 w-12">Sr.</th>
                                                     <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Code</th>
                                                     <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Name</th>
+                                                    <th className="border p-2 md:p-3 text-left font-semibold text-gray-700">Father / Husband</th>
                                                     <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Status</th>
                                                     <th className="border p-2 md:p-3 text-center font-semibold text-gray-700">Actions</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {groupMembers.map((member) => (
+                                                {sortedGroupMembers.map((member, idx) => (
                                                     <tr key={member._id} className="hover:bg-gray-50">
+                                                        <td className="border p-2 md:p-3 text-center text-gray-600 tabular-nums">{idx + 1}</td>
                                                         <td className="border p-2 md:p-3 text-gray-800">{member.Member_Id}</td>
                                                         <td className="border p-2 md:p-3 text-gray-800">{member.Member_Nm}</td>
+                                                        <td className="border p-2 md:p-3 text-gray-700">{getFatherOrHusbandLabel(member) || "—"}</td>
                                                         <td className="border p-2 md:p-3 text-center">
                                                             <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs md:text-sm">
                                                                 Active
@@ -1445,9 +1455,9 @@ export default function GroupManagement() {
                                                         </td>
                                                     </tr>
                                                 ))}
-                                                {!membersLoading && groupMembers.length === 0 && (
+                                                {!membersLoading && sortedGroupMembers.length === 0 && (
                                                     <tr>
-                                                        <td className="border p-3 text-center text-gray-600" colSpan={4}>
+                                                        <td className="border p-3 text-center text-gray-600" colSpan={6}>
                                                             No members found for this group.
                                                         </td>
                                                     </tr>

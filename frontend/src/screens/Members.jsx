@@ -6,6 +6,7 @@ import { useOffline } from "../contexts/OfflineContext";
 import { getMembersByGroup } from "../services/memberServiceOffline";
 import { exportMemberLedger } from "../services/memberService";
 import { exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../utils/exportUtils";
+import { sortMembersAscending, getFatherOrHusbandLabel } from "../utils/memberListUtils";
 
 const Members = () => {
   const { currentGroup, isGroupLoading } = useGroup();
@@ -104,15 +105,19 @@ const Members = () => {
     loadMembers();
   }, [currentGroup?.id, isGroupLoading, loadMembers, lastRefreshedAt]);
 
+  const sortedMembers = useMemo(() => sortMembersAscending(members), [members]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter((m) => {
+    if (!q) return sortedMembers;
+    return sortedMembers.filter((m) => {
       const name = String(m.Member_Nm || "").toLowerCase();
       const code = String(m.Member_Id || "").toLowerCase();
-      return name.includes(q) || code.includes(q);
+      const fh = getFatherOrHusbandLabel(m).toLowerCase();
+      const village = String(m.Village || "").toLowerCase();
+      return name.includes(q) || code.includes(q) || fh.includes(q) || village.includes(q);
     });
-  }, [members, search]);
+  }, [sortedMembers, search]);
 
   return (
     <div className="p-3 sm:p-4 md:p-6">
@@ -151,7 +156,7 @@ const Members = () => {
         <div className="flex gap-2 sm:gap-4">
           <input
             type="text"
-            placeholder="Search member code / name..."
+            placeholder="Search code, name, father/husband, village..."
             className="search-input border p-2 rounded w-full sm:w-64 text-sm sm:text-base"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -210,15 +215,19 @@ const Members = () => {
 
       {/* Mobile Card View */}
       <div className="block sm:hidden space-y-4">
-        {filtered.map((m) => {
+        {filtered.map((m, idx) => {
           const mid = m._uuid || m._id || m.Member_Id;
           const isLocal = m._isLocal === true;
           return (
             <div key={mid} className="bg-white border rounded-lg p-4 shadow-sm">
               <div className="flex justify-between items-start mb-3">
                 <div className="flex-1">
+                  <p className="text-xs text-gray-500 mb-1">Sr. {idx + 1}</p>
                   <h3 className="font-semibold text-gray-800">{m.Member_Nm}</h3>
                   <p className="text-sm text-gray-600">Code: {m.Member_Id}</p>
+                  <p className="text-sm text-gray-600">
+                    Father / Husband: {getFatherOrHusbandLabel(m) || "—"}
+                  </p>
                   {m.Village && <p className="text-sm text-gray-600">Village: {m.Village}</p>}
                 </div>
                 <div>
@@ -271,11 +280,13 @@ const Members = () => {
 
       {/* Desktop Table View */}
       <div className="hidden sm:block overflow-x-auto members-table-container">
-        <table className="w-full border min-w-[640px]">
+        <table className="w-full border min-w-[800px]">
           <thead>
             <tr className="bg-gray-100">
+              <th className="p-3 border text-center text-sm sm:text-base w-12">Sr.</th>
               <th className="p-3 border text-left text-sm sm:text-base">Member Code</th>
               <th className="p-3 border text-left text-sm sm:text-base">Member Name</th>
+              <th className="p-3 border text-left text-sm sm:text-base">Father / Husband</th>
               <th className="p-3 border text-left text-sm sm:text-base">Village</th>
               <th className="p-3 border text-left text-sm sm:text-base">Status</th>
               <th className="p-3 border text-center text-sm sm:text-base">Actions</th>
@@ -283,13 +294,15 @@ const Members = () => {
           </thead>
 
           <tbody>
-            {filtered.map((m) => {
+            {filtered.map((m, idx) => {
               const mid = m._uuid || m._id || m.Member_Id;
               const isLocal = m._isLocal === true;
               return (
                 <tr key={mid} className="border hover:bg-gray-50">
+                  <td className="p-3 border text-sm sm:text-base text-center text-gray-600 tabular-nums">{idx + 1}</td>
                   <td className="p-3 border text-sm sm:text-base">{m.Member_Id}</td>
                   <td className="p-3 border text-sm sm:text-base">{m.Member_Nm}</td>
+                  <td className="p-3 border text-sm sm:text-base">{getFatherOrHusbandLabel(m) || "—"}</td>
                   <td className="p-3 border text-sm sm:text-base">{m.Village || "-"}</td>
                   <td className="p-3 border">
                     {isLocal ? (
