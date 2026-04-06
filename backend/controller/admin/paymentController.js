@@ -40,7 +40,7 @@ export const getMaturedFDs = async (req, res) => {
         }
 
         const maturedFDs = await FDMaster.find(filter)
-            .populate("memberId", "Member_Id Member_Nm")
+            .populate("memberId", "Member_Id Member_Nm F_H_Name F_H_FatherName")
             .populate("groupId", "group_name group_code")
             .sort({ maturityDate: 1 })
             .lean();

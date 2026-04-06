@@ -15,6 +15,12 @@ import { getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
 import { getCashAmount } from "../../services/cashAmount";
 
+/** Father/Husband: primary `F_H_Name`, else `F_H_FatherName` (same as member forms elsewhere). */
+function fatherOrHusbandFromMember(m) {
+  if (!m || typeof m !== "object") return "";
+  return String(m.F_H_Name || m.F_H_FatherName || "").trim();
+}
+
 export default function PaymentManagement() {
   const [activeTab, setActiveTab] = useState("fd_maturity"); // "fd_maturity", "saving_withdrawal", "history"
   const [loading, setLoading] = useState(false);
@@ -171,6 +177,7 @@ export default function PaymentManagement() {
           memberId: fd.memberId?._id || fd.memberId,
           memberCode: fd.memberCode,
           memberName: fd.memberId?.Member_Nm || fd.memberName,
+          fatherOrHusbandName: fatherOrHusbandFromMember(fd.memberId),
           amount: fd.amount,
           maturityDate: fd.maturityDate,
           maturityAmount: fd.maturityAmount || fd.amount,
@@ -204,6 +211,7 @@ export default function PaymentManagement() {
                 id: member._id,
                 code: member.Member_Id,
                 name: member.Member_Nm,
+                fatherOrHusbandName: fatherOrHusbandFromMember(member),
                 availableSavings: d.availableSavings,
                 interestOnSavings: d.interestOnSavings ?? 0,
                 savingRate: d.savingRate ?? 1,
@@ -578,6 +586,9 @@ export default function PaymentManagement() {
                           <div>
                             <p className="font-semibold">{fd.memberName} ({fd.memberCode})</p>
                             <p className="text-sm text-gray-600">
+                              Father/Husband: <span className="font-medium text-gray-800">{fd.fatherOrHusbandName || "—"}</span>
+                            </p>
+                            <p className="text-sm text-gray-600">
                               Maturity Date: {formatDate(fd.maturityDate)}
                             </p>
                             <p className="text-sm text-gray-600">
@@ -666,8 +677,9 @@ export default function PaymentManagement() {
 
                   <div className="col-span-2">
                     <p className="text-sm text-gray-600 mb-4">
-                      Member: <strong>{selectedFD.memberName}</strong> |
-                      Amount: <strong>{formatCurrency(selectedFD.maturityAmount)}</strong>
+                      Member: <strong>{selectedFD.memberName}</strong>
+                      {" "}| Father/Husband: <strong>{selectedFD.fatherOrHusbandName || "—"}</strong>
+                      {" "}| Amount: <strong>{formatCurrency(selectedFD.maturityAmount)}</strong>
                     </p>
                   </div>
                   <Select
@@ -758,6 +770,9 @@ export default function PaymentManagement() {
                         <div className="flex justify-between items-start">
                           <div>
                             <p className="font-semibold">{member.name} ({member.code})</p>
+                            <p className="text-sm text-gray-600">
+                              Father/Husband: <span className="font-medium text-gray-800">{member.fatherOrHusbandName || "—"}</span>
+                            </p>
                             <p className="text-sm text-gray-600">
                               Savings: <strong>{formatCurrency(member.availableSavings)}</strong>
                               {(member.interestOnSavings != null && member.interestOnSavings > 0) && (
@@ -850,8 +865,9 @@ export default function PaymentManagement() {
 
                   <div className="col-span-2">
                     <p className="text-sm text-gray-600 mb-4">
-                      Member: <strong>{selectedMember.name}</strong> |
-                      Savings: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
+                      Member: <strong>{selectedMember.name}</strong>
+                      {" "}| Father/Husband: <strong>{selectedMember.fatherOrHusbandName || "—"}</strong>
+                      {" "}| Savings: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
                       {(selectedMember.interestOnSavings != null && selectedMember.interestOnSavings > 0) && (
                         <> | Interest ({(selectedMember.savingRate ?? 1)}% p.a.): <strong>{formatCurrency(selectedMember.interestOnSavings)}</strong></>
                       )}

@@ -5,6 +5,7 @@ import { Input, Select, FormSection } from "../../components/forms/FormComponent
 import { useSearchParams } from "react-router-dom";
 import { exportMemberLedger } from "../../services/memberService";
 import { exportMemberSummaryToExcel, exportMemberSummaryToPDF } from "../../utils/exportUtils";
+import BankPresetQuickFill from "../../components/common/BankPresetQuickFill";
 
 export default function BankDetails() {
     const [searchParams] = useSearchParams();
@@ -19,6 +20,7 @@ export default function BankDetails() {
     const [banksLoading, setBanksLoading] = useState(false);
     const [exportLoading, setExportLoading] = useState(false);
     const [dateRange, setDateRange] = useState({ fromDate: "", toDate: "" });
+    const [bankFormPresetResetKey, setBankFormPresetResetKey] = useState(0);
     const [form, setForm] = useState({
         bank_name: "",
         account_no: "",
@@ -147,6 +149,7 @@ export default function BankDetails() {
             await createBank(bankPayload);
             alert("Bank details saved successfully!");
             await loadBanks(selectedGroup.id);
+            setBankFormPresetResetKey((k) => k + 1);
             // Reset form
             setForm({
                 bank_name: "",
@@ -324,6 +327,13 @@ export default function BankDetails() {
                 <form onSubmit={handleSubmit} className="space-y-6">
                     {/* Basic Bank Information */}
                     <FormSection title="Basic Bank Information" icon={Banknote}>
+                        <div className="md:col-span-2">
+                            <BankPresetQuickFill
+                                variant="group"
+                                resetKey={String(bankFormPresetResetKey)}
+                                onApply={(patch) => setForm((f) => ({ ...f, ...patch }))}
+                            />
+                        </div>
                         <Input
                             label="Bank Name"
                             name="bank_name"

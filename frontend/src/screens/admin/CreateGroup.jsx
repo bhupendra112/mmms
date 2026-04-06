@@ -5,6 +5,7 @@ import { PlusCircle, Building2, Users, Calendar, DollarSign, FileText, LayoutGri
 import BackButton from "../../components/admin/BackButton";
 import { Input, Select, TextArea, FormSection } from "../../components/forms/FormComponents";
 import Loader, { OverlayLoader } from "../../components/common/Loader";
+import VillageCombobox from "../../components/common/VillageCombobox";
 import ErrorMessage from "../../components/common/ErrorMessage";
 import { useApiCall } from "../../hooks/useApiCall";
 
@@ -202,13 +203,13 @@ export default function CreateGroup() {
                         required
                         placeholder="Enter unique group code"
                     />
-                    <Input
+                    <VillageCombobox
                         label="Village"
                         name="village"
                         value={form.village}
                         handleChange={handleChange}
                         required
-                        placeholder="Enter village name"
+                        placeholder="Search or type village name"
                     />
                     <Input
                         type="number"

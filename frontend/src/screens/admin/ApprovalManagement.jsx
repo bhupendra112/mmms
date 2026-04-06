@@ -15,6 +15,7 @@ import {
     ArrowLeftRight,
     Receipt,
 } from "lucide-react";
+import VillageCombobox from "../../components/common/VillageCombobox";
 import { initApprovalDB, getAllApprovals, approveRequest, rejectRequest, updateApprovalData } from "../../services/approvalDB";
 import { getGroups } from "../../services/groupService";
 import { getPendingConversions, approveConversion, rejectConversion } from "../../services/cashToBankService";
@@ -1319,17 +1320,18 @@ export default function ApprovalManagement() {
                                                                 placeholder="Father/Husband Name"
                                                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                                                             />
-                                                            <input
-                                                                type="text"
+                                                            <VillageCombobox
+                                                                label="Village"
+                                                                name="Village"
                                                                 value={data.Village || data.village || ""}
-                                                                onChange={(e) => {
+                                                                handleChange={(e) => {
                                                                     const newData = JSON.parse(JSON.stringify(data));
                                                                     newData.Village = e.target.value;
                                                                     newData.village = e.target.value;
                                                                     setEditedData(newData);
                                                                 }}
-                                                                placeholder="Village"
-                                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                                                placeholder="Search or type village name"
+                                                                helperText="Pick from list or type any village."
                                                             />
                                                             <input
                                                                 type="text"

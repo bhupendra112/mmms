@@ -1,10 +1,26 @@
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
-import { BankMaster, GroupMaster, Member, LoanMaster, RecoveryMaster, PaymentMaster } from "../../model/index.js";
+import {
+    BankMaster,
+    GroupMaster,
+    Member,
+    LoanMaster,
+    RecoveryMaster,
+    PaymentMaster,
+    ExpenseMaster,
+    FDMaster,
+    MemberRevenueDemand,
+    GroupLedger,
+    MemberExitSettlement,
+    LoanAdjustmentLog,
+} from "../../model/index.js";
 import BankTransaction from "../../model/BankTransaction.js";
 import CashTransaction from "../../model/CashTransaction.js";
-import { addBankValidationSchema, updateGroupSchema, updateBankValidationSchema } from "../../validation/adminValidation.js";
+import CashToBankConversion from "../../model/CashToBankConversion.js";
+import CashAmount from "../../model/CashAmount.js";
+import { addBankValidationSchema, updateGroupSchema, updateBankValidationSchema, updateClusterSchema, deleteClusterSchema } from "../../validation/adminValidation.js";
 import { verifyGroupAccess, verifyGroupAccessByCode, getAdminPlace } from "../../utility/groupAccessHelper.js";
 
 const BCRYPT_ROUNDS = 10;
@@ -1030,5 +1046,141 @@ export const changePassword = async (req, res) => {
         return apiResponse.success(res, "Password updated successfully", {});
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// Helpers: delete all data tied to a group (same place / admin only)
+// ------------------------------------------------------------------
+const toObjectId = (id) => (typeof id === "string" ? new mongoose.Types.ObjectId(id) : id);
+
+/**
+ * Deletes all data for one group. No Mongo transaction session — transactions require a
+ * replica set; standalone MongoDB (typical local dev) throws and causes HTTP 500.
+ */
+async function purgeGroupData(groupId) {
+    const gid = toObjectId(groupId);
+    await MemberExitSettlement.deleteMany({ groupId: gid });
+    await LoanAdjustmentLog.deleteMany({ groupId: gid });
+    await MemberRevenueDemand.deleteMany({ groupId: gid });
+    await GroupLedger.deleteMany({ groupId: gid });
+    await RecoveryMaster.deleteMany({ groupId: gid });
+    await PaymentMaster.deleteMany({ groupId: gid });
+    await ExpenseMaster.deleteMany({ groupId: gid });
+    await FDMaster.deleteMany({ groupId: gid });
+    await LoanMaster.deleteMany({ groupId: gid });
+    await BankTransaction.deleteMany({ groupId: gid });
+    await CashTransaction.deleteMany({ groupId: gid });
+    await CashToBankConversion.deleteMany({ groupId: gid });
+    await Member.deleteMany({ group: gid });
+    await BankMaster.deleteMany({ group_id: gid });
+    await CashAmount.deleteMany({ group: gid });
+    await GroupMaster.findByIdAndDelete(gid);
+}
+
+function clusterMatchFilter(adminPlace, cluster_name, cluster_code) {
+    const name = cluster_name === undefined || cluster_name === null ? "" : cluster_name;
+    const code = cluster_code === undefined || cluster_code === null ? "" : cluster_code;
+    return {
+        place: adminPlace,
+        cluster_name: name,
+        cluster_code: code,
+    };
+}
+
+// ------------------------------------------------------------------
+// DELETE: SINGLE GROUP (admin only)
+// ------------------------------------------------------------------
+export const deleteGroup = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return apiResponse.error(res, "Group id is required", 400);
+        }
+
+        const adminPlace = await getAdminPlace(req);
+        const accessCheck = await verifyGroupAccess(id, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "Group not found or access denied", 403);
+        }
+
+        await purgeGroupData(id);
+        return apiResponse.success(res, "Group and all related records deleted successfully", { deletedGroupId: id });
+    } catch (error) {
+        console.error("[deleteGroup]", error);
+        return apiResponse.error(res, error.message || "Failed to delete group", 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// PUT: RENAME / EDIT CLUSTER (all groups with old cluster → new)
+// ------------------------------------------------------------------
+export const updateCluster = async (req, res) => {
+    try {
+        const { error } = updateClusterSchema.validate(req.body);
+        if (error) {
+            return apiResponse.error(res, error.details[0].message, 400);
+        }
+
+        const adminPlace = await getAdminPlace(req);
+        if (!adminPlace) {
+            return apiResponse.error(res, "Admin place not found", 400);
+        }
+
+        const { old_cluster_name, old_cluster_code, new_cluster_name, new_cluster_code } = req.body;
+        const filter = clusterMatchFilter(adminPlace, old_cluster_name, old_cluster_code);
+
+        const result = await GroupMaster.updateMany(filter, {
+            $set: {
+                cluster_name: String(new_cluster_name).trim(),
+                cluster_code: String(new_cluster_code).trim(),
+            },
+        });
+
+        return apiResponse.success(res, "Cluster updated successfully", {
+            matchedCount: result.matchedCount ?? result.n,
+            modifiedCount: result.modifiedCount ?? result.nModified,
+        });
+    } catch (error) {
+        return apiResponse.error(res, error.message, 500);
+    }
+};
+
+// ------------------------------------------------------------------
+// DELETE: CLUSTER (deletes every group under that cluster)
+// ------------------------------------------------------------------
+export const deleteCluster = async (req, res) => {
+    try {
+        const { error } = deleteClusterSchema.validate(req.body);
+        if (error) {
+            return apiResponse.error(res, error.details[0].message, 400);
+        }
+
+        const adminPlace = await getAdminPlace(req);
+        if (!adminPlace) {
+            return apiResponse.error(res, "Admin place not found", 400);
+        }
+
+        const { cluster_name, cluster_code } = req.body;
+        const filter = clusterMatchFilter(adminPlace, cluster_name, cluster_code);
+
+        const groups = await GroupMaster.find(filter).select("_id").lean();
+        if (!groups.length) {
+            return apiResponse.error(res, "No groups found for this cluster", 404);
+        }
+
+        const deletedIds = [];
+        for (const g of groups) {
+            await purgeGroupData(g._id);
+            deletedIds.push(String(g._id));
+        }
+
+        return apiResponse.success(res, "Cluster and all its groups deleted successfully", {
+            deletedGroupCount: deletedIds.length,
+            deletedGroupIds: deletedIds,
+        });
+    } catch (error) {
+        console.error("[deleteCluster]", error);
+        return apiResponse.error(res, error.message || "Failed to delete cluster", 500);
     }
 };

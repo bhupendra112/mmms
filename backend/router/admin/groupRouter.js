@@ -1,6 +1,6 @@
 import express from "express";
 import { registerGroupSchema } from "../../validation/adminValidation.js";
-import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail, getCashTransactions, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, listClusters, changeSupervisor, changePassword } from "../../controller/admin/groupController.js";
+import { registerGroup, updateGroup, addBankDetail, updateBankDetail, listBanksByGroup, listGroups, getGroupDetail, getGroupByCode, getBankDetail, getCashTransactions, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, listClusters, changeSupervisor, changePassword, deleteGroup, updateCluster, deleteCluster } from "../../controller/admin/groupController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const router = express.Router();
@@ -27,6 +27,11 @@ router.get("/list", authAdmin, (req, res) => {
 
 // LIST ALL CLUSTERS
 router.get("/list-clusters", authAdmin, listClusters);
+
+// Cluster & group delete (admin only) — must be before "/:groupId/banks"
+router.put("/cluster", authAdmin, updateCluster);
+router.delete("/cluster", authAdmin, deleteCluster);
+router.delete("/delete-group/:id", authAdmin, deleteGroup);
 
 // GROUP DETAIL BY CODE (must come before :groupId route)
 router.get("/by-code/:group_code", authAdmin, (req, res) => {

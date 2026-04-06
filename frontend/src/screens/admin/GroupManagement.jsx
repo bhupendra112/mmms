@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2, Calendar, Receipt, UserPlus, Lock } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, changeSupervisor, changePassword } from "../../services/groupService";
+import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, changeSupervisor, changePassword, updateClusterApi, deleteClusterApi, deleteGroupApi } from "../../services/groupService";
 import { getMembersByGroup, getMembers, exportMemberLedger, updateMember, deleteMember, updateOpeningSaving } from "../../services/memberService";
 import { getLoans } from "../../services/loanService";
 import { getRecoveries, getGroupRecoveryDetails } from "../../services/recoveryService";
 import { getFDsByGroup } from "../../services/fdService";
 import { exportMemberSummaryToExcel, exportMemberSummaryToPDF, exportRecoveryDetailsToExcel, exportRecoveryDetailsToPDF } from "../../utils/exportUtils";
+import BankPresetQuickFill from "../../components/common/BankPresetQuickFill";
+import VillageCombobox from "../../components/common/VillageCombobox";
 
 // Helper function to get full image URL
 const getImageUrl = (imagePath) => {
@@ -71,10 +73,16 @@ export default function GroupManagement() {
     const [savingOpeningBalance, setSavingOpeningBalance] = useState(false);
     const [financeData, setFinanceData] = useState({
         totalSavings: 0,
+        /** Estimated principal still outstanding: disbursed − recovered in approved sessions */
         totalLoans: 0,
+        totalLoanDisbursed: 0,
+        totalLoanRecovered: 0,
         totalFD: 0,
+        /** Interest due from latest demand snapshot per member */
         totalInterest: 0,
+        /** Opening yogdan + yogdan paid in approved recoveries */
         totalYogdan: 0,
+        /** Sum of session totals (all heads); informational — not added to net with savings */
         totalRecovery: 0,
         loading: false,
     });
@@ -117,6 +125,15 @@ export default function GroupManagement() {
     const [openingSavingReason, setOpeningSavingReason] = useState("");
     const [savingOpeningSaving, setSavingOpeningSaving] = useState(false);
 
+    const [showEditClusterModal, setShowEditClusterModal] = useState(false);
+    const [editClusterNewName, setEditClusterNewName] = useState("");
+    const [editClusterNewCode, setEditClusterNewCode] = useState("");
+    const [clusterActionLoading, setClusterActionLoading] = useState(false);
+    const [showDeleteClusterModal, setShowDeleteClusterModal] = useState(false);
+    const [deleteClusterConfirm, setDeleteClusterConfirm] = useState("");
+    const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
+    const [deleteGroupConfirm, setDeleteGroupConfirm] = useState("");
+
     const mapGroupToUI = (g) => {
         if (!g) return null;
         const bank = g.bankmaster || g.bank || null;
@@ -143,7 +160,7 @@ export default function GroupManagement() {
         };
     };
 
-    useEffect(() => {
+    const refreshGroupsList = () => {
         setGroupsLoading(true);
         getGroups()
             .then((res) => {
@@ -155,8 +172,108 @@ export default function GroupManagement() {
                 setGroupsState([]);
             })
             .finally(() => setGroupsLoading(false));
+    };
+
+    useEffect(() => {
+        refreshGroupsList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    const parseClusterKey = (key) => {
+        if (!key) return { name: "", code: "" };
+        const i = key.indexOf("|");
+        if (i < 0) return { name: key, code: "" };
+        return { name: key.slice(0, i), code: key.slice(i + 1) };
+    };
+
+    const handleSaveEditCluster = async () => {
+        if (!editClusterNewName.trim() || !editClusterNewCode.trim()) {
+            alert("Enter new cluster name and cluster code.");
+            return;
+        }
+        const { name: oldName, code: oldCode } = parseClusterKey(selectedClusterKey);
+        setClusterActionLoading(true);
+        try {
+            await updateClusterApi({
+                old_cluster_name: oldName,
+                old_cluster_code: oldCode,
+                new_cluster_name: editClusterNewName.trim(),
+                new_cluster_code: editClusterNewCode.trim(),
+            });
+            alert("Cluster updated successfully.");
+            setShowEditClusterModal(false);
+            const newKey = `${editClusterNewName.trim()}|${editClusterNewCode.trim()}`;
+            setSelectedClusterKey(newKey);
+            sessionStorage.setItem(STORAGE_KEY_CLUSTER, newKey);
+            setSearchParams({ cluster: newKey }, { replace: true });
+            refreshGroupsList();
+        } catch (e) {
+            alert(e?.message || "Failed to update cluster");
+        } finally {
+            setClusterActionLoading(false);
+        }
+    };
+
+    const handleConfirmDeleteCluster = async () => {
+        if (deleteClusterConfirm !== "DELETE") {
+            alert('Type DELETE in the box to confirm permanent deletion.');
+            return;
+        }
+        const { name, code } = parseClusterKey(selectedClusterKey);
+        setClusterActionLoading(true);
+        try {
+            await deleteClusterApi({ cluster_name: name, cluster_code: code });
+            alert("Cluster and all samooh groups under it were deleted.");
+            setShowDeleteClusterModal(false);
+            setDeleteClusterConfirm("");
+            setSelectedClusterKey("");
+            setSelectedGroup(null);
+            setSelectedGroupData(null);
+            setSelectedGroupRaw(null);
+            sessionStorage.removeItem(STORAGE_KEY_CLUSTER);
+            sessionStorage.removeItem(STORAGE_KEY_GROUP);
+            sessionStorage.removeItem(STORAGE_KEY_TAB);
+            setSearchParams({}, { replace: true });
+            refreshGroupsList();
+        } catch (e) {
+            alert(e?.message || "Failed to delete cluster");
+        } finally {
+            setClusterActionLoading(false);
+        }
+    };
+
+    const handleConfirmDeleteGroup = async () => {
+        const code = selectedGroupData?.code || selectedGroupRaw?.group_code || "";
+        if (!selectedGroup || !code) {
+            alert("No group selected.");
+            return;
+        }
+        if (deleteGroupConfirm !== String(code)) {
+            alert(`Type the group code exactly to confirm: ${code}`);
+            return;
+        }
+        setClusterActionLoading(true);
+        try {
+            await deleteGroupApi(selectedGroup);
+            alert("Group and all related data were deleted.");
+            setShowDeleteGroupModal(false);
+            setDeleteGroupConfirm("");
+            setSelectedGroup(null);
+            setSelectedGroupData(null);
+            setSelectedGroupRaw(null);
+            sessionStorage.removeItem(STORAGE_KEY_GROUP);
+            if (selectedClusterKey) {
+                setSearchParams({ cluster: selectedClusterKey }, { replace: true });
+            } else {
+                setSearchParams({}, { replace: true });
+            }
+            refreshGroupsList();
+        } catch (e) {
+            alert(e?.message || "Failed to delete group");
+        } finally {
+            setClusterActionLoading(false);
+        }
+    };
 
     // Load cash transactions when cash tab is active
     useEffect(() => {
@@ -328,7 +445,6 @@ export default function GroupManagement() {
             loadGroupDetail(groupId);
             loadGroupMembers(groupId);
             loadBanks(groupId);
-            calculateFinance(groupId);
             loadGroupCharges(groupId);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -696,12 +812,20 @@ export default function GroupManagement() {
         }
     };
 
+    /** Recoveries that should affect balances (exclude pending / rejected group submissions) */
+    const recoveryCountsForFinance = (r) => {
+        if (!r || r.status === "rejected") return false;
+        if (r.approvalStatus === "rejected" || r.approvalStatus === "pending") return false;
+        return true;
+    };
+
+    const roundFin = (n) => Math.round(Number(n) || 0);
+
     const calculateFinance = async (groupId) => {
         if (!groupId) return;
         try {
             setFinanceData((prev) => ({ ...prev, loading: true }));
 
-            // Load members, loans, recoveries, and FDs in parallel
             const [membersRes, loansRes, recoveriesRes, fdsRes] = await Promise.all([
                 getMembersByGroup(groupId).catch(() => ({ data: [] })),
                 getLoans(groupId).catch((e) => {
@@ -718,127 +842,82 @@ export default function GroupManagement() {
                 }),
             ]);
 
-            // Handle API response structure: services return { success, message, data: [...] }
-            // So we access .data to get the actual array
             const members = Array.isArray(membersRes?.data) ? membersRes.data : [];
             const loans = Array.isArray(loansRes?.data) ? loansRes.data : [];
             const recoveries = Array.isArray(recoveriesRes?.data) ? recoveriesRes.data : [];
             const fds = Array.isArray(fdsRes?.data) ? fdsRes.data : [];
 
-            // Initialize totals
+            const includedRecoveries = recoveries.filter(recoveryCountsForFinance);
+
             let totalSavings = 0;
-            let totalLoans = 0;
-            let totalFD = 0;
-            let totalInterest = 0;
             let totalYogdan = 0;
             let totalRecovery = 0;
+            let totalLoanRecovered = 0;
 
-            // Calculate totals from members - start with opening balances
-            const memberMap = new Map();
             members.forEach((member) => {
-                const memberId = member._id?.toString() || member.id?.toString();
-                memberMap.set(memberId, {
-                    openingSaving: parseFloat(member.openingSaving || 0),
-                    openingYogdan: parseFloat(member.openingYogdan || 0),
-                    currentSaving: parseFloat(member.openingSaving || 0),
-                    currentYogdan: parseFloat(member.openingYogdan || 0),
+                totalSavings += roundFin(member.openingSaving);
+                totalYogdan += roundFin(member.openingYogdan);
+            });
+
+            includedRecoveries.forEach((recovery) => {
+                totalRecovery += roundFin(recovery.totals?.totalAmount);
+                if (!recovery.recoveries || !Array.isArray(recovery.recoveries)) return;
+                recovery.recoveries.forEach((memberRec) => {
+                    const amounts = memberRec.amounts || {};
+                    totalSavings += roundFin(amounts.saving);
+                    totalYogdan += roundFin(amounts.yogdan);
+                    totalLoanRecovered += roundFin(amounts.loan);
                 });
-
-                // Start with opening balances
-                totalSavings += parseFloat(member.openingSaving || 0);
-                totalYogdan += parseFloat(member.openingYogdan || 0);
             });
 
-            // Aggregate from approved recoveries to get current balances
-            recoveries.forEach((recovery) => {
-                if (recovery.status === "approved" && recovery.recoveries && Array.isArray(recovery.recoveries)) {
-                    // Add to total recovery
-                    if (recovery.totals?.totalAmount) {
-                        totalRecovery += parseFloat(recovery.totals.totalAmount || 0);
-                    }
-
-                    // Process each member recovery
-                    recovery.recoveries.forEach((memberRec) => {
-                        const memberId = memberRec.memberId?.toString();
-                        if (!memberId) return;
-
-                        const amounts = memberRec.amounts || {};
-
-                        // Add saving recoveries
-                        const savingAmount = parseFloat(amounts.saving || 0);
-                        if (savingAmount > 0) {
-                            totalSavings += savingAmount;
-                            if (memberMap.has(memberId)) {
-                                memberMap.get(memberId).currentSaving += savingAmount;
-                            }
-                        }
-
-                        // Add yogdan recoveries
-                        const yogdanAmount = parseFloat(amounts.yogdan || 0);
-                        if (yogdanAmount > 0) {
-                            totalYogdan += yogdanAmount;
-                            if (memberMap.has(memberId)) {
-                                memberMap.get(memberId).currentYogdan += yogdanAmount;
-                            }
-                        }
-                    });
-                }
-            });
-
-            // Calculate total loans from approved LoanMaster records only
+            let totalLoanDisbursed = 0;
             loans.forEach((loan) => {
                 if (loan.status === "approved" && loan.transactionType === "Loan") {
-                    totalLoans += parseFloat(loan.amount || 0);
+                    totalLoanDisbursed += roundFin(loan.amount);
                 }
             });
+            const totalLoans = Math.max(0, totalLoanDisbursed - totalLoanRecovered);
 
-            // Calculate total interest - aggregate unpaid interest from latest recovery for each member
-            // We'll use the closingBalance from the latest recovery's demandDetails
-            const latestRecoveriesByMember = new Map();
-            recoveries.forEach((recovery) => {
-                if (recovery.status === "approved" && recovery.recoveries && Array.isArray(recovery.recoveries)) {
-                    recovery.recoveries.forEach((memberRec) => {
-                        const memberId = memberRec.memberId?.toString();
-                        if (!memberId) return;
-
-                        // Get the latest recovery date for each member
-                        const recoveryDate = recovery.date ? new Date(recovery.date) : new Date(0);
-                        if (!latestRecoveriesByMember.has(memberId) ||
-                            recoveryDate > latestRecoveriesByMember.get(memberId).date) {
-                            latestRecoveriesByMember.set(memberId, {
-                                date: recoveryDate,
-                                unpaidInterest: parseFloat(memberRec.demandDetails?.interest?.unpaidDemand || 0)
-                            });
-                        }
-                    });
-                }
+            const latestDemandByMember = new Map();
+            includedRecoveries.forEach((recovery) => {
+                const recoveryDate = new Date(recovery.date || recovery.recoveryDate || 0);
+                recovery.recoveries?.forEach((memberRec) => {
+                    const memberId = String(memberRec.memberId ?? "");
+                    if (!memberId) return;
+                    const prev = latestDemandByMember.get(memberId);
+                    if (!prev || recoveryDate > prev.date) {
+                        latestDemandByMember.set(memberId, {
+                            date: recoveryDate,
+                            dd: memberRec.demandDetails || {},
+                        });
+                    }
+                });
             });
 
-            // Sum unpaid interest from latest recoveries
-            latestRecoveriesByMember.forEach((data) => {
-                totalInterest += data.unpaidInterest;
+            let totalInterest = 0;
+            latestDemandByMember.forEach(({ dd }) => {
+                const intr = dd.interest || {};
+                const v = intr.unpaidDemand ?? intr.unpaid ?? 0;
+                totalInterest += roundFin(v);
             });
-
-            // If no recoveries exist, fall back to member's overdueInterest
             if (totalInterest === 0) {
                 members.forEach((member) => {
-                    if (member.loanDetails?.overdueInterest) {
-                        totalInterest += parseFloat(member.loanDetails.overdueInterest || 0);
-                    }
+                    totalInterest += roundFin(member.loanDetails?.overdueInterest);
                 });
             }
 
-            // Calculate total FD from FDMaster (all FDs for the group)
+            let totalFD = 0;
             fds.forEach((fd) => {
-                const fdAmount = parseFloat(fd.amount || 0);
-                if (fdAmount > 0) {
-                    totalFD += fdAmount;
-                }
+                if (fd.approvalStatus === "rejected" || fd.approvalStatus === "pending") return;
+                if (fd.status === "matured" || fd.status === "closed") return;
+                totalFD += roundFin(fd.amount);
             });
 
             setFinanceData({
                 totalSavings,
                 totalLoans,
+                totalLoanDisbursed,
+                totalLoanRecovered,
                 totalFD,
                 totalInterest,
                 totalYogdan,
@@ -850,6 +929,13 @@ export default function GroupManagement() {
             setFinanceData((prev) => ({ ...prev, loading: false }));
         }
     };
+
+    useEffect(() => {
+        if (activeTab === "finance" && selectedGroup) {
+            calculateFinance(selectedGroup);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when tab/group changes; calculateFinance is stable enough for this screen
+    }, [activeTab, selectedGroup]);
 
     return (
         <div className="w-full">
@@ -894,6 +980,32 @@ export default function GroupManagement() {
                                 </option>
                             ))}
                         </select>
+                        {selectedClusterKey && (
+                            <div className="flex flex-wrap gap-2 mb-3 md:mb-4">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const { name, code } = parseClusterKey(selectedClusterKey);
+                                        setEditClusterNewName(name);
+                                        setEditClusterNewCode(code);
+                                        setShowEditClusterModal(true);
+                                    }}
+                                    className="flex-1 min-w-[120px] px-3 py-2 border border-amber-300 bg-amber-50 text-amber-900 rounded-lg hover:bg-amber-100 text-xs md:text-sm font-medium"
+                                >
+                                    Edit cluster
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setDeleteClusterConfirm("");
+                                        setShowDeleteClusterModal(true);
+                                    }}
+                                    className="flex-1 min-w-[120px] px-3 py-2 border border-red-300 bg-red-50 text-red-800 rounded-lg hover:bg-red-100 text-xs md:text-sm font-medium"
+                                >
+                                    Delete cluster
+                                </button>
+                            </div>
+                        )}
                         <div className="relative mb-3 md:mb-4">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                             <input
@@ -935,7 +1047,6 @@ export default function GroupManagement() {
                                             loadGroupDetail(group.id);
                                             loadGroupMembers(group.id);
                                             loadBanks(group.id);
-                                            calculateFinance(group.id);
                                             loadGroupCharges(group.id);
                                             if (selectedClusterKey) {
                                                 setSearchParams({ cluster: selectedClusterKey, group: group.id, tab: "overview" }, { replace: true });
@@ -1008,6 +1119,18 @@ export default function GroupManagement() {
                                             <Edit size={16} />
                                             <span className="hidden sm:inline">Edit Group</span>
                                             <span className="sm:hidden">Edit</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setDeleteGroupConfirm("");
+                                                setShowDeleteGroupModal(true);
+                                            }}
+                                            className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 border border-red-300 bg-red-50 text-red-800 rounded-lg hover:bg-red-100 text-sm"
+                                        >
+                                            <Trash2 size={16} />
+                                            <span className="hidden sm:inline">Delete group</span>
+                                            <span className="sm:hidden">Delete</span>
                                         </button>
                                     </div>
                                 </div>
@@ -1612,7 +1735,7 @@ export default function GroupManagement() {
                                                         <div className="flex-1 min-w-0">
                                                             <p className="text-xs md:text-sm text-gray-600">Total Savings</p>
                                                             <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalSavings.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1 break-words">From members + loan transactions</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">Opening balance plus saving collected in approved recovery meetings</p>
                                                         </div>
                                                         <TrendingUp className="text-blue-600 shrink-0 ml-2" size={20} />
                                                     </div>
@@ -1620,9 +1743,11 @@ export default function GroupManagement() {
                                                 <div className="p-3 md:p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex-1 min-w-0">
-                                                            <p className="text-xs md:text-sm text-gray-600">Total Loans</p>
+                                                            <p className="text-xs md:text-sm text-gray-600">Loan principal (outstanding est.)</p>
                                                             <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalLoans.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1 break-words">From members + approved loans</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">
+                                                                Disbursed ₹{(financeData.totalLoanDisbursed ?? 0).toLocaleString()} − principal recovered ₹{(financeData.totalLoanRecovered ?? 0).toLocaleString()} in included meetings
+                                                            </p>
                                                         </div>
                                                         <DollarSign className="text-green-600 shrink-0 ml-2" size={20} />
                                                     </div>
@@ -1632,7 +1757,7 @@ export default function GroupManagement() {
                                                         <div className="flex-1 min-w-0">
                                                             <p className="text-xs md:text-sm text-gray-600">Total FD</p>
                                                             <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalFD.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1 break-words">From members + FD transactions</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">Active FD principal (approved; excludes matured/closed)</p>
                                                         </div>
                                                         <Banknote className="text-purple-600 shrink-0 ml-2" size={20} />
                                                     </div>
@@ -1640,9 +1765,9 @@ export default function GroupManagement() {
                                                 <div className="p-3 md:p-4 bg-orange-50 rounded-lg border-l-4 border-orange-500">
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex-1 min-w-0">
-                                                            <p className="text-xs md:text-sm text-gray-600">Total Interest</p>
+                                                            <p className="text-xs md:text-sm text-gray-600">Interest due (from latest demand)</p>
                                                             <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalInterest.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1 break-words">Overdue interest from members</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">Unpaid interest from the latest approved recovery per member, or member overdue if no demand</p>
                                                         </div>
                                                         <TrendingUp className="text-orange-600 shrink-0 ml-2" size={20} />
                                                     </div>
@@ -1652,7 +1777,7 @@ export default function GroupManagement() {
                                                         <div className="flex-1 min-w-0">
                                                             <p className="text-xs md:text-sm text-gray-600">Total Yogdan</p>
                                                             <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalYogdan.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1 break-words">Opening Yogdan from members</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">Opening yogdan plus yogdan collected in approved recovery meetings</p>
                                                         </div>
                                                         <DollarSign className="text-indigo-600 shrink-0 ml-2" size={20} />
                                                     </div>
@@ -1660,21 +1785,24 @@ export default function GroupManagement() {
                                                 <div className="p-3 md:p-4 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex-1 min-w-0">
-                                                            <p className="text-xs md:text-sm text-gray-600">Total Recovery</p>
+                                                            <p className="text-xs md:text-sm text-gray-600">Recovery meeting totals</p>
                                                             <p className="text-xl md:text-2xl font-bold text-gray-800">₹{financeData.totalRecovery.toLocaleString()}</p>
-                                                            <p className="text-xs text-gray-500 mt-1 break-words">From approved recovery sessions</p>
+                                                            <p className="text-xs text-gray-500 mt-1 break-words">Sum of session totals (all heads). Shown for reference — not added to net below (savings already include saving lines from these meetings)</p>
                                                         </div>
                                                         <DollarSign className="text-yellow-600 shrink-0 ml-2" size={20} />
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            {/* Net Total and Summary */}
+                                            {/* Net Total and Summary — do not add totalRecovery: it overlaps savings/yogdan/loan collections */}
                                             <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg p-4 md:p-6 border-2 border-gray-300">
                                                 <div className="flex items-center justify-between mb-3 md:mb-4">
                                                     <h4 className="text-base md:text-lg font-semibold text-gray-800">Net Financial Position</h4>
                                                     <TrendingUp className="text-gray-600 shrink-0" size={24} />
                                                 </div>
+                                                <p className="text-xs text-gray-600 mb-3 md:mb-4">
+                                                    Assets: savings + FD + yogdan. Liabilities: estimated loan principal outstanding + interest due. Recovery session totals are informational only.
+                                                </p>
                                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                                                     <div>
                                                         <p className="text-xs md:text-sm text-gray-600 mb-2">Total Assets</p>
@@ -1682,7 +1810,6 @@ export default function GroupManagement() {
                                                             ₹{(
                                                                 financeData.totalSavings +
                                                                 financeData.totalFD +
-                                                                financeData.totalRecovery +
                                                                 financeData.totalYogdan
                                                             ).toLocaleString()}
                                                         </p>
@@ -1699,13 +1826,13 @@ export default function GroupManagement() {
                                                 </div>
                                                 <div className="mt-3 md:mt-4 pt-3 md:pt-4 border-t border-gray-300">
                                                     <p className="text-xs md:text-sm text-gray-600 mb-1">Net Balance</p>
-                                                    <p className={`text-3xl md:text-4xl font-bold ${(financeData.totalSavings + financeData.totalFD + financeData.totalRecovery + financeData.totalYogdan) -
+                                                    <p className={`text-3xl md:text-4xl font-bold ${(financeData.totalSavings + financeData.totalFD + financeData.totalYogdan) -
                                                         (financeData.totalLoans + financeData.totalInterest) >= 0
                                                         ? "text-green-700"
                                                         : "text-red-700"
                                                         }`}>
                                                         ₹{(
-                                                            (financeData.totalSavings + financeData.totalFD + financeData.totalRecovery + financeData.totalYogdan) -
+                                                            (financeData.totalSavings + financeData.totalFD + financeData.totalYogdan) -
                                                             (financeData.totalLoans + financeData.totalInterest)
                                                         ).toLocaleString()}
                                                     </p>
@@ -2409,13 +2536,13 @@ export default function GroupManagement() {
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Village</label>
-                                    <input
-                                        type="text"
+                                <div className="col-span-2">
+                                    <VillageCombobox
+                                        label="Village"
+                                        name="village"
                                         value={editGroupForm.village || ""}
-                                        onChange={(e) => setEditGroupForm({ ...editGroupForm, village: e.target.value })}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        handleChange={(e) => setEditGroupForm({ ...editGroupForm, village: e.target.value })}
+                                        placeholder="Search or type village name"
                                     />
                                 </div>
                                 <div>
@@ -2648,6 +2775,141 @@ export default function GroupManagement() {
                                     Cancel
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit cluster (rename for all groups in cluster) */}
+            {showEditClusterModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">Edit cluster</h3>
+                            <button
+                                type="button"
+                                onClick={() => setShowEditClusterModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Updates cluster name and code for every samooh group in this cluster. Member codes that use cluster code may need a separate data fix if you change the code.
+                        </p>
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">New cluster name *</label>
+                                <input
+                                    type="text"
+                                    value={editClusterNewName}
+                                    onChange={(e) => setEditClusterNewName(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">New cluster code *</label>
+                                <input
+                                    type="text"
+                                    value={editClusterNewCode}
+                                    onChange={(e) => setEditClusterNewCode(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                type="button"
+                                disabled={clusterActionLoading}
+                                onClick={handleSaveEditCluster}
+                                className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50"
+                            >
+                                {clusterActionLoading ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowEditClusterModal(false)}
+                                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete cluster (all groups in cluster) */}
+            {showDeleteClusterModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-xl font-bold text-red-800 mb-2">Delete entire cluster?</h3>
+                        <p className="text-sm text-gray-700 mb-4">
+                            This will permanently delete <strong>every samooh group</strong> in this cluster, including members, loans, recoveries, banks, and cash data. This cannot be undone.
+                        </p>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Type DELETE to confirm</label>
+                        <input
+                            type="text"
+                            value={deleteClusterConfirm}
+                            onChange={(e) => setDeleteClusterConfirm(e.target.value)}
+                            className="w-full px-3 py-2 border border-red-300 rounded-lg mb-4"
+                            placeholder="DELETE"
+                        />
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                disabled={clusterActionLoading}
+                                onClick={handleConfirmDeleteCluster}
+                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            >
+                                {clusterActionLoading ? "Deleting…" : "Delete cluster"}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setShowDeleteClusterModal(false); setDeleteClusterConfirm(""); }}
+                                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete single group */}
+            {showDeleteGroupModal && selectedGroup && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-xl font-bold text-red-800 mb-2">Delete this group?</h3>
+                        <p className="text-sm text-gray-700 mb-4">
+                            Permanently deletes this samooh group and all related records (members, loans, recoveries, banks, transactions). Cannot be undone.
+                        </p>
+                        <p className="text-sm font-medium text-gray-800 mb-1">
+                            Group code: <span className="font-mono">{selectedGroupData?.code || selectedGroupRaw?.group_code || "—"}</span>
+                        </p>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Type the group code to confirm</label>
+                        <input
+                            type="text"
+                            value={deleteGroupConfirm}
+                            onChange={(e) => setDeleteGroupConfirm(e.target.value)}
+                            className="w-full px-3 py-2 border border-red-300 rounded-lg mb-4 font-mono"
+                            placeholder="Group code"
+                        />
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                disabled={clusterActionLoading}
+                                onClick={handleConfirmDeleteGroup}
+                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            >
+                                {clusterActionLoading ? "Deleting…" : "Delete group"}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setShowDeleteGroupModal(false); setDeleteGroupConfirm(""); }}
+                                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300"
+                            >
+                                Cancel
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -2917,6 +3179,13 @@ export default function GroupManagement() {
                                         <option value="Treasurer">Treasurer</option>
                                     </select>
                                 </div>
+                                <div className="col-span-2">
+                                    <BankPresetQuickFill
+                                        variant="member"
+                                        resetKey={editingMember?._id ? String(editingMember._id) : ""}
+                                        onApply={(patch) => setEditMemberForm((f) => ({ ...f, ...patch }))}
+                                    />
+                                </div>
                                 <div>
                                     <label className="block text-sm font-semibold text-gray-700 mb-1">Bank Name</label>
                                     <input
@@ -3073,13 +3342,13 @@ export default function GroupManagement() {
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Village</label>
-                                    <input
-                                        type="text"
+                                <div className="col-span-2">
+                                    <VillageCombobox
+                                        label="Village"
+                                        name="Village"
                                         value={editMemberForm.Village || ""}
-                                        onChange={(e) => setEditMemberForm({ ...editMemberForm, Village: e.target.value })}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        handleChange={(e) => setEditMemberForm({ ...editMemberForm, Village: e.target.value })}
+                                        placeholder="Search or type village name"
                                     />
                                 </div>
                             </div>
@@ -3182,6 +3451,11 @@ export default function GroupManagement() {
                             </button>
                         </div>
                         <div className="space-y-4">
+                            <BankPresetQuickFill
+                                variant="group"
+                                resetKey={editingBank?._id ? String(editingBank._id) : ""}
+                                onApply={(patch) => setEditBankForm((f) => ({ ...f, ...patch }))}
+                            />
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm font-semibold text-gray-700 mb-1">Bank Name *</label>

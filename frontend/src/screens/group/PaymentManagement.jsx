@@ -17,6 +17,12 @@ import { getGroupBanks as getGroupBanksOnline } from "../../services/groupServic
 import { getMembersByGroup } from "../../services/memberServiceOffline";
 import { getCashAmount } from "../../services/cashAmount";
 
+/** Father/Husband: primary `F_H_Name`, else `F_H_FatherName` (same as member forms elsewhere). */
+function fatherOrHusbandFromMember(m) {
+    if (!m || typeof m !== "object") return "";
+    return String(m.F_H_Name || m.F_H_FatherName || "").trim();
+}
+
 export default function PaymentManagement() {
     const { currentGroup, isGroupLoading } = useGroup();
     const { isOnline, lastRefreshedAt } = useOffline();
@@ -161,16 +167,37 @@ export default function PaymentManagement() {
             const res = await getMaturedFDs({ groupId: currentGroup.id });
             if (res?.success) {
                 const fds = Array.isArray(res.data) ? res.data : [];
-                setMaturedFDs(fds.map(fd => ({
-                    id: fd._id,
-                    memberId: fd.memberId?._id || fd.memberId,
-                    memberCode: fd.memberCode,
-                    memberName: fd.memberId?.Member_Nm || fd.memberName,
-                    amount: fd.amount,
-                    maturityDate: fd.maturityDate,
-                    maturityAmount: fd.maturityAmount || fd.amount,
-                    interestAmount: fd.interestAmount || 0,
-                })));
+                let fhByMemberId = new Map();
+                try {
+                    const memRes = await getMembersByGroup(currentGroup.id);
+                    const mems = Array.isArray(memRes?.data) ? memRes.data : [];
+                    fhByMemberId = new Map(
+                        mems.map((m) => [String(m._id || m.id), fatherOrHusbandFromMember(m)])
+                    );
+                } catch (e) {
+                    console.warn("[PaymentManagement] Could not load members for Father/Husband labels:", e);
+                }
+                setMaturedFDs(
+                    fds.map((fd) => {
+                        const mid = fd.memberId?._id || fd.memberId;
+                        const fromPopulated =
+                            typeof fd.memberId === "object" && fd.memberId
+                                ? fatherOrHusbandFromMember(fd.memberId)
+                                : "";
+                        const fromMap = fhByMemberId.get(String(mid || "")) || "";
+                        return {
+                            id: fd._id,
+                            memberId: mid,
+                            memberCode: fd.memberCode,
+                            memberName: fd.memberId?.Member_Nm || fd.memberName,
+                            fatherOrHusbandName: fromPopulated || fromMap,
+                            amount: fd.amount,
+                            maturityDate: fd.maturityDate,
+                            maturityAmount: fd.maturityAmount || fd.amount,
+                            interestAmount: fd.interestAmount || 0,
+                        };
+                    })
+                );
             }
         } catch (err) {
             console.error("Error loading matured FDs:", err);
@@ -218,6 +245,7 @@ export default function PaymentManagement() {
                                     id: memberId,
                                     code: member.Member_Id || member.memberCode || member.code,
                                     name: member.Member_Nm || member.memberName || member.name,
+                                    fatherOrHusbandName: fatherOrHusbandFromMember(member),
                                     availableSavings,
                                     interestOnSavings: savingsRes.data?.interestOnSavings ?? 0,
                                     savingRate: savingsRes.data?.savingRate ?? 1,
@@ -640,6 +668,9 @@ export default function PaymentManagement() {
                                                     <div>
                                                         <p className="font-semibold">{fd.memberName} ({fd.memberCode})</p>
                                                         <p className="text-sm text-gray-600">
+                                                            Father/Husband: <span className="font-medium text-gray-800">{fd.fatherOrHusbandName || "—"}</span>
+                                                        </p>
+                                                        <p className="text-sm text-gray-600">
                                                             Maturity Date: {formatDate(fd.maturityDate)}
                                                         </p>
                                                         <p className="text-sm text-gray-600">
@@ -668,8 +699,9 @@ export default function PaymentManagement() {
                                             </p>
                                         </div>
                                         <p className="text-sm text-gray-600 mb-4">
-                                            Member: <strong>{selectedFD.memberName}</strong> |
-                                            Amount: <strong>{formatCurrency(selectedFD.maturityAmount)}</strong>
+                                            Member: <strong>{selectedFD.memberName}</strong>
+                                            {" "}| Father/Husband: <strong>{selectedFD.fatherOrHusbandName || "—"}</strong>
+                                            {" "}| Amount: <strong>{formatCurrency(selectedFD.maturityAmount)}</strong>
                                         </p>
                                         {fdPaymentMode === "Cash" && (
                                             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
@@ -769,6 +801,9 @@ export default function PaymentManagement() {
                                                     <div>
                                                         <p className="font-semibold">{member.name} ({member.code})</p>
                                                         <p className="text-sm text-gray-600">
+                                                            Father/Husband: <span className="font-medium text-gray-800">{member.fatherOrHusbandName || "—"}</span>
+                                                        </p>
+                                                        <p className="text-sm text-gray-600">
                                                             Savings: <strong>{formatCurrency(member.availableSavings)}</strong>
                                                             {(member.interestOnSavings != null && member.interestOnSavings > 0) && (
                                                                 <> | Interest ({member.savingRate ?? 1}% p.a.): <strong>{formatCurrency(member.interestOnSavings)}</strong></>
@@ -800,8 +835,9 @@ export default function PaymentManagement() {
                                             </p>
                                         </div>
                                         <p className="text-sm text-gray-600 mb-4">
-                                            Member: <strong>{selectedMember.name}</strong> |
-                                            Savings: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
+                                            Member: <strong>{selectedMember.name}</strong>
+                                            {" "}| Father/Husband: <strong>{selectedMember.fatherOrHusbandName || "—"}</strong>
+                                            {" "}| Savings: <strong>{formatCurrency(selectedMember.availableSavings)}</strong>
                                             {(selectedMember.interestOnSavings != null && selectedMember.interestOnSavings > 0) && (
                                                 <> | Interest ({(selectedMember.savingRate ?? 1)}% p.a.): <strong>{formatCurrency(selectedMember.interestOnSavings)}</strong></>
                                             )}

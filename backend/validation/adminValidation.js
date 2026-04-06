@@ -166,6 +166,20 @@ export const registerGroupSchema = Joi.object({
     return value;
 });
 
+// Rename cluster (updates cluster_name / cluster_code on all groups in that cluster for this admin's place)
+export const updateClusterSchema = Joi.object({
+    old_cluster_name: Joi.string().allow("", null),
+    old_cluster_code: Joi.string().allow("", null),
+    new_cluster_name: Joi.string().min(1).required(),
+    new_cluster_code: Joi.string().min(1).required(),
+});
+
+// Delete cluster = delete all groups under this cluster (destructive)
+export const deleteClusterSchema = Joi.object({
+    cluster_name: Joi.string().allow("", null),
+    cluster_code: Joi.string().allow("", null),
+});
+
 
 export const addBankValidationSchema = Joi.object({
     bank_name: Joi.string().required(),

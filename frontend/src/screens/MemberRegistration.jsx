@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { User, IdCard, Building2, DollarSign, GraduationCap, MapPin, Users, List } from "lucide-react";
 import BackButton from "../components/admin/BackButton";
+import BankPresetQuickFill from "../components/common/BankPresetQuickFill";
+import VillageCombobox from "../components/common/VillageCombobox";
 import { Input, Select, TextArea, FormSection, FileInput } from "../components/forms/FormComponents";
 import { useGroup } from "../contexts/GroupContext";
 import { getGroups, getGroupDetail } from "../services/groupService";
@@ -21,6 +23,7 @@ export default function MemberRegistration() {
   const [autoCodeLoading, setAutoCodeLoading] = useState(false);
   const [membersList, setMembersList] = useState([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  const [memberBankPresetResetKey, setMemberBankPresetResetKey] = useState(0);
   const [form, setForm] = useState({
     Member_Id: "",
     Member_Nm: "",
@@ -433,6 +436,8 @@ export default function MemberRegistration() {
         alert("Member Registered Successfully!");
       }
 
+      setMemberBankPresetResetKey((k) => k + 1);
+
       // Reset form
       setForm({
         Member_Id: "",
@@ -517,7 +522,6 @@ export default function MemberRegistration() {
   ];
   const aplbplOptions = ["APL", "BPL"];
   const designationOptions = ["Member", "President", "Secretary", "Treasurer"];
-  const bankOptions = ["SBI", "PNB", "BOI", "Central Bank", "HDFC", "ICICI"];
   // groupOptions now comes from API (admin) or from context (group panel)
 
   return (
@@ -929,12 +933,19 @@ export default function MemberRegistration() {
 
         {/* Bank Information */}
         <FormSection title="Bank Information" icon={DollarSign}>
-          <Select
+          <div className="md:col-span-2">
+            <BankPresetQuickFill
+              variant="member"
+              resetKey={String(memberBankPresetResetKey)}
+              onApply={(patch) => setForm((f) => ({ ...f, ...patch }))}
+            />
+          </div>
+          <Input
             label="Bank Name"
             name="Bank_Name"
             value={form.Bank_Name}
-            options={bankOptions}
             handleChange={handleChange}
+            placeholder="e.g. STATE BANK OF INDIA (or use quick fill above)"
           />
           <Input
             label="Branch Name"
@@ -1009,12 +1020,12 @@ export default function MemberRegistration() {
               placeholder="Enter address line 2"
             />
           </div>
-          <Input
+          <VillageCombobox
             label="Village"
             name="Village"
             value={form.Village}
             handleChange={handleChange}
-            placeholder="Enter village name"
+            placeholder="Search or type village name"
           />
         </FormSection>
 

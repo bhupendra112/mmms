@@ -30,6 +30,53 @@ export const createGroup = async (data) => {
 };
 
 // -------------------------------------------------------------
+// CLUSTER: rename (all groups in cluster) — admin only
+// -------------------------------------------------------------
+export const updateClusterApi = async (payload) => {
+    try {
+        const res = await httpGroup.put("/cluster", {
+            old_cluster_name: payload.old_cluster_name ?? "",
+            old_cluster_code: payload.old_cluster_code ?? "",
+            new_cluster_name: String(payload.new_cluster_name || "").trim(),
+            new_cluster_code: String(payload.new_cluster_code || "").trim(),
+        });
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+// -------------------------------------------------------------
+// CLUSTER: delete all groups under cluster — admin only (destructive)
+// -------------------------------------------------------------
+export const deleteClusterApi = async (payload) => {
+    try {
+        const res = await httpGroup.delete("/cluster", {
+            data: {
+                cluster_name: payload.cluster_name ?? "",
+                cluster_code: payload.cluster_code ?? "",
+            },
+        });
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+// -------------------------------------------------------------
+// DELETE GROUP — admin only (cascade)
+// -------------------------------------------------------------
+export const deleteGroupApi = async (groupId) => {
+    if (!groupId) throw new Error("groupId is required");
+    try {
+        const res = await httpGroup.delete(`/delete-group/${groupId}`);
+        return res.data;
+    } catch (err) {
+        throw err.response ? err.response.data : err;
+    }
+};
+
+// -------------------------------------------------------------
 // LIST ALL CLUSTERS
 // -------------------------------------------------------------
 export const getClusters = async () => {
