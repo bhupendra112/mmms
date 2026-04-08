@@ -13,7 +13,7 @@ export const DEFAULT_BANK_PRESETS = [
     id: "boi-udainagar",
     bankName: "BANK OF INDIA",
     branchName: "UDAINAGAR",
-    ifsc: "BKID0009832",
+    ifsc: "BKID0008932",
   },
   {
     id: "boi-polakhal",
