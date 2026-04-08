@@ -15,7 +15,9 @@ export default function VillageCombobox({
     disabled = false,
     placeholder = "Search or type village name",
     villages = STATIC_VILLAGES,
-    helperText = "Search the list or type a different village.",
+    /** e.g. group’s village if not in the static list — still shown as a selectable option */
+    extraVillages = [],
+    helperText = "",
     className = "",
 }) {
     const [open, setOpen] = useState(false);
@@ -23,12 +25,32 @@ export default function VillageCombobox({
     const wrapRef = useRef(null);
     const inputRef = useRef(null);
 
+    const mergedVillages = useMemo(() => {
+        const raw = [...(villages || []), ...(extraVillages || [])];
+        const seen = new Set();
+        const out = [];
+        for (const v of raw) {
+            const s = String(v ?? "").trim();
+            if (!s || seen.has(s.toLowerCase())) continue;
+            seen.add(s.toLowerCase());
+            out.push(s);
+        }
+        return out.sort((a, b) => a.localeCompare(b, "en-IN", { numeric: true, sensitivity: "base" }));
+    }, [villages, extraVillages]);
+
     const str = (value ?? "").toString();
+    const trimmed = str.trim();
+    const isInMergedList = mergedVillages.some((v) => v.toLowerCase() === trimmed.toLowerCase());
+
     const filtered = useMemo(() => {
         const q = str.trim().toLowerCase();
-        if (!q) return villages;
-        return villages.filter((v) => v.toLowerCase().includes(q));
-    }, [str, villages]);
+        if (!q) return mergedVillages;
+        return mergedVillages.filter((v) => v.toLowerCase().includes(q));
+    }, [str, mergedVillages]);
+
+    const defaultHelper =
+        helperText ||
+        "Choose from the list, or type any village name not listed — it will be saved as entered.";
 
     const commitValue = useCallback(
         (next) => {
@@ -144,18 +166,38 @@ export default function VillageCombobox({
                         role="listbox"
                         className="absolute z-50 left-0 right-0 top-full mt-1 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg py-1"
                     >
+                        {trimmed && !isInMergedList && (
+                            <li className="border-b border-amber-100 bg-amber-50/80">
+                                <button
+                                    type="button"
+                                    className="w-full text-left px-3 py-2 text-sm text-amber-900 font-medium"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                        commitValue(trimmed);
+                                        setOpen(false);
+                                        inputRef.current?.focus();
+                                    }}
+                                >
+                                    ✓ Use “{trimmed}” (other village)
+                                </button>
+                            </li>
+                        )}
                         {filtered.length === 0 ? (
-                            <li className="px-3 py-2 text-sm text-gray-500">No matches in list — your typed text will still be saved.</li>
+                            <li className="px-3 py-2 text-sm text-gray-600">
+                                {trimmed
+                                    ? "No matches in the list — the text in the field above will still be saved when you submit."
+                                    : "Type to search, or scroll to pick a village."}
+                            </li>
                         ) : (
                             filtered.map((v, i) => (
                                 <li key={v}>
                                     <button
                                         type="button"
                                         role="option"
-                                        aria-selected={str === v}
+                                        aria-selected={trimmed.toLowerCase() === v.toLowerCase()}
                                         className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 ${
                                             i === highlight ? "bg-blue-50" : ""
-                                        } ${str === v ? "font-semibold text-blue-800" : "text-gray-800"}`}
+                                        } ${trimmed.toLowerCase() === v.toLowerCase() ? "font-semibold text-blue-800" : "text-gray-800"}`}
                                         onMouseDown={(e) => e.preventDefault()}
                                         onClick={() => onPick(v)}
                                     >
@@ -167,9 +209,7 @@ export default function VillageCombobox({
                     </ul>
                 )}
             </div>
-            {helperText && (
-                <p className="text-xs text-gray-500 mt-1">{helperText}</p>
-            )}
+            <p className="text-xs text-gray-500 mt-1">{defaultHelper}</p>
         </div>
     );
 }

@@ -173,6 +173,11 @@ export default function MemberRegistration() {
               ...prev,
               group_id: selected._id,
               Group_Name: selected.group_name || "",
+              Village: prev.Village?.trim()
+                ? prev.Village
+                : (selected.village != null && String(selected.village).trim() !== ""
+                    ? String(selected.village).trim()
+                    : prev.Village),
             }));
           }
         }
@@ -201,14 +206,25 @@ export default function MemberRegistration() {
       .finally(() => setMembersLoading(false));
   }, [isAdminMode, effectiveGroupId]);
 
-  // In group panel, lock the group automatically
+  // In group panel, lock the group automatically; default village from group when appropriate
   useEffect(() => {
-    if (!currentGroup) return;
-    setForm((prev) => ({
-      ...prev,
-      Group_Name: currentGroup.name || "",
-      group_id: currentGroup.id || "",
-    }));
+    if (!currentGroup?.id) return;
+    setForm((prev) => {
+      const switched = prev.group_id && String(prev.group_id) !== String(currentGroup.id);
+      const gv = currentGroup.village != null ? String(currentGroup.village).trim() : "";
+      let nextVillage = prev.Village;
+      if (switched) {
+        nextVillage = gv || "";
+      } else if (!prev.Village || String(prev.Village).trim() === "") {
+        nextVillage = gv || prev.Village || "";
+      }
+      return {
+        ...prev,
+        Group_Name: currentGroup.name || "",
+        group_id: currentGroup.id || "",
+        Village: nextVillage,
+      };
+    });
   }, [currentGroup]);
 
   // Auto-populate saving_per_member_snapshot when isExistingMember is checked and group is selected
@@ -282,6 +298,17 @@ export default function MemberRegistration() {
       }));
   }, [groups, selectedClusterKey]);
 
+  /** Group’s village may not be in the static list — offer it as a quick option in the combobox */
+  const villageSuggestionsExtra = useMemo(() => {
+    const extras = [];
+    if (currentGroup?.village) extras.push(currentGroup.village);
+    if (isAdminMode && form.group_id) {
+      const g = groups.find((x) => String(x._id) === String(form.group_id));
+      if (g?.village) extras.push(g.village);
+    }
+    return [...new Set(extras.map((v) => String(v).trim()).filter(Boolean))];
+  }, [currentGroup?.village, form.group_id, groups, isAdminMode]);
+
   const handleChange = (e) => {
     const { name, value, type, checked, files } = e.target;
     if (type === "checkbox") {
@@ -314,10 +341,13 @@ export default function MemberRegistration() {
   const handleGroupChange = (e) => {
     const groupId = e.target.value;
     const selected = groups.find((g) => g._id === groupId);
+    const gv = selected?.village != null ? String(selected.village).trim() : "";
     setForm((prev) => ({
       ...prev,
       group_id: groupId,
       Group_Name: selected?.group_name || "",
+      // New group: default village from group; empty group clears — user can type any village
+      Village: groupId ? gv : "",
     }));
   };
 
@@ -372,6 +402,9 @@ export default function MemberRegistration() {
       if (currentGroup) {
         formToUse.group_id = currentGroup.id;
         formToUse.Group_Name = currentGroup.name || formToUse.Group_Name;
+      }
+      if (typeof formToUse.Village === "string") {
+        formToUse.Village = formToUse.Village.trim();
       }
       // For existing member loan: send time_period as total months (years*12 + months)
       if (formToUse.loanDetails && typeof formToUse.loanDetails === "object") {
@@ -1025,7 +1058,8 @@ export default function MemberRegistration() {
             name="Village"
             value={form.Village}
             handleChange={handleChange}
-            placeholder="Search or type village name"
+            extraVillages={villageSuggestionsExtra}
+            placeholder="Search, pick from list, or type another village"
           />
         </FormSection>
 
