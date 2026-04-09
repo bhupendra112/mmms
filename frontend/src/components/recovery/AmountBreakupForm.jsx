@@ -1,5 +1,12 @@
 import { Input } from "../forms/FormComponents";
 
+/** Non-zero value in the form breakup (saved recovery row may have amounts while demand summary is already 0). */
+function hasBreakupAmount(amountBreakup, key) {
+  const v = amountBreakup?.[key];
+  if (v === undefined || v === null || v === "") return false;
+  return (parseFloat(v) || 0) !== 0;
+}
+
 export default function AmountBreakupForm({
   amountBreakup,
   totalAmount,
@@ -9,7 +16,10 @@ export default function AmountBreakupForm({
   onTotalAmountChange,
   onAmountChange,
   onAmountBreakupChange,
+  recoveryEditMode = false,
 }) {
+  const hb = (key) => hasBreakupAmount(amountBreakup, key);
+
   return (
     <div className="mb-4 sm:mb-6">
       <label className="block text-sm font-semibold text-gray-700 mb-2 sm:mb-3">
@@ -35,7 +45,7 @@ export default function AmountBreakupForm({
 
         {/* Individual amount fields — manual entry */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          {(parseFloat(currentMemberSummary?.saving?.total ?? 0) || 0) > 0 && (
+          {(((parseFloat(currentMemberSummary?.saving?.total ?? 0) || 0) > 0) || hb("saving") || recoveryEditMode) && (
             <Input
               label="Saving"
               name="saving"
@@ -63,7 +73,8 @@ export default function AmountBreakupForm({
                   : undefined;
             const hasLoanDemand =
               loanTotal > 0 || loanUnpaid > 0 || loanCurr > 0 || remainingLoanAmount > 0;
-            if (!hasLoanDemand) return null;
+            const showLoan = hasLoanDemand || hb("loan") || recoveryEditMode;
+            if (!showLoan) return null;
             const fillRemainingValue = remainingLoanAmount;
             return (
               <div className="relative">
@@ -93,7 +104,7 @@ export default function AmountBreakupForm({
               </div>
             );
           })()}
-          {(parseFloat(currentMemberSummary?.interest?.total ?? 0) || 0) > 0 && (
+          {(((parseFloat(currentMemberSummary?.interest?.total ?? 0) || 0) > 0) || hb("interest") || recoveryEditMode) && (
             <Input
               label="Interest on Loan"
               name="interest"
@@ -105,8 +116,10 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.interest?.total || undefined}
             />
           )}
-          {((parseFloat(currentMemberSummary?.yogdan?.total ?? 0) || 0) > 0 ||
-            (parseFloat(currentMemberSummary?.yogdan?.unpaid ?? 0) || 0) > 0) && (
+          {(((parseFloat(currentMemberSummary?.yogdan?.total ?? 0) || 0) > 0 ||
+            (parseFloat(currentMemberSummary?.yogdan?.unpaid ?? 0) || 0) > 0) ||
+            hb("yogdan") ||
+            recoveryEditMode) && (
             <Input
               label="Yogdan (when loan is given)"
               name="yogdan"
@@ -120,7 +133,9 @@ export default function AmountBreakupForm({
           )}
           {((parseFloat(currentMemberSummary?.memFeesSHG?.total ?? 0) || 0) > 0 ||
             (parseFloat(currentMemberSummary?.memFeesSHG?.unpaid ?? 0) || 0) > 0 ||
-            (parseFloat(currentMemberSummary?.memFeesSHG?.curr ?? 0) || 0) > 0) && (
+            (parseFloat(currentMemberSummary?.memFeesSHG?.curr ?? 0) || 0) > 0 ||
+            hb("memFeesSHG") ||
+            recoveryEditMode) && (
             <Input
               label="Member Fees SHG (Yearly)"
               name="memFeesSHG"
@@ -132,7 +147,9 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.memFeesSHG?.total || undefined}
             />
           )}
-          {(parseFloat(currentMemberSummary?.memFeesSamiti?.total ?? 0) || 0) > 0 && (
+          {(((parseFloat(currentMemberSummary?.memFeesSamiti?.total ?? 0) || 0) > 0) ||
+            hb("memFeesSamiti") ||
+            recoveryEditMode) && (
             <Input
               label="Member Fees Samiti (Yearly)"
               name="memFeesSamiti"
@@ -146,7 +163,9 @@ export default function AmountBreakupForm({
           )}
           {((parseFloat(currentMemberSummary?.memFeesGroup?.total ?? 0) || 0) > 0 ||
             (parseFloat(currentMemberSummary?.memFeesGroup?.unpaid ?? 0) || 0) > 0 ||
-            (parseFloat(currentMemberSummary?.memFeesGroup?.curr ?? 0) || 0) > 0) && (
+            (parseFloat(currentMemberSummary?.memFeesGroup?.curr ?? 0) || 0) > 0 ||
+            hb("memFeesGroup") ||
+            recoveryEditMode) && (
             <Input
               label="Membership Group (Yearly)"
               name="memFeesGroup"
@@ -158,7 +177,7 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.memFeesGroup?.total || undefined}
             />
           )}
-          {(parseFloat(currentMemberSummary?.penalty?.total ?? 0) || 0) > 0 && (
+          {(((parseFloat(currentMemberSummary?.penalty?.total ?? 0) || 0) > 0) || hb("penalty") || recoveryEditMode) && (
             <Input
               label="Penalty (optional)"
               name="penalty"
@@ -171,7 +190,7 @@ export default function AmountBreakupForm({
               max={currentMemberSummary?.penalty?.total ?? undefined}
             />
           )}
-          {(parseFloat(currentMemberSummary?.other?.total ?? 0) || 0) > 0 && (
+          {(((parseFloat(currentMemberSummary?.other?.total ?? 0) || 0) > 0) || hb("other") || recoveryEditMode) && (
             <Input
               label="Other"
               name="other"

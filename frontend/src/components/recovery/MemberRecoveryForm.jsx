@@ -42,6 +42,7 @@ export default function MemberRecoveryForm({
   onPrevious,
   onSaveRecovery,
   onResetForm,
+  recoveryEditMode = false,
 }) {
   if (!currentMember || !currentMemberSummary) return null;
 
@@ -124,7 +125,12 @@ export default function MemberRecoveryForm({
       />
 
       {/* Demand Summary Table (with member basic details above) */}
-      <DemandSummaryTable currentMember={currentMember} currentMemberSummary={currentMemberSummary} />
+      <DemandSummaryTable
+        currentMember={currentMember}
+        currentMemberSummary={currentMemberSummary}
+        recoveryEditMode={recoveryEditMode}
+        savedAmounts={recoveryEditMode ? amountBreakup : null}
+      />
 
       {/* Attendance Section */}
       <AttendanceSection
@@ -157,6 +163,7 @@ export default function MemberRecoveryForm({
             currentMemberSummary={currentMemberSummary}
             currentMember={currentMember}
             memberLoanTotals={memberLoanTotals}
+            recoveryEditMode={recoveryEditMode}
             onTotalAmountChange={onTotalAmountChange}
             onAmountChange={onAmountChange}
             onAmountBreakupChange={onAmountBreakupChange}
@@ -206,7 +213,7 @@ export default function MemberRecoveryForm({
             </>
           ) : (
             <>
-              Save & Finish
+              {recoveryEditMode ? "Save & return to summary" : "Save & Finish"}
               <Check size={18} className="shrink-0" />
             </>
           )}

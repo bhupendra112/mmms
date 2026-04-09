@@ -24,6 +24,7 @@ import RecoveryProgressBar from "../../components/recovery/RecoveryProgressBar";
 import MembersList from "../../components/recovery/MembersList";
 import MemberRecoveryForm from "../../components/recovery/MemberRecoveryForm";
 import RecoverySummaryStep from "../../components/recovery/RecoverySummaryStep";
+import PostFinalizeRecoveryModal from "../../components/recovery/PostFinalizeRecoveryModal";
 import FullLoanRecoveryModal from "../../components/recovery/FullLoanRecoveryModal";
 
 /** Default payment mode for meetings (most groups use cash) */
@@ -122,6 +123,13 @@ export default function DemandRecovery() {
   const [penaltyNotesToAdd, setPenaltyNotesToAdd] = useState("");
   const [addPenaltyLoading, setAddPenaltyLoading] = useState(false);
   const [addPenaltyError, setAddPenaltyError] = useState(null);
+
+  /** When true (after summary → "Edit member recoveries"), saving updates existing rows instead of being blocked as "already recovered". */
+  const [recoveryEditMode, setRecoveryEditMode] = useState(false);
+
+  /** After successful Finalize — show export/print/edit before clearing session state */
+  const [showPostFinalizeModal, setShowPostFinalizeModal] = useState(false);
+  const [postFinalizeMessage, setPostFinalizeMessage] = useState("");
 
   // Determine active group
   const activeGroup = currentGroup || selectedGroup;
@@ -383,7 +391,9 @@ export default function DemandRecovery() {
     (r) => (r.memberId === currentMember.id || r.memberId === currentMember.id?.toString()) &&
       (r.attendance === "present" || (r.attendance === "absent" && r.recoveryByOther))
   );
-  const isAlreadyRecovered = currentMemberRecoveryStatus?.recoveredToday || hasRecoveryInSession || false;
+  const isAlreadyRecovered =
+    !recoveryEditMode &&
+    (currentMemberRecoveryStatus?.recoveredToday || hasRecoveryInSession || false);
 
   // Admin group selection
   const handleSelectGroup = (group) => {
@@ -391,6 +401,7 @@ export default function DemandRecovery() {
     setCurrentStep(1);
     setRecoveries([]);
     setCurrentMemberIndex(0);
+    setRecoveryEditMode(false);
     resetForm();
   };
 
@@ -453,7 +464,13 @@ export default function DemandRecovery() {
         ? { ...amountBreakup, charges: value || {} }
         : { ...amountBreakup, [fieldName]: value };
 
-    if (value !== "" && value != null && maxValue > 0 && numValue > maxValue) {
+    if (
+      !recoveryEditMode &&
+      value !== "" &&
+      value != null &&
+      maxValue > 0 &&
+      numValue > maxValue
+    ) {
       alert(`Amount cannot exceed the due amount of ₹${maxValue.toLocaleString()}`);
       setAmountBreakup({ ...nextBreakup, [fieldName]: String(roundAmount(maxValue)) });
       return;
@@ -626,15 +643,139 @@ export default function DemandRecovery() {
       setAttendance(memberRecovery.attendance || "present");
       setRecoveryByOther(Boolean(memberRecovery.recoveryByOther));
       setOtherMemberId(memberRecovery.otherMemberId || "");
-      setAmountBreakup(memberRecovery.amounts || { saving: "", loan: "", fd: "", interest: "", yogdan: "", other: "", charges: {} });
+      const am = memberRecovery.amounts || {};
+      const toStr = (v) => (v === undefined || v === null || v === "" ? "" : String(v));
+      setAmountBreakup({
+        saving: toStr(am.saving),
+        loan: toStr(am.loan),
+        interest: toStr(am.interest),
+        yogdan: toStr(am.yogdan),
+        memFeesSHG: toStr(am.memFeesSHG),
+        memFeesSamiti: toStr(am.memFeesSamiti),
+        memFeesGroup: toStr(am.memFeesGroup),
+        penalty: toStr(am.penalty),
+        other: toStr(am.other ?? am.other1 ?? am.other2),
+        fd: toStr(am.fd),
+        charges: typeof am.charges === "object" && am.charges !== null && !Array.isArray(am.charges) ? am.charges : {},
+      });
       const sum = sumRecoveryAmounts(memberRecovery.amounts);
       setTotalAmount(sum > 0 ? String(Math.round(sum)) : "");
       setFdTimePeriod(memberRecovery.fd_time_period ? String(memberRecovery.fd_time_period / 12) : "");
       setPaymentMode(memberRecovery.paymentMode || DEFAULT_PAYMENT_MODE_CASH);
       setOnlineRef(memberRecovery.onlineRef || "");
-      setSelectedBankId(memberRecovery.bankId || "");
+      setSelectedBankId(memberRecovery.bankId ? String(memberRecovery.bankId) : "");
       if (memberRecovery.screenshot) setScreenshot(memberRecovery.screenshot);
     }
+  };
+
+  const handleEditMembersFromSummary = () => {
+    setRecoveryEditMode(true);
+    setCurrentStep(1);
+    goToMember(0);
+  };
+
+  const handleExportRecoveryExcel = () => {
+    if (!activeGroup?.name) return;
+    exportRecoveryToExcel(recoveries, activeGroup.name);
+  };
+
+  const handleExportRecoveryPDF = async () => {
+    if (!activeGroup?.id) return;
+    try {
+      const today = new Date().toLocaleDateString("en-GB");
+      const result = await recovery.exportRecoveryPDF(activeGroup.id, today);
+      if (!(result instanceof Blob)) {
+        const msg =
+          result && typeof result === "object" && typeof result.message === "string"
+            ? result.message
+            : "PDF export requires an online connection.";
+        alert(msg);
+        return;
+      }
+      const url = window.URL.createObjectURL(result);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${activeGroup.name || "Recovery"}_${today.replace(/\//g, "-")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Error exporting PDF:", error);
+      alert("Failed to export PDF. Please try again.");
+    }
+  };
+
+  const handlePrintRecoveryPDF = async () => {
+    if (!activeGroup?.id) return;
+    try {
+      const today = new Date().toLocaleDateString("en-GB");
+      const result = await recovery.exportRecoveryPDF(activeGroup.id, today);
+      if (!(result instanceof Blob)) {
+        const msg =
+          result && typeof result === "object" && typeof result.message === "string"
+            ? result.message
+            : "Printing the PDF requires an online connection. Use Export PDF when connected.";
+        alert(msg);
+        return;
+      }
+      const url = window.URL.createObjectURL(result);
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute(
+        "style",
+        "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden"
+      );
+      iframe.setAttribute("title", "Recovery PDF print preview");
+      let printed = false;
+      const cleanup = () => {
+        window.URL.revokeObjectURL(url);
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+      };
+      const tryPrint = () => {
+        if (printed) return;
+        printed = true;
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+        setTimeout(cleanup, 2000);
+      };
+      iframe.onload = () => {
+        setTimeout(tryPrint, 250);
+      };
+      document.body.appendChild(iframe);
+      iframe.src = url;
+      setTimeout(() => {
+        if (!printed) tryPrint();
+      }, 2000);
+    } catch (error) {
+      console.error("Error printing PDF:", error);
+      alert(error?.message || "Failed to print. Try Export PDF and print from the downloaded file.");
+    }
+  };
+
+  const handlePostFinalizeDone = () => {
+    setShowPostFinalizeModal(false);
+    setPostFinalizeMessage("");
+    setRecoveries([]);
+    setCurrentMemberIndex(0);
+    setRecoveryEditMode(false);
+    setCurrentStep(1);
+    setGroupPhoto(null);
+    setCashDenominations({
+      note200: "",
+      note500: "",
+      note100: "",
+      note50: "",
+      note20: "",
+      note10: "",
+      note5: "",
+      note2: "",
+      note1: "",
+    });
+    resetForm();
   };
 
   const handleSaveRecovery = async () => {
@@ -688,6 +829,7 @@ export default function DemandRecovery() {
           setCurrentMemberIndex((i) => i + 1);
           resetForm();
         } else {
+          setRecoveryEditMode(false);
           setCurrentStep(2);
         }
       } catch (error) {
@@ -777,6 +919,7 @@ export default function DemandRecovery() {
         setCurrentMemberIndex((i) => i + 1);
         resetForm();
       } else {
+        setRecoveryEditMode(false);
         setCurrentStep(2);
       }
     } catch (error) {
@@ -1017,27 +1160,12 @@ export default function DemandRecovery() {
           activeGroup.id,
           activeGroup.name
         );
-        alert("Recovery data submitted for approval!");
+        setPostFinalizeMessage("Recovery data submitted for approval.");
       } else {
-        alert("Recovery data saved successfully!");
+        setPostFinalizeMessage("Recovery data saved successfully.");
       }
 
-      setRecoveries([]);
-      setCurrentMemberIndex(0);
-      setCurrentStep(1);
-      setGroupPhoto(null);
-      setCashDenominations({
-        note200: "",
-        note500: "",
-        note100: "",
-        note50: "",
-        note20: "",
-        note10: "",
-        note5: "",
-        note2: "",
-        note1: "",
-      });
-      resetForm();
+      setShowPostFinalizeModal(true);
     } catch (error) {
       console.error("Error finalizing:", error);
       alert(error?.response?.data?.message || error?.message || "Error finalizing recovery");
@@ -1163,12 +1291,22 @@ export default function DemandRecovery() {
                     setAllMembers([]);
                     setRecoveries([]);
                     setCurrentMemberIndex(0);
+                    setRecoveryEditMode(false);
                     setCurrentStep(0);
                     resetForm();
                   }
                 }}
               />
             </div>
+
+            {recoveryEditMode && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <p className="font-semibold">Editing saved recoveries</p>
+                <p className="mt-1 text-amber-900/90">
+                  Use Save &amp; Next to update each member. Amounts replace the previous save for today; when you finish the list you return to the summary step.
+                </p>
+              </div>
+            )}
 
             {/* Responsive grid: Members list left on desktop, form right */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 md:gap-6">
@@ -1256,6 +1394,7 @@ export default function DemandRecovery() {
                       <MemberRecoveryForm
                         currentMember={currentMember}
                         currentMemberSummary={currentMemberSummary}
+                        recoveryEditMode={recoveryEditMode}
                         isAlreadyRecovered={isAlreadyRecovered}
                         currentMemberRecoveryStatus={currentMemberRecoveryStatus}
                         attendance={attendance}
@@ -1336,84 +1475,11 @@ export default function DemandRecovery() {
               cashDenominations={cashDenominations}
               groupPhoto={groupPhoto}
               activeGroup={activeGroup}
-              onExportExcel={() => exportRecoveryToExcel(recoveries, activeGroup.name)}
-              onExportPDF={async () => {
-                try {
-                  const today = new Date().toLocaleDateString("en-GB");
-                  const result = await recovery.exportRecoveryPDF(activeGroup.id, today);
-                  if (!(result instanceof Blob)) {
-                    const msg =
-                      result && typeof result === "object" && typeof result.message === "string"
-                        ? result.message
-                        : "PDF export requires an online connection.";
-                    alert(msg);
-                    return;
-                  }
-                  const url = window.URL.createObjectURL(result);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `${activeGroup.name || "Recovery"}_${today.replace(/\//g, "-")}.pdf`;
-                  document.body.appendChild(a);
-                  a.click();
-                  window.URL.revokeObjectURL(url);
-                  document.body.removeChild(a);
-                } catch (error) {
-                  console.error("Error exporting PDF:", error);
-                  alert("Failed to export PDF. Please try again.");
-                }
-              }}
-              onPrintPDF={async () => {
-                try {
-                  const today = new Date().toLocaleDateString("en-GB");
-                  const result = await recovery.exportRecoveryPDF(activeGroup.id, today);
-                  if (!(result instanceof Blob)) {
-                    const msg =
-                      result && typeof result === "object" && typeof result.message === "string"
-                        ? result.message
-                        : "Printing the PDF requires an online connection. Use Export PDF when connected.";
-                    alert(msg);
-                    return;
-                  }
-                  const url = window.URL.createObjectURL(result);
-                  const iframe = document.createElement("iframe");
-                  iframe.setAttribute(
-                    "style",
-                    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden"
-                  );
-                  iframe.setAttribute("title", "Recovery PDF print preview");
-                  let printed = false;
-                  const cleanup = () => {
-                    window.URL.revokeObjectURL(url);
-                    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-                  };
-                  const tryPrint = () => {
-                    if (printed) return;
-                    printed = true;
-                    try {
-                      iframe.contentWindow?.focus();
-                      iframe.contentWindow?.print();
-                    } catch {
-                      window.open(url, "_blank", "noopener,noreferrer");
-                    }
-                    setTimeout(cleanup, 2000);
-                  };
-                  iframe.onload = () => {
-                    setTimeout(tryPrint, 250);
-                  };
-                  document.body.appendChild(iframe);
-                  iframe.src = url;
-                  setTimeout(() => {
-                    if (!printed) tryPrint();
-                  }, 2000);
-                } catch (error) {
-                  console.error("Error printing PDF:", error);
-                  alert(error?.message || "Failed to print. Try Export PDF and print from the downloaded file.");
-                }
-              }}
               onCapturePhoto={handleCapturePhoto}
               onRemovePhoto={() => setGroupPhoto(null)}
               onCashDenominationsChange={setCashDenominations}
               onFinalize={handleFinalize}
+              onEditMembers={handleEditMembersFromSummary}
             />
           </div>
         )}
@@ -1475,6 +1541,22 @@ export default function DemandRecovery() {
           onOnlineRefChange={setFullLoanRecoveryOnlineRef}
           onFileUpload={handleFullLoanRecoveryFileUpload}
           onSubmit={handleFullLoanRecovery}
+        />
+
+        <PostFinalizeRecoveryModal
+          open={showPostFinalizeModal}
+          message={postFinalizeMessage}
+          groupLabel={
+            activeGroup?.name ||
+            activeGroup?.group_name ||
+            activeGroup?.raw?.group_name ||
+            "Group"
+          }
+          dateLabel={new Date().toLocaleDateString("en-GB")}
+          onExportExcel={handleExportRecoveryExcel}
+          onExportPDF={handleExportRecoveryPDF}
+          onPrintPDF={handlePrintRecoveryPDF}
+          onDone={handlePostFinalizeDone}
         />
       </div>
     </div>

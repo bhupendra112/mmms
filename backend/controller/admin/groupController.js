@@ -364,7 +364,25 @@ export const listGroups = async (req, res) => {
         const groups = await GroupMaster.find(query)
             .sort({ createdAt: -1 })
             .lean();
-        return apiResponse.success(res, "Groups fetched successfully", groups);
+
+        if (groups.length === 0) {
+            return apiResponse.success(res, "Groups fetched successfully", []);
+        }
+
+        const groupIds = groups.map((g) => g._id);
+        const countRows = await Member.aggregate([
+            { $match: { group: { $in: groupIds } } },
+            { $group: { _id: "$group", memberCount: { $sum: 1 } } },
+        ]);
+        const countMap = new Map(
+            countRows.map((row) => [String(row._id), row.memberCount])
+        );
+        const enriched = groups.map((g) => ({
+            ...g,
+            memberCount: countMap.get(String(g._id)) || 0,
+        }));
+
+        return apiResponse.success(res, "Groups fetched successfully", enriched);
     } catch (error) {
         return apiResponse.error(res, error.message, 500);
     }

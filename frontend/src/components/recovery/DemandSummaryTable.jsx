@@ -1,5 +1,87 @@
-export default function DemandSummaryTable({ currentMember, currentMemberSummary }) {
-  if (!currentMemberSummary) {
+import { useMemo } from "react";
+
+function parseAmt(v) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * In recovery edit mode, demand API rows can be all zeros after payment; merge form/saved amounts
+ * so the table matches what we show during normal demand entry.
+ */
+function mergeSavedAmountsIntoDemandSummary(base, saved) {
+  if (!base || !saved) return base;
+  const out = JSON.parse(JSON.stringify(base));
+
+  const applyScalar = (key) => {
+    const amt = parseAmt(saved[key]);
+    if (amt <= 0) return;
+    if (!out[key]) out[key] = { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 };
+    out[key].actual = amt;
+    if (!(out[key].total > 0) && !(out[key].curr > 0)) {
+      out[key].total = Math.max(out[key].total || 0, amt);
+    }
+  };
+
+  ["saving", "loan", "interest", "yogdan", "memFeesSHG", "memFeesSamiti", "memFeesGroup", "penalty", "fd"].forEach(applyScalar);
+
+  const otherAmt = parseAmt(saved.other);
+  if (otherAmt > 0) {
+    if (!out.other) out.other = { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 };
+    out.other.actual = otherAmt;
+    out.other.total = Math.max(out.other.total || 0, otherAmt);
+  }
+
+  if (saved.charges && typeof saved.charges === "object") {
+    if (!out.charges) {
+      out.charges = {
+        prev: 0,
+        curr: 0,
+        total: 0,
+        actual: 0,
+        unpaid: 0,
+        opening: 0,
+        closing: 0,
+        chargesDue: {},
+        actualCharges: {},
+      };
+    }
+    if (!out.charges.chargesDue) out.charges.chargesDue = {};
+    if (!out.charges.actualCharges) out.charges.actualCharges = {};
+    let chargeSum = 0;
+    Object.entries(saved.charges).forEach(([name, val]) => {
+      const a = parseAmt(val);
+      if (a <= 0) return;
+      chargeSum += a;
+      if (!out.charges.chargesDue[name] || out.charges.chargesDue[name] === 0) {
+        out.charges.chargesDue[name] = a;
+      }
+      out.charges.actualCharges[name] = a;
+    });
+    if (chargeSum > 0) {
+      out.charges.actual = chargeSum;
+      out.charges.total = Math.max(out.charges.total || 0, chargeSum);
+    }
+  }
+
+  return out;
+}
+
+export default function DemandSummaryTable({
+  currentMember,
+  currentMemberSummary,
+  recoveryEditMode = false,
+  savedAmounts = null,
+}) {
+  const summary = useMemo(() => {
+    if (!currentMemberSummary) return null;
+    if (recoveryEditMode && savedAmounts) {
+      return mergeSavedAmountsIntoDemandSummary(currentMemberSummary, savedAmounts);
+    }
+    return currentMemberSummary;
+  }, [currentMemberSummary, recoveryEditMode, savedAmounts]);
+
+  if (!summary) {
     return null;
   }
 
@@ -26,7 +108,7 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
   };
 
   const rows = [];
-  Object.entries(currentMemberSummary)
+  Object.entries(summary)
     .filter(([key, data]) => {
       // Skip non-category keys (e.g. interestDayDetails)
       if (key === "interestDayDetails") return false;
@@ -34,14 +116,15 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
       if (['saving', 'loan', 'interest', 'fd'].includes(key)) {
         return true;
       }
-      // Special handling for charges - show if has charges due
+      // Special handling for charges - show if has charges due (includes merged edit-mode rows)
       if (key === "charges" && data.chargesDue && Object.keys(data.chargesDue).length > 0) {
         return true;
       }
-      // Special handling for yogdan - show only if unpaid > 0 (not paid yet)
+      // Yogdan: same rule as other categories (do not hide when unpaid is 0 but actual/total > 0)
       if (key === "yogdan") {
-        const hasYogdanUnpaid = data.unpaid > 0;
-        return hasYogdanUnpaid;
+        const hasValue = data.prev > 0 || data.curr > 0 || data.total > 0 ||
+          data.actual > 0 || data.unpaid > 0 || data.opening > 0 || data.closing > 0;
+        return hasValue;
       }
       // Special handling for memFeesSHG - show if has any amount due
       if (key === "memFeesSHG") {
@@ -115,7 +198,14 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
           </div>
         </div>
       )}
-      <h4 className="text-sm sm:text-base font-semibold text-gray-700 mb-2 sm:mb-3">Demand Summary</h4>
+      <div className="mb-2 sm:mb-3">
+        <h4 className="text-sm sm:text-base font-semibold text-gray-700">Demand Summary</h4>
+        {recoveryEditMode && (
+          <p className="text-xs text-amber-900/90 mt-1.5 rounded-md border border-amber-200 bg-amber-50/80 px-2.5 py-2">
+            Edit mode: table uses your <strong>saved recovery amounts</strong> merged with demand so all categories stay visible, same as during entry.
+          </p>
+        )}
+      </div>
       <div className="w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-[500px] sm:min-w-[600px] w-full border-collapse border border-gray-200 text-[10px] sm:text-xs md:text-sm">
           <thead>
@@ -137,20 +227,20 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => {
+                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => {
                   if (k === "interestDayDetails" || !d || Array.isArray(d)) return sum;
                   const val = typeof d.total === 'number' ? d.total : parseFloat(d.total ?? 0) || 0;
                   return sum + val;
                 }, 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.actual === "number" ? d.actual : parseFloat(d.actual ?? 0) || 0), 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.actual === "number" ? d.actual : parseFloat(d.actual ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.unpaid === "number" ? d.unpaid : parseFloat(d.unpaid ?? 0) || 0), 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.unpaid === "number" ? d.unpaid : parseFloat(d.unpaid ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.entries(currentMemberSummary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.opening === "number" ? d.opening : parseFloat(d.opening ?? 0) || 0), 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.opening === "number" ? d.opening : parseFloat(d.opening ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
             </tr>
@@ -159,7 +249,7 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
       </div>
 
       {/* Interest calculation (days) – debug/detail from backend */}
-      {Array.isArray(currentMemberSummary.interestDayDetails) && currentMemberSummary.interestDayDetails.length > 0 && (
+      {Array.isArray(summary.interestDayDetails) && summary.interestDayDetails.length > 0 && (
         <div className="mt-4 p-3 rounded-lg border border-blue-200 bg-blue-50/50">
           <h4 className="text-sm font-semibold text-gray-700 mb-2">Interest calculation (days used)</h4>
           <p className="text-xs text-gray-600 mb-2">Each period shows the start date, end date, number of days, and how interest was calculated.</p>
@@ -177,7 +267,7 @@ export default function DemandSummaryTable({ currentMember, currentMemberSummary
                 </tr>
               </thead>
               <tbody>
-                {currentMemberSummary.interestDayDetails.map((period, idx) => {
+                {summary.interestDayDetails.map((period, idx) => {
                   const isLabelOnly = period.label && (period.startDate == null && period.endDate == null);
                   const startStr = period.startDate ? new Date(period.startDate).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
                   const endStr = period.endDate ? new Date(period.endDate).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2, Calendar, Receipt, UserPlus, Lock } from "lucide-react";
+import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, TrendingUp, X, Download, FileText, CreditCard, Wallet, Trash2, Calendar, Receipt, UserPlus, Lock, RefreshCw } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, changeSupervisor, changePassword, updateClusterApi, deleteClusterApi, deleteGroupApi } from "../../services/groupService";
 import { getMembersByGroup, getMembers, exportMemberLedger, updateMember, deleteMember, updateOpeningSaving } from "../../services/memberService";
@@ -51,6 +51,7 @@ export default function GroupManagement() {
     const hasRestoredRef = useRef(false);
 
     const [searchTerm, setSearchTerm] = useState("");
+    const [clusterSearchTerm, setClusterSearchTerm] = useState("");
     const [selectedGroup, setSelectedGroup] = useState(null);
     const [selectedClusterKey, setSelectedClusterKey] = useState("");
     const [activeTab, setActiveTab] = useState("overview"); // overview, members, bank, cash, finance, charges
@@ -147,7 +148,7 @@ export default function GroupManagement() {
             clusterName: g.cluster_name || g.cluster || "",
             clusterCode: g.cluster_code || "",
             formationDate: g.formation_date ? new Date(g.formation_date).toLocaleDateString("en-GB") : "",
-            noMembers: g.memberCount ?? g.no_members ?? 0,
+            noMembers: Number(g.memberCount ?? g.no_members ?? 0) || 0,
             bankDetails: bank
                 ? {
                     bankName: bank.bank_name,
@@ -303,11 +304,23 @@ export default function GroupManagement() {
         const uniqueClusters = Array.from(
             new Set(groups.map((g) => `${g.clusterName}|${g.clusterCode}`))
         );
-        return uniqueClusters.map((key) => {
+        const opts = uniqueClusters.map((key) => {
             const [name, code] = key.split("|");
             return { value: key, label: `${name || "No Name"} (${code || "No Code"})` };
         });
+        opts.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+        return opts;
     }, [groups]);
+
+    const filteredClusterOptions = useMemo(() => {
+        const q = clusterSearchTerm.trim().toLowerCase();
+        if (!q) return clusterOptions;
+        return clusterOptions.filter(
+            (c) =>
+                c.label.toLowerCase().includes(q) ||
+                c.value.toLowerCase().includes(q)
+        );
+    }, [clusterOptions, clusterSearchTerm]);
 
     const filteredGroups = useMemo(() => {
         const q = searchTerm.trim().toLowerCase();
@@ -316,14 +329,34 @@ export default function GroupManagement() {
         const scoped = groups.filter(
             (group) => group.clusterName === cName && group.clusterCode === cCode
         );
-        if (!q) return scoped;
-        return scoped.filter(
+        const sorted = [...scoped].sort((a, b) =>
+            String(a.code || "").localeCompare(String(b.code || ""), undefined, { numeric: true })
+        );
+        if (!q) return sorted;
+        return sorted.filter(
             (group) =>
                 (group.name || "").toLowerCase().includes(q) ||
                 (group.code || "").toLowerCase().includes(q) ||
                 (group.village || "").toLowerCase().includes(q)
         );
     }, [groups, searchTerm, selectedClusterKey]);
+
+    /** Cluster dropdown: keep current selection visible even if search hides it */
+    const clusterSelectOptions = useMemo(() => {
+        const filtered = filteredClusterOptions;
+        if (!selectedClusterKey) return filtered;
+        const has = filtered.some((c) => c.value === selectedClusterKey);
+        if (has) return filtered;
+        const found = clusterOptions.find((c) => c.value === selectedClusterKey);
+        return found ? [found, ...filtered] : filtered;
+    }, [filteredClusterOptions, clusterOptions, selectedClusterKey]);
+
+    /** Keep sidebar group card in sync when list refetches (e.g. member count) */
+    useEffect(() => {
+        if (!selectedGroup) return;
+        const g = groups.find((x) => x.id === selectedGroup);
+        if (g) setSelectedGroupData(g);
+    }, [groups, selectedGroup]);
 
     const sortedGroupMembers = useMemo(
         () => sortMembersAscending(groupMembers),
@@ -665,9 +698,10 @@ export default function GroupManagement() {
             alert("Member updated successfully");
             setShowEditMemberModal(false);
             setEditingMember(null);
-            // Reload members
             if (selectedGroup) {
                 await loadGroupMembers(selectedGroup);
+                await loadGroupDetail(selectedGroup);
+                refreshGroupsList();
             }
         } catch (error) {
             console.error("Error updating member:", error);
@@ -689,9 +723,10 @@ export default function GroupManagement() {
             setSaving(true);
             await deleteMember(member._id);
             alert("Member deleted successfully");
-            // Reload members
             if (selectedGroup) {
                 await loadGroupMembers(selectedGroup);
+                await loadGroupDetail(selectedGroup);
+                refreshGroupsList();
             }
         } catch (error) {
             console.error("Error deleting member:", error);
@@ -957,6 +992,18 @@ export default function GroupManagement() {
                 {/* Left Sidebar - Groups List */}
                 <div className="lg:col-span-1">
                     <div className="bg-white rounded-xl shadow-sm p-3 md:p-4 mb-3 md:mb-4">
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Search cluster</label>
+                        <div className="relative mb-2">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                            <input
+                                type="text"
+                                placeholder="Filter by name or code..."
+                                value={clusterSearchTerm}
+                                onChange={(e) => setClusterSearchTerm(e.target.value)}
+                                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Cluster (serial no.)</label>
                         <select
                             value={selectedClusterKey}
                             onChange={(e) => {
@@ -977,15 +1024,19 @@ export default function GroupManagement() {
                                     sessionStorage.removeItem(STORAGE_KEY_TAB);
                                 }
                             }}
-                            className="w-full mb-3 md:mb-4 px-3 md:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                            className="w-full mb-2 md:mb-3 px-3 md:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                         >
                             <option value="">Select Cluster</option>
-                            {clusterOptions.map((c) => (
+                            {clusterSelectOptions.map((c, idx) => (
                                 <option key={c.value} value={c.value}>
-                                    {c.label}
+                                    {idx + 1}. {c.label}
                                 </option>
                             ))}
                         </select>
+                        <p className="text-[11px] text-gray-500 mb-3 md:mb-4">
+                            {clusterOptions.length} cluster{clusterOptions.length === 1 ? "" : "s"} total
+                            {clusterSearchTerm.trim() ? ` · ${filteredClusterOptions.length} match` : ""}
+                        </p>
                         {selectedClusterKey && (
                             <div className="flex flex-wrap gap-2 mb-3 md:mb-4">
                                 <button
@@ -1032,10 +1083,19 @@ export default function GroupManagement() {
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-                        <div className="p-3 md:p-4 bg-gray-50 border-b">
+                        <div className="p-3 md:p-4 bg-gray-50 border-b flex items-center justify-between gap-2">
                             <h3 className="text-sm md:text-base font-semibold text-gray-800">
-                                {groupsLoading ? "Loading groups..." : `All Groups (${filteredGroups.length})`}
+                                {groupsLoading ? "Loading groups..." : `Groups (${filteredGroups.length})`}
                             </h3>
+                            <button
+                                type="button"
+                                title="Refresh list and member counts"
+                                onClick={() => refreshGroupsList()}
+                                disabled={groupsLoading}
+                                className="p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                            >
+                                <RefreshCw className={`w-4 h-4 ${groupsLoading ? "animate-spin" : ""}`} />
+                            </button>
                         </div>
                         <div className="max-h-[400px] md:max-h-[600px] overflow-y-auto">
                             {!selectedClusterKey ? (
@@ -1043,7 +1103,7 @@ export default function GroupManagement() {
                                     Please select a cluster to view groups.
                                 </div>
                             ) : (
-                                filteredGroups.map((group) => (
+                                filteredGroups.map((group, gIdx) => (
                                     <div
                                         key={group.id}
                                         onClick={() => {
@@ -1067,15 +1127,20 @@ export default function GroupManagement() {
                                             }`}
                                     >
                                         <div className="flex items-start justify-between gap-2">
-                                            <div className="flex-1 min-w-0">
+                                            <div className="flex-1 min-w-0 flex gap-2 md:gap-3">
+                                                <span className="shrink-0 w-7 h-7 md:w-8 md:h-8 rounded-full bg-gray-200 text-gray-700 text-xs md:text-sm font-bold flex items-center justify-center tabular-nums">
+                                                    {gIdx + 1}
+                                                </span>
+                                                <div className="min-w-0 flex-1">
                                                 <p className="font-semibold text-sm md:text-base text-gray-800 truncate">{group.name}</p>
                                                 <p className="text-xs md:text-sm text-gray-600">Code: {group.code}</p>
                                                 <p className="text-xs md:text-sm text-gray-500 truncate">{group.village}</p>
                                                 <div className="flex items-center gap-2 md:gap-4 mt-1 md:mt-2 text-xs text-gray-500">
                                                     <span className="flex items-center gap-1">
                                                         <Users size={12} />
-                                                        {group.noMembers} members
+                                                        {group.noMembers} member{group.noMembers === 1 ? "" : "s"}
                                                     </span>
+                                                </div>
                                                 </div>
                                             </div>
                                             <Building2
@@ -1209,7 +1274,10 @@ export default function GroupManagement() {
                                             </div>
                                             <div className="p-4 bg-gray-50 rounded-lg">
                                                 <p className="text-sm text-gray-600 mb-1">Number of Members</p>
-                                                <p className="font-semibold text-gray-800">{selectedGroupRaw.no_members || selectedGroupRaw.memberCount || 0}</p>
+                                                <p className="font-semibold text-gray-800">
+                                                    {membersLoading ? "…" : groupMembers.length}
+                                                </p>
+                                                <p className="text-xs text-gray-500 mt-1">Live count from the member list (same as Members tab).</p>
                                             </div>
                                         </div>
                                     </div>
@@ -1346,7 +1414,19 @@ export default function GroupManagement() {
                             {activeTab === "members" && (
                                 <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
                                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
-                                        <h3 className="text-lg md:text-xl font-semibold text-gray-800">Group Members</h3>
+                                        <div>
+                                            <h3 className="text-lg md:text-xl font-semibold text-gray-800">
+                                                Group Members
+                                                {!membersLoading && (
+                                                    <span className="text-base font-normal text-gray-600">
+                                                        {" "}({sortedGroupMembers.length})
+                                                    </span>
+                                                )}
+                                            </h3>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                All members in this group (same count as sidebar after refresh).
+                                            </p>
+                                        </div>
                                         <div className="flex items-center gap-2">
                                             <Link
                                                 to={`/admin/member-registration?groupId=${selectedGroupData.id}`}

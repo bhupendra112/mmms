@@ -1,7 +1,7 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
 import RecoveryMaster from "../../model/RecoveryMaster.js";
-import { GroupMaster, FDMaster, MemberRevenueDemand, LoanAdjustmentLog } from "../../model/index.js";
+import { GroupMaster, FDMaster, MemberRevenueDemand, LoanAdjustmentLog, BankTransaction, CashTransaction, BankMaster } from "../../model/index.js";
 import LoanMaster from "../../model/LoanMaster.js";
 import Member from "../../model/Member.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
@@ -11,11 +11,156 @@ import { generateRecoveryPDF } from "../../utility/pdfGenerator.js";
 import { getDateRange, parseDate } from "../../utility/dateUtils.js";
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
+import { removeCashAmountInternal } from "./cashAmountController.js";
 
 const DEBUG_INTEREST = process.env.DEBUG_INTEREST === "true";
 
 /** Round demand amount to fixed integer: if decimal >= 0.5 round up, else round down */
 const roundDemand = (n) => (typeof n === "number" && !Number.isNaN(n)) ? Math.round(n) : (parseFloat(n) || 0);
+
+/**
+ * Walk back MemberRevenueDemand payments that were attributed to this recovery session (same logic as payment, reversed).
+ */
+async function revertRevenueDemandPaymentsForMember({ memberId, groupId, recoverySessionId, revenueType, amountToRevert }) {
+    let remaining = roundDemand(parseFloat(amountToRevert) || 0);
+    if (remaining <= 0) return;
+
+    const demands = await MemberRevenueDemand.find({
+        memberId,
+        groupId,
+        revenueType,
+        recoveryId: recoverySessionId,
+    }).sort({ isAnnualDemand: -1, demandDate: -1 });
+
+    for (const d of demands) {
+        if (remaining <= 0) break;
+        const paid = parseFloat(d.paidAmount) || 0;
+        if (paid <= 0) continue;
+        const take = Math.min(remaining, paid);
+        const newPaid = roundDemand(paid - take);
+        remaining = roundDemand(remaining - take);
+        d.paidAmount = newPaid;
+        const demandAmount = parseFloat(d.amount) || 0;
+        if (newPaid <= 0.001) {
+            d.paidAmount = 0;
+            d.isPaid = false;
+            d.paidDate = null;
+            d.recoveryId = null;
+        } else {
+            d.isPaid = newPaid >= demandAmount;
+        }
+        await d.save();
+    }
+}
+
+/**
+ * Un-mark yogdan on loans that were marked for this recovery (LIFO vs collection order).
+ */
+async function revertYogdanMarksForMemberRecovery(oldMemberRecovery, groupDoc, parsedDate) {
+    const oldY = parseFloat(oldMemberRecovery.amounts?.yogdan) || 0;
+    if (oldY <= 0 || !oldMemberRecovery.memberId) return;
+
+    let remaining = oldY;
+    const { start: dateStart, end: dateEnd } = getDateRange(parsedDate);
+
+    const memberLoans = await LoanMaster.find({
+        groupId: groupDoc._id,
+        memberId: oldMemberRecovery.memberId.toString(),
+        transactionType: "Loan",
+        status: "approved",
+        yogdanCollected: true,
+        yogdanCollectedDate: { $gte: dateStart, $lte: dateEnd },
+    })
+        .sort({ date: -1 })
+        .lean();
+
+    for (const loan of memberLoans) {
+        if (remaining <= 0) break;
+        const loanAmount = loan.amount || 0;
+        const hasStored = loan.yogdanAmount !== undefined && loan.yogdanAmount !== null;
+        const yogdanAmount = hasStored ? (parseFloat(loan.yogdanAmount) || 0) : Math.round((loanAmount * 0.01) * 100) / 100;
+        if (yogdanAmount <= 0) continue;
+        if (remaining >= yogdanAmount - 0.001) {
+            await LoanMaster.findByIdAndUpdate(loan._id, {
+                $set: { yogdanCollected: false, yogdanCollectedDate: null },
+            });
+            remaining = roundDemand(remaining - yogdanAmount);
+        }
+    }
+}
+
+/**
+ * Before replacing a member's recovery row, undo side effects from the previous save
+ * so MemberRevenueDemand, yogdan flags, and cash/bank records stay consistent.
+ * Ledger rows are updated in place by postTransaction when the session is saved again.
+ */
+async function revertMemberRecoveryUpdateSideEffects(oldMemberRecovery, recoverySessionId, groupDoc, parsedDate) {
+    if (!oldMemberRecovery || !recoverySessionId || !groupDoc?._id) return;
+    const memberId = oldMemberRecovery.memberId;
+    if (!memberId) return;
+
+    const amounts = oldMemberRecovery.amounts || {};
+    const groupId = groupDoc._id;
+
+    const revSpecs = [
+        { revenueType: "membership_fees_shg", key: "memFeesSHG" },
+        { revenueType: "membership_fees_group", key: "memFeesGroup" },
+        { revenueType: "penalty", key: "penalty" },
+    ];
+    for (const { revenueType, key } of revSpecs) {
+        const amt = parseFloat(amounts[key]) || 0;
+        if (amt > 0) {
+            await revertRevenueDemandPaymentsForMember({
+                memberId,
+                groupId,
+                recoverySessionId,
+                revenueType,
+                amountToRevert: amt,
+            });
+        }
+    }
+
+    await revertYogdanMarksForMemberRecovery(oldMemberRecovery, groupDoc, parsedDate);
+
+    const mid = memberId.toString ? memberId.toString() : String(memberId);
+
+    const cashDocs = await CashTransaction.find({
+        recoveryId: recoverySessionId,
+        recoveryMemberId: mid,
+        transactionType: "recovery",
+    });
+    for (const ct of cashDocs) {
+        const amt = parseFloat(ct.amount) || 0;
+        if (amt > 0) {
+            try {
+                await removeCashAmountInternal(groupId, amt);
+            } catch (e) {
+                console.error("[revertMemberRecoveryUpdateSideEffects] removeCashAmountInternal:", e);
+            }
+        }
+        await CashTransaction.findByIdAndDelete(ct._id);
+    }
+
+    const bankDocs = await BankTransaction.find({
+        recoveryId: recoverySessionId,
+        recoveryMemberId: mid,
+        transactionType: "recovery",
+    });
+    for (const bt of bankDocs) {
+        const bankId = bt.bankId;
+        await BankTransaction.findByIdAndDelete(bt._id);
+        if (bankId) {
+            const bank = await BankMaster.findById(bankId);
+            if (bank && typeof bank.recalculateBalance === "function") {
+                try {
+                    await bank.recalculateBalance();
+                } catch (e) {
+                    console.error("[revertMemberRecoveryUpdateSideEffects] bank recalculateBalance:", e);
+                }
+            }
+        }
+    }
+}
 
 export const registerRecovery = async (req, res) => {
     try {
@@ -555,32 +700,6 @@ export const updateMemberRecovery = async (req, res) => {
         const parsedDate = parseDate(date);
         const { start: dateStart, end: dateEnd } = getDateRange(parsedDate);
 
-        // Check if member already has a recovery for this date
-        const existingRecoverySession = await RecoveryMaster.findOne({
-            groupId: groupDoc._id,
-            date: { $gte: dateStart, $lte: dateEnd },
-            'recoveries.memberId': memberRecovery.memberId
-        }).lean();
-
-        if (existingRecoverySession) {
-            // Check if this member already has a recovery in this session
-            const existingMemberRecovery = existingRecoverySession.recoveries?.find(
-                r => r.memberId === memberRecovery.memberId ||
-                    r.memberId?.toString() === memberRecovery.memberId?.toString()
-            );
-
-            if (existingMemberRecovery &&
-                (existingMemberRecovery.attendance === 'present' ||
-                    (existingMemberRecovery.attendance === 'absent' && existingMemberRecovery.recoveryByOther))) {
-                // Member already has a recovery for today
-                return apiResponse.error(
-                    res,
-                    "Demand already recovered for this member today",
-                    400
-                );
-            }
-        }
-
         // Find existing recovery session for this date and group
         let recoverySession = await RecoveryMaster.findOne({
             groupId: groupDoc._id,
@@ -592,6 +711,20 @@ export const updateMemberRecovery = async (req, res) => {
         const meetingSequence = 1;
 
         if (recoverySession) {
+            const memberIndexBeforeUpdate = recoverySession.recoveries.findIndex(
+                r => r.memberId === memberRecovery.memberId ||
+                    r.memberId?.toString() === memberRecovery.memberId?.toString()
+            );
+            if (memberIndexBeforeUpdate >= 0) {
+                const oldMemberRecovery = recoverySession.recoveries[memberIndexBeforeUpdate];
+                await revertMemberRecoveryUpdateSideEffects(
+                    oldMemberRecovery,
+                    recoverySession._id,
+                    groupDoc,
+                    parsedDate
+                );
+            }
+
             // Calculate demand details for this member
             // Exclude current recovery session from cumulative calculations
             const demandDetails = await calculateDemandDetails(

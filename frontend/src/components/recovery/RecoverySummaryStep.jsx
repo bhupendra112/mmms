@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { CheckCircle, Download, FileText, Camera, X, User, Printer } from "lucide-react";
+import { CheckCircle, Camera, X, User, Pencil } from "lucide-react";
 import { getImageUrl } from "../../utils/recoveryUtils";
 import CashDenominationsSection from "./CashDenominationsSection";
 
@@ -10,26 +9,12 @@ export default function RecoverySummaryStep({
   cashDenominations,
   groupPhoto,
   activeGroup,
-  onExportExcel,
-  onExportPDF,
-  onPrintPDF,
   onCapturePhoto,
   onRemovePhoto,
   onCashDenominationsChange,
   onFinalize,
+  onEditMembers,
 }) {
-  const [printBusy, setPrintBusy] = useState(false);
-
-  const handlePrintClick = async () => {
-    if (!onPrintPDF) return;
-    try {
-      setPrintBusy(true);
-      await onPrintPDF();
-    } finally {
-      setPrintBusy(false);
-    }
-  };
-
   const groupLabel =
     activeGroup?.name ||
     activeGroup?.group_name ||
@@ -41,44 +26,17 @@ export default function RecoverySummaryStep({
     <div className="space-y-4 sm:space-y-5 md:space-y-6">
       {/* Summary */}
       <div className="bg-white rounded-lg shadow-md p-4 sm:p-5 md:p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center gap-2">
-              <CheckCircle className="text-green-600 shrink-0 w-6 h-6 sm:w-7 sm:h-7" />
-              Recovery Summary
-            </h2>
-            <p className="text-xs sm:text-sm text-gray-600 mt-1">
-              {groupLabel} · {printDate}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={onExportExcel}
-              className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-xs sm:text-sm w-full sm:w-auto"
-            >
-              <Download size={18} className="shrink-0" />
-              Export Excel
-            </button>
-            <button
-              type="button"
-              onClick={onExportPDF}
-              className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-xs sm:text-sm w-full sm:w-auto"
-            >
-              <FileText size={18} className="shrink-0" />
-              Export PDF
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintClick}
-              disabled={printBusy || !onPrintPDF}
-              className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-60 font-medium text-xs sm:text-sm w-full sm:w-auto"
-              title="Prints the same document as Export PDF — choose printer in the dialog"
-            >
-              <Printer size={18} className="shrink-0" />
-              {printBusy ? "Preparing…" : "Print"}
-            </button>
-          </div>
+        <div className="mb-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <CheckCircle className="text-green-600 shrink-0 w-6 h-6 sm:w-7 sm:h-7" />
+            Recovery Summary
+          </h2>
+          <p className="text-xs sm:text-sm text-gray-600 mt-1">
+            {groupLabel} · {printDate}
+          </p>
+          <p className="text-xs sm:text-sm text-gray-500 mt-2">
+            After you add the cash note breakdown (if any) and the group photo, use <strong>Finalize &amp; Save All</strong>. Export Excel, PDF, and Print will appear in the next step.
+          </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-5 md:gap-6 mb-4 sm:mb-6">
           <div className="p-4 sm:p-5 md:p-6 bg-green-50 rounded-lg border-l-4 border-green-500">
@@ -159,6 +117,22 @@ export default function RecoverySummaryStep({
             })}
           </div>
         </div>
+
+        {onEditMembers && (
+          <div className="mb-4 sm:mb-6 rounded-lg border border-amber-200 bg-amber-50/60 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-amber-950">
+              Need to correct amounts before finalizing?
+            </p>
+            <button
+              type="button"
+              onClick={onEditMembers}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-600 text-white font-medium text-sm hover:bg-amber-700 shrink-0"
+            >
+              <Pencil size={18} className="shrink-0" />
+              Edit member recoveries
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Group Photo */}
