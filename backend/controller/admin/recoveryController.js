@@ -19,6 +19,35 @@ const DEBUG_INTEREST = process.env.DEBUG_INTEREST === "true";
 const roundDemand = (n) => (typeof n === "number" && !Number.isNaN(n)) ? Math.round(n) : (parseFloat(n) || 0);
 
 /**
+ * Interest / membership fees / FD (when fd.totalDemand > 0) cannot exceed demand totals from calculateDemandDetails.
+ * Loan is validated separately (remaining principal).
+ */
+function validateRecoveryDemandCaps(demandDetails, amounts) {
+    if (!demandDetails || !amounts) return null;
+    const interest = roundDemand(parseFloat(amounts.interest) || 0);
+    const maxInterest = roundDemand(demandDetails.interest?.totalDemand ?? 0);
+    if (interest > maxInterest) {
+        return `Interest on loan cannot exceed demand of ₹${maxInterest.toLocaleString()}`;
+    }
+    const shg = roundDemand(parseFloat(amounts.memFeesSHG) || 0);
+    const maxShg = roundDemand(demandDetails.memFeesSHG?.totalDemand ?? 0);
+    if (shg > maxShg) {
+        return `Mem. Fees SHG (Yearly) cannot exceed demand of ₹${maxShg.toLocaleString()}`;
+    }
+    const grp = roundDemand(parseFloat(amounts.memFeesGroup) || 0);
+    const maxGrp = roundDemand(demandDetails.memFeesGroup?.totalDemand ?? 0);
+    if (grp > maxGrp) {
+        return `Mem. Fees Group (Yearly) cannot exceed demand of ₹${maxGrp.toLocaleString()}`;
+    }
+    const fdAmt = roundDemand(parseFloat(amounts.fd) || 0);
+    const maxFd = roundDemand(demandDetails.fd?.totalDemand ?? 0);
+    if (maxFd > 0 && fdAmt > maxFd) {
+        return `FD amount cannot exceed demand of ₹${maxFd.toLocaleString()}`;
+    }
+    return null;
+}
+
+/**
  * Walk back MemberRevenueDemand payments that were attributed to this recovery session (same logic as payment, reversed).
  */
 async function revertRevenueDemandPaymentsForMember({ memberId, groupId, recoverySessionId, revenueType, amountToRevert }) {
@@ -707,6 +736,55 @@ export const updateMemberRecovery = async (req, res) => {
         })
             .sort({ meetingSequence: -1 }); // Get the latest sequence if multiple exist
 
+        // Strict loan cap validation:
+        // loan recovery for this save cannot exceed member's remaining principal.
+        const requestedLoanRecovery = parseFloat(memberRecovery?.amounts?.loan || 0);
+        if (requestedLoanRecovery > 0 && memberRecovery?.memberId) {
+            const loans = await LoanMaster.find({
+                groupId: groupDoc._id,
+                memberId: memberRecovery.memberId.toString(),
+                transactionType: "Loan",
+                status: "approved",
+            }).lean();
+
+            const totalLoanAmount = loans.reduce((sum, loan) => {
+                return sum + (parseFloat(loan.amount) || 0);
+            }, 0);
+
+            const allRecoverySessions = await RecoveryMaster.find({
+                groupId: groupDoc._id,
+            }).lean();
+
+            let totalLoanRecovered = 0;
+            allRecoverySessions.forEach((sessionDoc) => {
+                const rec = sessionDoc.recoveries?.find(
+                    (r) => r.memberId?.toString() === memberRecovery.memberId?.toString()
+                );
+                if (rec?.amounts) {
+                    totalLoanRecovered += parseFloat(rec.amounts.loan || 0);
+                }
+            });
+
+            // If updating an existing member row in today's session, exclude previous saved amount.
+            if (recoverySession) {
+                const existingRecoveryForMember = recoverySession.recoveries?.find(
+                    (r) => r.memberId?.toString() === memberRecovery.memberId?.toString()
+                );
+                if (existingRecoveryForMember?.amounts) {
+                    totalLoanRecovered -= parseFloat(existingRecoveryForMember.amounts.loan || 0);
+                }
+            }
+
+            const remainingLoanAmount = Math.max(0, totalLoanAmount - totalLoanRecovered);
+            if (requestedLoanRecovery > remainingLoanAmount) {
+                return apiResponse.error(
+                    res,
+                    `Loan amount cannot exceed remaining loan amount of ₹${Math.round(remainingLoanAmount).toLocaleString()}`,
+                    400
+                );
+            }
+        }
+
         // Meeting sequence is always 1 (no same-day meetings allowed)
         const meetingSequence = 1;
 
@@ -736,6 +814,11 @@ export const updateMemberRecovery = async (req, res) => {
                 recoverySession.meetingSequence || meetingSequence,
                 recoverySession._id
             );
+
+            const demandCapErr = validateRecoveryDemandCaps(demandDetails, memberRecovery.amounts);
+            if (demandCapErr) {
+                return apiResponse.error(res, demandCapErr, 400);
+            }
 
             // Update existing session - find and update member recovery
             const memberIndex = recoverySession.recoveries.findIndex(
@@ -1079,6 +1162,11 @@ export const updateMemberRecovery = async (req, res) => {
                 groupDoc,
                 meetingSequence
             );
+
+            const demandCapErrNew = validateRecoveryDemandCaps(demandDetails, memberRecovery.amounts);
+            if (demandCapErrNew) {
+                return apiResponse.error(res, demandCapErrNew, 400);
+            }
 
             // Create new recovery session
             const total = (memberRecovery.amounts?.saving || 0) +
@@ -2944,6 +3032,10 @@ export const calculateDemandDetails = async (
                 closingBalance: roundDemand(totalSavingPaid + actualSaving),
             },
             fd: {
+                prevDemand: 0,
+                currDemand: 0,
+                totalDemand: 0,
+                unpaidDemand: 0,
                 actualPaid: roundDemand(actualFd),
                 openingBalance: roundDemand(totalFdPaid),
                 closingBalance: roundDemand(totalFdPaid + actualFd),

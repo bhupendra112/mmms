@@ -438,25 +438,25 @@ export default function DemandRecovery() {
   // Fixed integer for caps / display
   const roundAmount = (n) => Math.round(Number(n) || 0);
 
-  /** Manual entry only: update one field; cap at demand/remaining when applicable (no auto-fill from total, no saving↔loan sync). */
+  /** Max recoverable for a demand line: prefer remaining unpaid, else total demand. */
+  const scalarDemandCapFromSummary = (s) => {
+    if (!s) return 0;
+    const unpaidRaw = s.unpaid;
+    if (unpaidRaw !== undefined && unpaidRaw !== null && unpaidRaw !== "") {
+      return Math.max(0, roundAmount(parseFloat(unpaidRaw) || 0));
+    }
+    return Math.max(0, roundAmount(parseFloat(s.total) || 0));
+  };
+
+  /** Manual entry: loan capped by remaining principal; interest / FD / mem fees capped by demand. */
   const handleAmountChange = (fieldName, value) => {
     const numValue = parseFloat(value) || 0;
 
-    let maxValue = 0;
+    let loanMaxValue = 0;
     if (fieldName === "loan" && currentMember) {
       const currentLoanTotals = memberLoanTotals[currentMember.id];
       const remainingLoan = currentLoanTotals?.remainingLoanAmount ?? 0;
-      const loanDue = parseFloat(currentMemberSummary?.loan?.total ?? 0) || 0;
-      const loanUnpaid = parseFloat(currentMemberSummary?.loan?.unpaid ?? 0) || 0;
-      const loanCurr = parseFloat(currentMemberSummary?.loan?.curr ?? 0) || 0;
-      const maxFromSummary = Math.max(loanDue, loanUnpaid, loanCurr);
-      if (remainingLoan > 0) {
-        maxValue = maxFromSummary > 0 ? Math.min(remainingLoan, maxFromSummary) : remainingLoan;
-      } else {
-        maxValue = maxFromSummary;
-      }
-    } else {
-      maxValue = parseFloat(currentMemberSummary?.[fieldName]?.total ?? 0) || 0;
+      loanMaxValue = Math.max(0, parseFloat(remainingLoan) || 0);
     }
 
     const nextBreakup =
@@ -466,14 +466,31 @@ export default function DemandRecovery() {
 
     if (
       !recoveryEditMode &&
+      fieldName === "loan" &&
       value !== "" &&
       value != null &&
-      maxValue > 0 &&
-      numValue > maxValue
+      loanMaxValue > 0 &&
+      numValue > loanMaxValue
     ) {
-      alert(`Amount cannot exceed the due amount of ₹${maxValue.toLocaleString()}`);
-      setAmountBreakup({ ...nextBreakup, [fieldName]: String(roundAmount(maxValue)) });
+      alert(`Loan amount cannot exceed the remaining loan amount of ₹${loanMaxValue.toLocaleString()}`);
+      setAmountBreakup({ ...nextBreakup, [fieldName]: String(roundAmount(loanMaxValue)) });
       return;
+    }
+
+    const demandCappedFields = ["interest", "fd", "memFeesSHG", "memFeesGroup"];
+    if (
+      demandCappedFields.includes(fieldName) &&
+      value !== "" &&
+      value != null
+    ) {
+      const cap = scalarDemandCapFromSummary(currentMemberSummary?.[fieldName]);
+      if (numValue > cap) {
+        alert(
+          `Amount cannot exceed demand of ₹${cap.toLocaleString()}`
+        );
+        setAmountBreakup({ ...nextBreakup, [fieldName]: cap > 0 ? String(Math.round(cap)) : "" });
+        return;
+      }
     }
 
     setAmountBreakup(nextBreakup);

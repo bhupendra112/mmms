@@ -1,5 +1,15 @@
 import { Input } from "../forms/FormComponents";
 
+/** Remaining demand for a line (unpaid preferred, else total). */
+function scalarDemandCap(summary) {
+  if (!summary) return 0;
+  const unpaidRaw = summary.unpaid;
+  if (unpaidRaw !== undefined && unpaidRaw !== null && unpaidRaw !== "") {
+    return Math.max(0, Math.round(parseFloat(unpaidRaw) || 0));
+  }
+  return Math.max(0, Math.round(parseFloat(summary.total) || 0));
+}
+
 /** Non-zero value in the form breakup (saved recovery row may have amounts while demand summary is already 0). */
 function hasBreakupAmount(amountBreakup, key) {
   const v = amountBreakup?.[key];
@@ -62,15 +72,6 @@ export default function AmountBreakupForm({
             const loanCurr = parseFloat(currentMemberSummary?.loan?.curr ?? 0) || 0;
             const currentLoanTotals = currentMember ? memberLoanTotals[currentMember.id] : null;
             const remainingLoanAmount = currentLoanTotals?.remainingLoanAmount ?? 0;
-            const maxFromSummary = Math.max(loanTotal, loanUnpaid, loanCurr);
-            const effectiveLoanMax =
-              remainingLoanAmount > 0
-                ? maxFromSummary > 0
-                  ? Math.min(remainingLoanAmount, maxFromSummary)
-                  : remainingLoanAmount
-                : maxFromSummary > 0
-                  ? maxFromSummary
-                  : undefined;
             const hasLoanDemand =
               loanTotal > 0 || loanUnpaid > 0 || loanCurr > 0 || remainingLoanAmount > 0;
             const showLoan = hasLoanDemand || hb("loan") || recoveryEditMode;
@@ -86,7 +87,7 @@ export default function AmountBreakupForm({
                   handleChange={(e) => onAmountChange("loan", e.target.value)}
                   placeholder="Enter loan payment"
                   step="1"
-                  max={effectiveLoanMax}
+                  max={remainingLoanAmount > 0 ? remainingLoanAmount : undefined}
                 />
                 {remainingLoanAmount > 0 && (
                   <button
@@ -104,7 +105,10 @@ export default function AmountBreakupForm({
               </div>
             );
           })()}
-          {(((parseFloat(currentMemberSummary?.interest?.total ?? 0) || 0) > 0) || hb("interest") || recoveryEditMode) && (
+          {(((parseFloat(currentMemberSummary?.interest?.total ?? 0) || 0) > 0) ||
+            (parseFloat(currentMemberSummary?.interest?.unpaid ?? 0) || 0) > 0 ||
+            hb("interest") ||
+            recoveryEditMode) && (
             <Input
               label="Interest on Loan"
               name="interest"
@@ -113,9 +117,36 @@ export default function AmountBreakupForm({
               handleChange={(e) => onAmountChange("interest", e.target.value)}
               placeholder="Enter interest payment"
               step="1"
-              max={currentMemberSummary?.interest?.total || undefined}
+              max={
+                scalarDemandCap(currentMemberSummary?.interest) > 0
+                  ? scalarDemandCap(currentMemberSummary?.interest)
+                  : undefined
+              }
             />
           )}
+          {(() => {
+            const fdCap = scalarDemandCap(currentMemberSummary?.fd);
+            const showFd =
+              fdCap > 0 ||
+              hb("fd") ||
+              recoveryEditMode ||
+              (parseFloat(currentMemberSummary?.fd?.total ?? 0) || 0) > 0 ||
+              (parseFloat(currentMemberSummary?.fd?.unpaid ?? 0) || 0) > 0;
+            if (!showFd) return null;
+            return (
+              <Input
+                label="FD"
+                name="fd"
+                type="number"
+                value={amountBreakup.fd}
+                handleChange={(e) => onAmountChange("fd", e.target.value)}
+                placeholder="Enter FD deposit"
+                step="1"
+                min="0"
+                max={fdCap > 0 ? fdCap : undefined}
+              />
+            );
+          })()}
           {(((parseFloat(currentMemberSummary?.yogdan?.total ?? 0) || 0) > 0 ||
             (parseFloat(currentMemberSummary?.yogdan?.unpaid ?? 0) || 0) > 0) ||
             hb("yogdan") ||
@@ -128,7 +159,6 @@ export default function AmountBreakupForm({
               handleChange={(e) => onAmountChange("yogdan", e.target.value)}
               placeholder="Enter yogdan amount"
               step="1"
-              max={currentMemberSummary?.yogdan?.total || undefined}
             />
           )}
           {((parseFloat(currentMemberSummary?.memFeesSHG?.total ?? 0) || 0) > 0 ||
@@ -144,7 +174,11 @@ export default function AmountBreakupForm({
               handleChange={(e) => onAmountChange("memFeesSHG", e.target.value)}
               placeholder="Enter SHG fees"
               step="1"
-              max={currentMemberSummary?.memFeesSHG?.total || undefined}
+              max={
+                scalarDemandCap(currentMemberSummary?.memFeesSHG) > 0
+                  ? scalarDemandCap(currentMemberSummary?.memFeesSHG)
+                  : undefined
+              }
             />
           )}
           {(((parseFloat(currentMemberSummary?.memFeesSamiti?.total ?? 0) || 0) > 0) ||
@@ -158,7 +192,6 @@ export default function AmountBreakupForm({
               handleChange={(e) => onAmountChange("memFeesSamiti", e.target.value)}
               placeholder="Enter Samiti fees"
               step="1"
-              max={currentMemberSummary?.memFeesSamiti?.total || undefined}
             />
           )}
           {((parseFloat(currentMemberSummary?.memFeesGroup?.total ?? 0) || 0) > 0 ||
@@ -174,7 +207,11 @@ export default function AmountBreakupForm({
               handleChange={(e) => onAmountChange("memFeesGroup", e.target.value)}
               placeholder="Enter Membership Group fees"
               step="1"
-              max={currentMemberSummary?.memFeesGroup?.total || undefined}
+              max={
+                scalarDemandCap(currentMemberSummary?.memFeesGroup) > 0
+                  ? scalarDemandCap(currentMemberSummary?.memFeesGroup)
+                  : undefined
+              }
             />
           )}
           {(((parseFloat(currentMemberSummary?.penalty?.total ?? 0) || 0) > 0) || hb("penalty") || recoveryEditMode) && (
@@ -187,7 +224,6 @@ export default function AmountBreakupForm({
               placeholder="Enter penalty amount if applicable"
               step="1"
               min="0"
-              max={currentMemberSummary?.penalty?.total ?? undefined}
             />
           )}
           {(((parseFloat(currentMemberSummary?.other?.total ?? 0) || 0) > 0) || hb("other") || recoveryEditMode) && (
@@ -199,7 +235,6 @@ export default function AmountBreakupForm({
               handleChange={(e) => onAmountChange("other", e.target.value)}
               placeholder="Enter other amount"
               step="1"
-              max={currentMemberSummary?.other?.total || undefined}
             />
           )}
           {/* Dynamic Charges - show only when charge due > 0 */}
@@ -217,37 +252,16 @@ export default function AmountBreakupForm({
                       type="number"
                       value={amountBreakup.charges?.[chargeName] || ""}
                       handleChange={(e) => {
-                        const numValue = parseFloat(e.target.value) || 0;
-                        if (e.target.value === "" || e.target.value === null || e.target.value === undefined) {
-                          onAmountBreakupChange({
-                            ...amountBreakup,
-                            charges: {
-                              ...amountBreakup.charges,
-                              [chargeName]: e.target.value,
-                            },
-                          });
-                        } else if (numValue <= chargeDue) {
-                          onAmountBreakupChange({
-                            ...amountBreakup,
-                            charges: {
-                              ...amountBreakup.charges,
-                              [chargeName]: e.target.value,
-                            },
-                          });
-                        } else {
-                          alert(`Amount cannot exceed the due amount of ₹${chargeDue.toLocaleString()}`);
-                          onAmountBreakupChange({
-                            ...amountBreakup,
-                            charges: {
-                              ...amountBreakup.charges,
-                              [chargeName]: chargeDue.toString(),
-                            },
-                          });
-                        }
+                        onAmountBreakupChange({
+                          ...amountBreakup,
+                          charges: {
+                            ...amountBreakup.charges,
+                            [chargeName]: e.target.value,
+                          },
+                        });
                       }}
                       placeholder={`Enter ${chargeName} amount`}
                       step="1"
-                      max={chargeDue}
                     />
                   );
                 })}

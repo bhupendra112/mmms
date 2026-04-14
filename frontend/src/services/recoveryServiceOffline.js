@@ -621,6 +621,10 @@ export const getDemandDetails = async (groupId, memberId, date, testMode = false
             closingBalance: totalSavingPaid,
         },
         fd: {
+            prevDemand: 0,
+            currDemand: 0,
+            totalDemand: 0,
+            unpaidDemand: 0,
             actualPaid: 0,
             openingBalance: totalFdPaid,
             closingBalance: totalFdPaid,
