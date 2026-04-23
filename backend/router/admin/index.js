@@ -3,6 +3,7 @@ import authRoute from "./authRouter.js";
 import groupRouter from "./groupRouter.js"
 import memberRouter from "./memberRouter.js"
 import loanRouter from "./loanRouter.js"
+import voucherRouter from "./voucherRouter.js"
 import recoveryRouter from "./recoveryRouter.js"
 import groupAuthRouter from "./groupAuthRouter.js"
 import dataManagementRouter from "./dataManagementRouter.js"
@@ -24,6 +25,7 @@ const routeArray = [
     { path: "/group", route: groupRouter },
     { path: "/member", route: memberRouter },
     { path: "/loan", route: loanRouter },
+    { path: "/voucher", route: voucherRouter },
     { path: "/recovery", route: recoveryRouter },
     { path: "/group-auth", route: groupAuthRouter },
     { path: "/data-management", route: dataManagementRouter },

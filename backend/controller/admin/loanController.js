@@ -8,6 +8,7 @@ import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } f
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 import { recalculateLoanState } from "../../service/loanRecalculationService.js";
+import { assertVoucherValidForLoan } from "../../service/voucherService.js";
 
 export const registerLoan = async (req, res) => {
     try {
@@ -107,6 +108,25 @@ export const registerLoan = async (req, res) => {
             }
         }
 
+        // Member loans (transactionType "Loan"): voucher + date required
+        if (payload.transactionType === "Loan") {
+            if (dateValue == null || (dateValue instanceof Date && isNaN(dateValue.getTime()))) {
+                return apiResponse.error(res, "date is required for loan transactions", 400);
+            }
+            if (payload.voucherNumber === undefined || payload.voucherNumber === null || payload.voucherNumber === "") {
+                return apiResponse.error(res, "voucherNumber is required for loan transactions", 400);
+            }
+            const voucherParsed = parseInt(String(payload.voucherNumber).trim(), 10);
+            if (!Number.isInteger(voucherParsed)) {
+                return apiResponse.error(res, "voucherNumber must be a whole number", 400);
+            }
+            try {
+                await assertVoucherValidForLoan({ groupId: groupDoc._id, voucherNumber: voucherParsed });
+            } catch (ve) {
+                return apiResponse.error(res, ve.message || "Invalid voucher", 400);
+            }
+        }
+
         // Convert time_period from years to months if provided
         const loanPayload = { ...payload };
         if (loanPayload.time_period !== undefined && loanPayload.time_period !== null) {
@@ -142,30 +162,56 @@ export const registerLoan = async (req, res) => {
 
         // Idempotency: for group-sync requests, avoid duplicate loans when the same request is sent twice (e.g. multi-tab or retry)
         if (requiresApproval && payload.groupId && payload.memberId && payload.amount != null && dateValue != null) {
-            const existing = await LoanMaster.findOne({
+            const idemFilter = {
                 groupId: groupDoc._id,
                 memberId: payload.memberId,
                 amount: loanAmount,
                 status: "pending",
                 date: dateValue,
-            }).lean();
+            };
+            if (payload.voucherNumber !== undefined && payload.voucherNumber !== null && payload.voucherNumber !== "") {
+                const vn = parseInt(String(payload.voucherNumber).trim(), 10);
+                if (Number.isInteger(vn)) {
+                    idemFilter.voucherNumber = vn;
+                }
+            }
+            const existing = await LoanMaster.findOne(idemFilter).lean();
             if (existing) {
                 return apiResponse.success(res, "Loan request already submitted; awaiting approval.", existing);
             }
         }
 
+        // Persist normalized voucher for Loan transactions only
+        let normalizedVoucher;
+        if (payload.transactionType === "Loan") {
+            normalizedVoucher = parseInt(String(payload.voucherNumber).trim(), 10);
+        } else {
+            delete loanPayload.voucherNumber;
+        }
+
         // Create loan transaction
-        const loan = await LoanMaster.create({
-            ...loanPayload,
-            date: dateValue,
-            groupId: groupDoc._id,
-            groupName: payload.groupName || groupDoc.group_name,
-            groupCode: payload.groupCode || groupDoc.group_code,
-            loan_rate_snapshot: groupDoc.loan_rate || null, // Store rate snapshot
-            yogdanAmount: yogdanAmount, // Store 1% Yogdan amount
-            status: loanStatus,
-            createdBy: req.user?.id || "admin",
-        });
+        let loan;
+        try {
+            loan = await LoanMaster.create({
+                ...loanPayload,
+                date: dateValue,
+                groupId: groupDoc._id,
+                groupName: payload.groupName || groupDoc.group_name,
+                groupCode: payload.groupCode || groupDoc.group_code,
+                loan_rate_snapshot: groupDoc.loan_rate || null, // Store rate snapshot
+                yogdanAmount: yogdanAmount, // Store 1% Yogdan amount
+                status: loanStatus,
+                createdBy: req.user?.id || "admin",
+                ...(payload.transactionType === "Loan"
+                    ? { voucherNumber: normalizedVoucher }
+                    : {}),
+            });
+        } catch (createErr) {
+            if (createErr && createErr.code === 11000) {
+                return apiResponse.error(res, "Voucher already used", 400);
+            }
+            throw createErr;
+        }
 
         // Only create transaction records and update balances if admin (loan is approved)
         // For group loans, transactions will be created when admin approves
@@ -441,6 +487,7 @@ export const rejectLoan = async (req, res) => {
         loan.rejectedBy = req.user?.id || "admin";
         loan.rejectedAt = new Date();
         loan.rejectionReason = reason || "No reason provided";
+        loan.set("voucherNumber", undefined);
         await loan.save();
 
         return apiResponse.success(res, "Loan rejected successfully", loan);

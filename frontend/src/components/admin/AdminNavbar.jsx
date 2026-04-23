@@ -18,6 +18,7 @@ import {
     Receipt,
     FileText,
     ArrowLeftRight,
+    Hash,
 } from "lucide-react";
 import { useAdmin } from "../../contexts/AdminContext";
 import NotificationDropdown from "../common/NotificationDropdown";
@@ -128,6 +129,12 @@ export default function AdminNavbar() {
                     label: "Loan Management",
                     path: "/admin/loan-management",
                     description: "Manage loan transactions"
+                },
+                {
+                    icon: Hash,
+                    label: "Voucher Management",
+                    path: "/admin/voucher-management",
+                    description: "Configure voucher ranges and look up loans by voucher"
                 },
                 {
                     icon: CheckCircle,

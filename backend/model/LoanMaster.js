@@ -25,6 +25,8 @@ const LoanMasterSchema = new mongoose.Schema({
         required: false, // Optional - only required when paymentMode is "Bank"
     },
     purpose: { type: String },
+    /** Set for member loans; optional for legacy documents */
+    voucherNumber: { type: Number },
     amount: { type: Number, required: true },
     time_period: { type: Number }, // Loan duration in months (stored internally, but accepted in years from frontend)
     installment_amount: { type: Number }, // Monthly installment amount
@@ -46,6 +48,16 @@ const LoanMasterSchema = new mongoose.Schema({
 }, {
     timestamps: true,
 });
+
+LoanMasterSchema.index(
+    { groupId: 1, voucherNumber: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            voucherNumber: { $exists: true, $type: "number" },
+        },
+    }
+);
 
 export default mongoose.model("LoanMaster", LoanMasterSchema);
 

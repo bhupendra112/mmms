@@ -16,6 +16,7 @@ import GroupLedger from "./GroupLedger.js";
 import IncomeExpenseHead from "./IncomeExpenseHead.js";
 import LoanAdjustmentLog from "./LoanAdjustmentLog.js";
 import Supervisor from "./Supervisor.js";
+import VoucherRange from "./VoucherRange.js";
 
 export {
     Admin,
@@ -35,5 +36,6 @@ export {
     IncomeExpenseHead,
     MemberExitSettlement,
     LoanAdjustmentLog,
-    Supervisor
+    Supervisor,
+    VoucherRange
 };

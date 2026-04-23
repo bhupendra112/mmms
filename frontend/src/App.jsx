@@ -50,6 +50,7 @@ import SupervisorClusters from "./screens/supervisor/SupervisorClusters";
 import SupervisorGroups from "./screens/supervisor/SupervisorGroups";
 import SupervisorGroupDetail from "./screens/supervisor/SupervisorGroupDetail";
 import SupervisorManagement from "./screens/admin/SupervisorManagement";
+import VoucherManagement from "./screens/admin/VoucherManagement";
 
 function App() {
   return (
@@ -62,6 +63,7 @@ function App() {
               <Route path="/login-admin" element={<LoginAdmin />} />
               <Route path="/group/login" element={<LoginGroup />} />
               <Route path="/supervisor/login" element={<LoginSupervisor />} />
+              <Route path="/voucher-management" element={<Navigate to="/admin/voucher-management" replace />} />
 
               {/* Admin Routes */}
               <Route
@@ -83,6 +85,7 @@ function App() {
                 <Route path="loans" element={<LoanManagement />} />
                 <Route path="loan-management" element={<LoanManagement />} />
                 <Route path="loan-taking" element={<LoanTaking />} />
+                <Route path="voucher-management" element={<VoucherManagement />} />
                 <Route path="payments" element={<AdminPaymentManagement />} />
                 <Route path="expenses" element={<AdminExpenseManagement />} />
                 <Route path="reports" element={<FinancialReports />} />

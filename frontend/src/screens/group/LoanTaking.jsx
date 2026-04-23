@@ -19,18 +19,37 @@ import { LoanPurposeInput } from "../../components/forms/LoanPurposeInput";
 import { useGroup } from "../../contexts/GroupContext";
 import { useOffline } from "../../contexts/OfflineContext";
 import { createApprovalRequest } from "../../services/approvalDB";
-import { registerLoan } from "../../services/loanServiceOffline";
+import { getLoans as getLoansOffline } from "../../services/loanServiceOffline";
+import { registerLoan as registerLoanOnline } from "../../services/loanService";
 import { getGroups as getGroupsOffline, getGroupBanks as getGroupBanksOffline } from "../../services/groupServiceOffline";
 import { getMembersByGroup as getMembersByGroupOffline } from "../../services/memberServiceOffline";
 import { getGroups, getGroupBanks } from "../../services/groupService";
 import { getMembersByGroup } from "../../services/memberService";
 import { getCashAmount } from "../../services/cashAmount";
 import BackButton from "../../components/admin/BackButton";
+import { suggestNextVoucherNumber, lookupLoanByVoucher } from "../../services/voucherService";
+
+function todayISO() {
+    const t = new Date();
+    const y = t.getFullYear();
+    const m = String(t.getMonth() + 1).padStart(2, "0");
+    const d = String(t.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+}
+
+function isoToDDMMYYYY(iso) {
+    if (!iso) return "";
+    const parts = String(iso).split("-");
+    if (parts.length !== 3) return String(iso);
+    const [y, m, d] = parts;
+    if (!y || !m || !d) return String(iso);
+    return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`;
+}
 
 export default function LoanTaking() {
     const { currentGroup, isOnline, isGroupPanel, isGroupLoading } = useGroup();
     const { pathname } = useLocation();
-    const { lastRefreshedAt } = useOffline();
+    const { lastRefreshedAt, isOnline: offlineIsOnline } = useOffline();
     const isAdminMode = !isGroupPanel;
     const [searchParams] = useSearchParams();
     const preselectGroupId = searchParams.get("groupId");
@@ -55,6 +74,9 @@ export default function LoanTaking() {
     const [periodUnit, setPeriodUnit] = useState("years"); // "months" | "years"
     const [installmentAmount, setInstallmentAmount] = useState("");
     const [bachanPathraPhoto, setBachanPathraPhoto] = useState(null);
+    const [voucherNumber, setVoucherNumber] = useState("");
+    const [loanDate, setLoanDate] = useState(() => todayISO());
+    const [voucherFieldHint, setVoucherFieldHint] = useState("");
 
     // Determine active group: use currentGroup from context if available, otherwise use selectedGroup (admin)
     const activeGroup = currentGroup || selectedGroup;
@@ -165,6 +187,38 @@ export default function LoanTaking() {
             });
     }, [activeGroup?.id, lastRefreshedAt]);
 
+    // Suggest next voucher when group is known (online); offline users enter voucher manually
+    useEffect(() => {
+        const gid = activeGroup?.id;
+        if (!gid) return;
+        setVoucherFieldHint("");
+        if (!offlineIsOnline) {
+            setVoucherFieldHint("You are offline: enter the voucher number manually.");
+            return;
+        }
+        let cancelled = false;
+        suggestNextVoucherNumber(gid)
+            .then((res) => {
+                const n = res?.data?.voucherNumber;
+                if (!cancelled && n != null) {
+                    setVoucherNumber(String(n));
+                    setVoucherFieldHint("");
+                }
+            })
+            .catch((err) => {
+                if (!cancelled) {
+                    setVoucherNumber("");
+                    setVoucherFieldHint(
+                        err?.message ||
+                            "Could not load next voucher. Configure an active range in Voucher Management."
+                    );
+                }
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [activeGroup?.id, offlineIsOnline, lastRefreshedAt]);
+
     // Note: Bank selection is available for both Cash and Bank modes (required for Bank, optional for Cash)
 
     // Auto-select group when coming from admin loan management (e.g. ?groupId=...)
@@ -194,6 +248,9 @@ export default function LoanTaking() {
         setPeriodUnit("years");
         setInstallmentAmount("");
         setBachanPathraPhoto(null);
+        setVoucherNumber("");
+        setLoanDate(todayISO());
+        setVoucherFieldHint("");
     };
 
     // Reset form when member changes
@@ -237,6 +294,12 @@ export default function LoanTaking() {
 
     // Handle submit
     const handleSubmit = async () => {
+        const onlineForGuard = offlineIsOnline ?? isOnline ?? (typeof navigator !== "undefined" ? navigator.onLine : false);
+        if (isAdminMode && !onlineForGuard) {
+            alert("Admin panel works online only. Please connect to internet and try again.");
+            return;
+        }
+
         // Member selection is required
         if (!selectedMember) {
             alert("Please select a member");
@@ -267,6 +330,50 @@ export default function LoanTaking() {
 
         if (!timePeriod || parseFloat(timePeriod) <= 0) {
             alert("Please enter valid time period");
+            return;
+        }
+
+        const voucherParsed = parseInt(String(voucherNumber).trim(), 10);
+        if (!Number.isInteger(voucherParsed)) {
+            alert("Please enter a valid voucher number (whole number)");
+            return;
+        }
+        try {
+            const existingLoansRes = await getLoansOffline(activeGroup?.id || null);
+            const existingLoans = Array.isArray(existingLoansRes?.data) ? existingLoansRes.data : [];
+            const duplicateLocal = existingLoans.find((loan) => {
+                const n = parseInt(String(loan?.voucherNumber ?? "").trim(), 10);
+                const isRejected = String(loan?.status || "").toLowerCase() === "rejected";
+                return (
+                    Number.isInteger(n) &&
+                    n === voucherParsed &&
+                    !isRejected
+                );
+            });
+            if (duplicateLocal) {
+                alert(`Voucher number ${voucherParsed} is already used. Please use a different voucher number.`);
+                return;
+            }
+        } catch {
+            // If local lookup fails, continue and rely on backend/online validation.
+        }
+        if (onlineForGuard && activeGroup?.id) {
+            try {
+                const lookup = await lookupLoanByVoucher(activeGroup.id, voucherParsed);
+                if (lookup?.success && lookup?.data) {
+                    alert(`Voucher number ${voucherParsed} is already used. Please use a different voucher number.`);
+                    return;
+                }
+            } catch (e) {
+                const msg = String(e?.message || "");
+                if (!msg.toLowerCase().includes("no loan found")) {
+                    alert(msg || "Unable to validate voucher number. Please try again.");
+                    return;
+                }
+            }
+        }
+        if (!loanDate) {
+            alert("Please select loan date");
             return;
         }
 
@@ -314,7 +421,8 @@ export default function LoanTaking() {
                     : null,
                 installment_amount: installmentAmount ? parseFloat(installmentAmount) : null,
                 bachanPathraPhoto: bachanPathraPhoto || null,
-                date: new Date().toLocaleDateString("en-GB"),
+                date: isoToDDMMYYYY(loanDate),
+                voucherNumber: voucherParsed,
                 createdAt: Date.now(),
             };
 
@@ -324,8 +432,8 @@ export default function LoanTaking() {
                 await createApprovalRequest("loan", loanData, activeGroup.id, activeGroup.name);
                 alert("Loan transaction submitted for approval!");
             } else {
-                // Admin: directly save to MongoDB
-                await registerLoan(loanData);
+                // Admin: online-only direct API save
+                await registerLoanOnline(loanData);
                 alert("Loan transaction saved successfully!");
             }
 
@@ -340,9 +448,12 @@ export default function LoanTaking() {
             setPeriodUnit("years");
             setInstallmentAmount("");
             setBachanPathraPhoto(null);
+            setVoucherNumber("");
+            setLoanDate(todayISO());
+            setVoucherFieldHint("");
         } catch (error) {
             console.error("Error saving loan:", error);
-            alert("Error saving loan transaction");
+            alert(error?.message || "Error saving loan transaction");
         }
     };
 
@@ -493,6 +604,9 @@ export default function LoanTaking() {
                                         setPeriodUnit("years");
                                         setInstallmentAmount("");
                                         setBachanPathraPhoto(null);
+                                        setVoucherNumber("");
+                                        setLoanDate(todayISO());
+                                        setVoucherFieldHint("");
                                     }
                                 }}
                                 className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
@@ -581,6 +695,9 @@ export default function LoanTaking() {
                                                 setPeriodUnit("years");
                                                 setInstallmentAmount("");
                                                 setBachanPathraPhoto(null);
+                                                setVoucherNumber("");
+                                                setLoanDate(todayISO());
+                                                setVoucherFieldHint("");
                                             }}
                                             className="text-sm text-gray-600 hover:text-gray-800"
                                         >
@@ -639,6 +756,45 @@ export default function LoanTaking() {
                                                     )}
                                                 </div>
                                             )}
+                                        </div>
+                                    </div>
+
+                                    {/* Voucher and loan date */}
+                                    <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                                        <h3 className="text-sm font-semibold text-gray-800 mb-2">
+                                            Voucher details
+                                        </h3>
+                                        {voucherFieldHint ? (
+                                            <p className="text-xs text-amber-900 mb-3">{voucherFieldHint}</p>
+                                        ) : null}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <Input
+                                                    label="Voucher number *"
+                                                    name="voucherNumber"
+                                                    type="number"
+                                                    value={voucherNumber}
+                                                    handleChange={(e) => setVoucherNumber(e.target.value)}
+                                                    placeholder="From group range"
+                                                    required
+                                                />
+                                                <p className="mt-1 text-xs text-gray-600">
+                                                    Voucher number must be unique within this group.
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <label className="font-semibold mb-1.5 text-gray-700 text-sm">
+                                                    Loan date <span className="text-red-500 ml-1">*</span>
+                                                </label>
+                                                <input
+                                                    type="date"
+                                                    name="loanDate"
+                                                    value={loanDate}
+                                                    onChange={(e) => setLoanDate(e.target.value)}
+                                                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                                                    required
+                                                />
+                                            </div>
                                         </div>
                                     </div>
 
@@ -882,6 +1038,9 @@ export default function LoanTaking() {
                                                     setPeriodUnit("years");
                                                     setInstallmentAmount("");
                                                     setBachanPathraPhoto(null);
+                                                    setVoucherNumber("");
+                                                    setLoanDate(todayISO());
+                                                    setVoucherFieldHint("");
                                                 }}
                                                 className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
                                             >
