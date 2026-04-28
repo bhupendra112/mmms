@@ -70,6 +70,7 @@ const CashToBankConversionSchema = new mongoose.Schema({
     approvedAt: { type: Date },
     processedAt: { type: Date },
     rejectionReason: { type: String },
+    journalEntryId: { type: String },
 
     // Member-level conversion details (optional, for tracking)
     conversionDetails: [{

@@ -77,6 +77,7 @@ const PaymentMasterSchema = new mongoose.Schema({
 
     // Additional info
     remarks: { type: String },
+    journalEntryId: { type: String },
 
 }, {
     timestamps: true,

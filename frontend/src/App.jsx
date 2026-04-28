@@ -51,6 +51,7 @@ import SupervisorGroups from "./screens/supervisor/SupervisorGroups";
 import SupervisorGroupDetail from "./screens/supervisor/SupervisorGroupDetail";
 import SupervisorManagement from "./screens/admin/SupervisorManagement";
 import VoucherManagement from "./screens/admin/VoucherManagement";
+import JVManagement from "./pages/admin/JVManagement";
 
 function App() {
   return (
@@ -86,6 +87,7 @@ function App() {
                 <Route path="loan-management" element={<LoanManagement />} />
                 <Route path="loan-taking" element={<LoanTaking />} />
                 <Route path="voucher-management" element={<VoucherManagement />} />
+                <Route path="jv-management" element={<JVManagement />} />
                 <Route path="payments" element={<AdminPaymentManagement />} />
                 <Route path="expenses" element={<AdminExpenseManagement />} />
                 <Route path="reports" element={<FinancialReports />} />

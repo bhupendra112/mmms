@@ -1,10 +1,13 @@
 import apiResponse from "../../utility/apiResponse.js";
+import mongoose from "mongoose";
 import CashToBankConversion from "../../model/CashToBankConversion.js";
 import RecoveryMaster from "../../model/RecoveryMaster.js";
 import { GroupMaster } from "../../model/index.js";
 import BankMaster from "../../model/BankMaster.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
 import { createCashTransactionRecord } from "../../utility/cashTransactionHelper.js";
+import { postJournal } from "../../service/journalPostingService.js";
+import { getCashBankTransferLines } from "../../utility/accountHeadMap.js";
 
 // Create conversion request - supports cash_to_bank and bank_to_bank conversions
 export const createConversion = async (req, res) => {
@@ -349,11 +352,34 @@ const processConversionInternal = async (conversionId, processedBy) => {
         }
     }
 
-    // Update conversion status
-    conversion.status = "processed";
-    conversion.processedAt = new Date();
-    await conversion.save();
+    const journalSession = await mongoose.startSession();
+    try {
+        await journalSession.withTransaction(async () => {
+            const { entryId } = await postJournal({
+                groupId: conversion.groupId,
+                date: conversion.createdAt || new Date(),
+                sourceType: "CASH_BANK",
+                sourceId: conversion._id,
+                lines: getCashBankTransferLines({
+                    amount: transactionAmount,
+                    conversionType,
+                    sourceBankId: conversion.fromBankId || undefined,
+                    destinationBankId: conversion.bankId || undefined,
+                    notes: `Conversion ${conversionType}`,
+                }),
+                createdBy: processedBy || "admin",
+                session: journalSession,
+            });
+            conversion.journalEntryId = entryId;
+            conversion.status = "processed";
+            conversion.processedAt = new Date();
+            await conversion.save({ session: journalSession });
+        });
+    } finally {
+        await journalSession.endSession();
+    }
 
+    // Update conversion status
     return conversion;
 };
 

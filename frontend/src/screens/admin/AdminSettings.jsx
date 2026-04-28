@@ -8,9 +8,6 @@ import {
     Save,
     Eye,
     EyeOff,
-    Download,
-    Upload,
-    Trash2,
 } from "lucide-react";
 import { Input, Select, FormSection } from "../../components/forms/FormComponents";
 import {
@@ -20,15 +17,8 @@ import {
     getAdminSettings,
     updateAdminSettings,
 } from "../../services/adminService";
-import {
-    exportAllData,
-    importData,
-    createBackup,
-    deleteAllData,
-    getDataStatistics,
-} from "../../services/dataManagementService";
 import { useAdmin } from "../../contexts/AdminContext";
-import { exportToExcel } from "../../utils/exportUtils";
+import DataManagement from "../../pages/settings/DataManagement";
 
 export default function AdminSettings() {
     const { admin: contextAdmin, refreshProfile } = useAdmin();
@@ -38,10 +28,6 @@ export default function AdminSettings() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
-    const [dataStats, setDataStats] = useState(null);
-    const [exporting, setExporting] = useState(false);
-    const [importing, setImporting] = useState(false);
-    const [backingUp, setBackingUp] = useState(false);
 
     // Profile Settings
     const [profile, setProfile] = useState({
@@ -64,19 +50,7 @@ export default function AdminSettings() {
     // Load profile and settings on mount
     useEffect(() => {
         loadProfileAndSettings();
-        loadDataStatistics();
     }, []);
-
-    const loadDataStatistics = async () => {
-        try {
-            const res = await getDataStatistics();
-            if (res.success) {
-                setDataStats(res.data);
-            }
-        } catch (err) {
-            console.error("Failed to load statistics:", err);
-        }
-    };
 
     const loadProfileAndSettings = async () => {
         try {
@@ -204,188 +178,6 @@ export default function AdminSettings() {
         }
     };
 
-    // Handle Data Export
-    const handleExportData = async (format = "excel") => {
-        try {
-            setExporting(true);
-            setError("");
-            setSuccess("");
-
-            const res = await exportAllData(format === "excel" ? "json" : format);
-            
-            if (res.success && res.data) {
-                if (format === "excel") {
-                    // Convert to Excel using exportUtils
-                    const allData = [];
-                    
-                    // Export groups
-                    if (res.data.data.groups && res.data.data.groups.length > 0) {
-                        exportToExcel(res.data.data.groups, `Groups_${Date.now()}`);
-                    }
-                    
-                    // Export members
-                    if (res.data.data.members && res.data.data.members.length > 0) {
-                        exportToExcel(res.data.data.members, `Members_${Date.now()}`);
-                    }
-                    
-                    // Export banks
-                    if (res.data.data.banks && res.data.data.banks.length > 0) {
-                        exportToExcel(res.data.data.banks, `Banks_${Date.now()}`);
-                    }
-                    
-                    // Export loans
-                    if (res.data.data.loans && res.data.data.loans.length > 0) {
-                        exportToExcel(res.data.data.loans, `Loans_${Date.now()}`);
-                    }
-                    
-                    // Export recoveries
-                    if (res.data.data.recoveries && res.data.data.recoveries.length > 0) {
-                        exportToExcel(res.data.data.recoveries, `Recoveries_${Date.now()}`);
-                    }
-                    
-                    setSuccess("Data exported to Excel successfully!");
-                } else {
-                    // JSON export - download as file
-                    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `mmms_export_${Date.now()}.json`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                    setSuccess("Data exported to JSON successfully!");
-                }
-                await loadDataStatistics();
-            } else {
-                setError(res.message || "Failed to export data");
-            }
-        } catch (err) {
-            setError(err.response?.data?.message || err.message || "Failed to export data");
-        } finally {
-            setExporting(false);
-        }
-    };
-
-    // Handle Data Import
-    const handleImportData = () => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".json";
-        input.onchange = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            try {
-                setImporting(true);
-                setError("");
-                setSuccess("");
-
-                const text = await file.text();
-                const data = JSON.parse(text);
-
-                if (!data.data) {
-                    setError("Invalid file format. Expected JSON with 'data' property.");
-                    setImporting(false);
-                    return;
-                }
-
-                const clearExisting = window.confirm(
-                    "Do you want to clear existing data before importing? (This will delete all current data)"
-                );
-
-                const res = await importData(data, { clearExisting });
-
-                if (res.success) {
-                    setSuccess(
-                        `Data imported successfully! Imported: ${JSON.stringify(res.data.imported)}`
-                    );
-                    if (Object.keys(res.data.errors || {}).length > 0) {
-                        setError(
-                            `Some errors occurred: ${JSON.stringify(res.data.errors)}`
-                        );
-                    }
-                    await loadDataStatistics();
-                } else {
-                    setError(res.message || "Failed to import data");
-                }
-            } catch (err) {
-                setError(err.message || "Failed to import data. Please check file format.");
-            } finally {
-                setImporting(false);
-            }
-        };
-        input.click();
-    };
-
-    // Handle Data Backup
-    const handleBackupData = async () => {
-        try {
-            setBackingUp(true);
-            setError("");
-            setSuccess("");
-
-            const res = await createBackup();
-            
-            // Since we're using responseType: "blob", we need to handle it differently
-            // Let's use the JSON endpoint instead
-            const jsonRes = await exportAllData("json");
-            
-            if (jsonRes.success && jsonRes.data) {
-                const blob = new Blob([JSON.stringify(jsonRes.data, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `mmms_backup_${Date.now()}.json`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                setSuccess("Backup created and downloaded successfully!");
-            } else {
-                setError(jsonRes.message || "Failed to create backup");
-            }
-        } catch (err) {
-            setError(err.response?.data?.message || err.message || "Failed to create backup");
-        } finally {
-            setBackingUp(false);
-        }
-    };
-
-    // Handle Delete All Data
-    const handleDeleteAllData = async () => {
-        const confirmText = prompt(
-            "This will permanently delete ALL data. Type 'DELETE_ALL_DATA' to confirm:"
-        );
-
-        if (confirmText !== "DELETE_ALL_DATA") {
-            setError("Deletion cancelled. Confirmation text did not match.");
-            return;
-        }
-
-        try {
-            setSaving(true);
-            setError("");
-            setSuccess("");
-
-            const res = await deleteAllData(
-                ["groups", "members", "banks", "loans", "recoveries"],
-                "DELETE_ALL_DATA"
-            );
-
-            if (res.success) {
-                setSuccess("All data deleted successfully!");
-                await loadDataStatistics();
-            } else {
-                setError(res.message || "Failed to delete data");
-            }
-        } catch (err) {
-            setError(err.response?.data?.message || err.message || "Failed to delete data");
-        } finally {
-            setSaving(false);
-        }
-    };
 
     const tabs = [
         { id: "profile", label: "Profile", icon: User },
@@ -655,94 +447,7 @@ export default function AdminSettings() {
 
                     {/* Data Management Tab */}
                     {activeTab === "data" && (
-                        <div>
-                            <FormSection title="Data Management">
-                                <div className="space-y-6">
-                                    {/* Statistics */}
-                                    {dataStats && (
-                                        <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                                            <h3 className="font-semibold text-gray-800 mb-3">Current Data Statistics</h3>
-                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Groups</p>
-                                                    <p className="text-2xl font-bold text-gray-800">{dataStats.groups}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Members</p>
-                                                    <p className="text-2xl font-bold text-gray-800">{dataStats.members}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Banks</p>
-                                                    <p className="text-2xl font-bold text-gray-800">{dataStats.banks}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Loans</p>
-                                                    <p className="text-2xl font-bold text-gray-800">{dataStats.loans}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm text-gray-600">Recoveries</p>
-                                                    <p className="text-2xl font-bold text-gray-800">{dataStats.recoveries}</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <button
-                                            onClick={() => handleExportData("excel")}
-                                            disabled={exporting}
-                                            className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            <Download className="text-blue-600" size={32} />
-                                            <span className="font-semibold text-gray-800">Export Data</span>
-                                            <span className="text-sm text-gray-600 text-center">
-                                                {exporting ? "Exporting..." : "Export all data to Excel"}
-                                            </span>
-                                        </button>
-                                        <button
-                                            onClick={handleImportData}
-                                            disabled={importing}
-                                            className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            <Upload className="text-green-600" size={32} />
-                                            <span className="font-semibold text-gray-800">Import Data</span>
-                                            <span className="text-sm text-gray-600 text-center">
-                                                {importing ? "Importing..." : "Import data from JSON file"}
-                                            </span>
-                                        </button>
-                                        <button
-                                            onClick={handleBackupData}
-                                            disabled={backingUp}
-                                            className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            <Database className="text-purple-600" size={32} />
-                                            <span className="font-semibold text-gray-800">Backup Data</span>
-                                            <span className="text-sm text-gray-600 text-center">
-                                                {backingUp ? "Creating backup..." : "Create a backup of all data"}
-                                            </span>
-                                        </button>
-                                    </div>
-                                    <div className="border-t border-gray-200 pt-6">
-                                        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <Trash2 className="text-red-600" size={20} />
-                                                <p className="font-semibold text-red-800">Danger Zone</p>
-                                            </div>
-                                            <p className="text-sm text-red-700 mb-4">
-                                                Permanently delete all data. This action cannot be undone.
-                                            </p>
-                                            <button
-                                                onClick={handleDeleteAllData}
-                                                disabled={saving}
-                                                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                {saving ? "Deleting..." : "Delete All Data"}
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </FormSection>
-                        </div>
+                        <DataManagement setError={setError} setSuccess={setSuccess} />
                     )}
                 </div>
             </div>

@@ -77,6 +77,7 @@ const BankTransactionSchema = new mongoose.Schema({
         type: Boolean,
         default: false,
     },
+    entryId: { type: String },
 
     // Member details (if applicable)
     memberId: {

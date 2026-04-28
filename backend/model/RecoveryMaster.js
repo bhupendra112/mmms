@@ -128,6 +128,7 @@ const RecoveryMasterSchema = new mongoose.Schema({
     rejectionReason: { type: String },
 
     createdBy: { type: String }, // Admin user ID or "admin"
+    journalEntryId: { type: String },
 
 }, {
     timestamps: true,

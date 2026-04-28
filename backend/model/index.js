@@ -17,6 +17,8 @@ import IncomeExpenseHead from "./IncomeExpenseHead.js";
 import LoanAdjustmentLog from "./LoanAdjustmentLog.js";
 import Supervisor from "./Supervisor.js";
 import VoucherRange from "./VoucherRange.js";
+import JournalEntry from "./JournalEntry.js";
+import JournalLine from "./JournalLine.js";
 
 export {
     Admin,
@@ -37,5 +39,7 @@ export {
     MemberExitSettlement,
     LoanAdjustmentLog,
     Supervisor,
-    VoucherRange
+    VoucherRange,
+    JournalEntry,
+    JournalLine
 };

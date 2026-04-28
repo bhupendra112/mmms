@@ -19,6 +19,7 @@ import {
     FileText,
     ArrowLeftRight,
     Hash,
+    BookOpen,
 } from "lucide-react";
 import { useAdmin } from "../../contexts/AdminContext";
 import NotificationDropdown from "../common/NotificationDropdown";
@@ -135,6 +136,12 @@ export default function AdminNavbar() {
                     label: "Voucher Management",
                     path: "/admin/voucher-management",
                     description: "Configure voucher ranges and look up loans by voucher"
+                },
+                {
+                    icon: BookOpen,
+                    label: "JV Management",
+                    path: "/admin/jv-management",
+                    description: "Create and review journal vouchers"
                 },
                 {
                     icon: CheckCircle,

@@ -61,6 +61,7 @@ const ExpenseMasterSchema = new mongoose.Schema({
     rejectedBy: { type: String },
     rejectedAt: { type: Date },
     rejectionReason: { type: String },
+    journalEntryId: { type: String },
 
 }, {
     timestamps: true,

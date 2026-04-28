@@ -1,5 +1,6 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
+import mongoose from "mongoose";
 import RecoveryMaster from "../../model/RecoveryMaster.js";
 import { GroupMaster, FDMaster, MemberRevenueDemand, LoanAdjustmentLog, BankTransaction, CashTransaction, BankMaster } from "../../model/index.js";
 import LoanMaster from "../../model/LoanMaster.js";
@@ -12,6 +13,8 @@ import { getDateRange, parseDate } from "../../utility/dateUtils.js";
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 import { removeCashAmountInternal } from "./cashAmountController.js";
+import { postJournal } from "../../service/journalPostingService.js";
+import { getRecoveryLines } from "../../utility/accountHeadMap.js";
 
 const DEBUG_INTEREST = process.env.DEBUG_INTEREST === "true";
 
@@ -4720,11 +4723,31 @@ export const approveRecovery = async (req, res) => {
         }
         const groupDoc = accessCheck.group;
 
-        // Update recovery approval status
-        recovery.approvalStatus = "approved";
-        recovery.approvedBy = req.user?.id || "admin";
-        recovery.approvedAt = new Date();
-        await recovery.save();
+        const journalSession = await mongoose.startSession();
+        try {
+            await journalSession.withTransaction(async () => {
+                recovery.approvalStatus = "approved";
+                recovery.approvedBy = req.user?.id || "admin";
+                recovery.approvedAt = new Date();
+
+                const { entryId } = await postJournal({
+                    groupId: recovery.groupId,
+                    date: recovery.date,
+                    sourceType: "RECOVERY",
+                    sourceId: recovery._id,
+                    lines: getRecoveryLines({
+                        recovery,
+                        notes: `Recovery approval for group ${recovery.groupCode || ""}`.trim(),
+                    }),
+                    createdBy: req.user?.id || "admin",
+                    session: journalSession,
+                });
+                recovery.journalEntryId = entryId;
+                await recovery.save({ session: journalSession });
+            });
+        } finally {
+            await journalSession.endSession();
+        }
 
         // Process all transactions (bank, cash, ledger entries, etc.)
         const parsedDate = recovery.date;

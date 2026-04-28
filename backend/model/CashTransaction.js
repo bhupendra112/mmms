@@ -61,6 +61,7 @@ const CashTransactionSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: "CashToBankConversion",
     },
+    entryId: { type: String },
 
     // Member details (if applicable)
     memberId: {

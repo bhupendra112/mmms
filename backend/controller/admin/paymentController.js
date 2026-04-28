@@ -1,4 +1,5 @@
 import apiResponse from "../../utility/apiResponse.js";
+import mongoose from "mongoose";
 import PaymentMaster from "../../model/PaymentMaster.js";
 import FDMaster from "../../model/FDMaster.js";
 import Member from "../../model/Member.js";
@@ -8,6 +9,8 @@ import { createCashTransactionRecord } from "../../utility/cashTransactionHelper
 import { verifyGroupAccess } from "../../utility/groupAccessHelper.js";
 import { postTransaction } from "../../service/ledgerPostingService.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
+import { postJournal } from "../../service/journalPostingService.js";
+import { getPaymentLines } from "../../utility/accountHeadMap.js";
 
 // Get matured FDs
 export const getMaturedFDs = async (req, res) => {
@@ -61,6 +64,31 @@ const computeInterestOnSavings = (totalSavings, savingRatePercent) => {
     const daysInYear = 365;
     const interest = (totalSavings * (rate / 100) * daysElapsed) / daysInYear;
     return Math.round(interest * 100) / 100;
+};
+
+const getPaymentSplit = async (paymentDoc, fallbackMemberId) => {
+    const totalAmount = parseFloat(paymentDoc?.amount || 0);
+    if (paymentDoc?.paymentType === "saving_withdrawal") {
+        const savingsData = await getMemberSavingsData(paymentDoc.memberId || fallbackMemberId);
+        const availableSavings = savingsData.availableSavings ?? 0;
+        const interestOnSavings = savingsData.interestOnSavings ?? 0;
+        const interestAmount = Math.min(
+            Math.max(0, totalAmount - availableSavings),
+            interestOnSavings
+        );
+        const principalAmount = Math.round((totalAmount - interestAmount) * 100) / 100;
+        return { principalAmount, interestAmount };
+    }
+
+    if (paymentDoc?.paymentType === "fd_maturity" && paymentDoc?.fdId) {
+        const fd = await FDMaster.findById(paymentDoc.fdId).lean();
+        const fdPrincipal = fd?.amount ?? 0;
+        const principalAmount = Math.round(Math.min(totalAmount, fdPrincipal) * 100) / 100;
+        const interestAmount = Math.round(Math.max(0, totalAmount - principalAmount) * 100) / 100;
+        return { principalAmount, interestAmount };
+    }
+
+    return { principalAmount: totalAmount, interestAmount: 0 };
 };
 
 // Get member's available savings balance (gate saving data wise; includes interest at 1% p.a. for payment module)
@@ -312,6 +340,37 @@ export const createPayment = async (req, res) => {
         };
 
         const payment = await PaymentMaster.create(paymentData);
+
+        if (isAdmin && payment.status === "approved") {
+            const journalSession = await mongoose.startSession();
+            try {
+                await journalSession.withTransaction(async () => {
+                    const { principalAmount, interestAmount } = await getPaymentSplit(payment, member._id);
+                    const { entryId } = await postJournal({
+                        groupId: payment.groupId,
+                        date: payment.paymentDate,
+                        sourceType: "PAYMENT",
+                        sourceId: payment._id,
+                        lines: getPaymentLines({
+                            amount: payment.amount,
+                            paymentType: payment.paymentType,
+                            paymentMode: payment.paymentMode,
+                            bankId: payment.bankId || undefined,
+                            memberId: payment.memberId || undefined,
+                            principalAmount,
+                            interestAmount,
+                            notes: `Payment ${payment.paymentType}`,
+                        }),
+                        createdBy: req.user?.id || "admin",
+                        session: journalSession,
+                    });
+                    payment.journalEntryId = entryId;
+                    await payment.save({ session: journalSession });
+                });
+            } finally {
+                await journalSession.endSession();
+            }
+        }
 
         // Verify payment was saved to database
         const verifyPayment = await PaymentMaster.findById(payment._id);
@@ -654,11 +713,38 @@ export const approvePayment = async (req, res) => {
             }
         }
 
-        // Update payment status
-        payment.status = "approved";
-        payment.approvedBy = req.user?.id || "admin";
-        payment.approvedAt = new Date();
-        await payment.save();
+        const journalSession = await mongoose.startSession();
+        try {
+            await journalSession.withTransaction(async () => {
+                payment.status = "approved";
+                payment.approvedBy = req.user?.id || "admin";
+                payment.approvedAt = new Date();
+
+                const { principalAmount, interestAmount } = await getPaymentSplit(payment);
+                const { entryId } = await postJournal({
+                    groupId: payment.groupId,
+                    date: payment.paymentDate,
+                    sourceType: "PAYMENT",
+                    sourceId: payment._id,
+                    lines: getPaymentLines({
+                        amount: payment.amount,
+                        paymentType: payment.paymentType,
+                        paymentMode: payment.paymentMode,
+                        bankId: payment.bankId || undefined,
+                        memberId: payment.memberId || undefined,
+                        principalAmount,
+                        interestAmount,
+                        notes: `Payment ${payment.paymentType}`,
+                    }),
+                    createdBy: req.user?.id || "admin",
+                    session: journalSession,
+                });
+                payment.journalEntryId = entryId;
+                await payment.save({ session: journalSession });
+            });
+        } finally {
+            await journalSession.endSession();
+        }
 
         // Update bank balance when bank payment is approved
         if (paymentMode === "Bank" && payment.bankId) {

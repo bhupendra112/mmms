@@ -1,5 +1,6 @@
 import VoucherRange from "../model/VoucherRange.js";
 import LoanMaster from "../model/LoanMaster.js";
+import JournalEntry from "../model/JournalEntry.js";
 
 export async function getActiveRange(groupId) {
     if (!groupId) return null;
@@ -41,13 +42,21 @@ export async function assertVoucherValidForLoan({ groupId, voucherNumber }) {
         throw new Error("Voucher number does not belong to any active voucher range for this group.");
     }
 
-    const used = await LoanMaster.findOne({
-        groupId,
-        voucherNumber,
-    })
-        .select("_id")
-        .lean();
-    if (used) {
+    const [loanUsed, journalUsed] = await Promise.all([
+        LoanMaster.findOne({
+            groupId,
+            voucherNumber,
+        })
+            .select("_id")
+            .lean(),
+        JournalEntry.findOne({
+            groupId,
+            voucherNumber,
+        })
+            .select("_id")
+            .lean(),
+    ]);
+    if (loanUsed || journalUsed) {
         throw new Error("This voucher number is already in use for this group.");
     }
 }
@@ -58,12 +67,21 @@ export async function suggestNextVoucherNumber(groupId) {
         throw new Error("No active voucher range configured for this group.");
     }
 
-    const usedDocs = await LoanMaster.find({
-        groupId,
-        voucherNumber: { $exists: true, $ne: null },
-    })
-        .select("voucherNumber")
-        .lean();
+    const [loanUsedDocs, journalUsedDocs] = await Promise.all([
+        LoanMaster.find({
+            groupId,
+            voucherNumber: { $exists: true, $ne: null },
+        })
+            .select("voucherNumber")
+            .lean(),
+        JournalEntry.find({
+            groupId,
+            voucherNumber: { $exists: true, $ne: null },
+        })
+            .select("voucherNumber")
+            .lean(),
+    ]);
+    const usedDocs = [...loanUsedDocs, ...journalUsedDocs];
     const usedSet = new Set(
         usedDocs.map((d) => d.voucherNumber).filter((n) => Number.isInteger(n))
     );
@@ -121,4 +139,46 @@ export async function setActiveRangeForGroup(groupId, startNumber, endNumber, pr
         isActive: true,
     });
     return doc;
+}
+
+const SOURCE_PREFIX_MAP = {
+    LOAN: "LOAN",
+    RECOVERY: "REC",
+    PAYMENT: "PAY",
+    CASH_BANK: "CB",
+    JV_MANUAL: "JV",
+};
+
+export async function generateJournalVoucherNo({ groupId, sourceType, date = new Date(), session } = {}) {
+    if (!groupId) {
+        throw new Error("groupId is required to generate journal voucher number.");
+    }
+
+    const prefix = SOURCE_PREFIX_MAP[sourceType] || "JV";
+    const voucherDate = date instanceof Date ? date : new Date(date);
+    const year = Number.isNaN(voucherDate.getTime()) ? new Date().getFullYear() : voucherDate.getFullYear();
+    const voucherPrefix = `${prefix}-${year}`;
+    const voucherPattern = new RegExp(`^${voucherPrefix}-\\d+$`);
+    const findOptions = session ? { session } : {};
+
+    const lastVoucher = await JournalEntry.findOne(
+        { groupId, voucherNo: { $regex: voucherPattern } },
+        null,
+        findOptions
+    )
+        .sort({ voucherNo: -1 })
+        .select("voucherNo")
+        .lean();
+
+    let nextSequence = 1;
+    if (lastVoucher?.voucherNo) {
+        const parts = String(lastVoucher.voucherNo).split("-");
+        const parsed = parseInt(parts[parts.length - 1], 10);
+        if (Number.isInteger(parsed)) {
+            nextSequence = parsed + 1;
+        }
+    }
+
+    const sequence = String(nextSequence).padStart(6, "0");
+    return `${voucherPrefix}-${sequence}`;
 }

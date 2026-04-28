@@ -68,6 +68,7 @@ const FDMasterSchema = new mongoose.Schema({
 
     // Created by
     createdBy: { type: String }, // Admin user ID or "admin"
+    journalEntryId: { type: String },
 
 }, {
     timestamps: true,
