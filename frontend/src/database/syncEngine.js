@@ -221,6 +221,30 @@ function sanitizeExpensePayloadForSync(payload) {
     return out;
 }
 
+/** Strip client demandDetails / loanSnapshots; backend recomputes. Ensures clientRequestId for idempotent POST. */
+function sanitizeRecoveryPayloadForSync(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    const out = { ...payload };
+    delete out._uuid;
+    delete out._id;
+    delete out._syncStatus;
+    delete out._operation;
+    delete out._isLocal;
+    delete out._deleted;
+    if (out.groupId != null) out.groupId = String(out.groupId);
+    if (!out.clientRequestId && typeof globalThis.crypto?.randomUUID === 'function') {
+        out.clientRequestId = globalThis.crypto.randomUUID();
+    }
+    if (Array.isArray(out.recoveries)) {
+        out.recoveries = out.recoveries.map((r) => {
+            if (!r || typeof r !== 'object') return r;
+            const { demandDetails, loanSnapshots, ...rest } = r;
+            return rest;
+        });
+    }
+    return out;
+}
+
 async function syncRecord(record, queueItem) {
     const { entityType, operation, payload, uuid } = record;
 
@@ -247,6 +271,8 @@ async function syncRecord(record, queueItem) {
                 requestPayload = sanitizeLoanPayloadForSync(payload);
             } else if (entityType === 'expense') {
                 requestPayload = sanitizeExpensePayloadForSync(payload);
+            } else if (entityType === 'recovery') {
+                requestPayload = sanitizeRecoveryPayloadForSync(payload);
             }
             break;
         case 'update':
@@ -255,14 +281,7 @@ async function syncRecord(record, queueItem) {
             if (entityType === 'recovery') {
                 endpoint = endpoints.create; // Use register-recovery endpoint
                 method = 'POST';
-                // Remove metadata fields before sending
-                requestPayload = { ...payload };
-                delete requestPayload._deleted;
-                delete requestPayload._uuid;
-                delete requestPayload._syncStatus;
-                delete requestPayload._operation;
-                delete requestPayload._isLocal;
-
+                requestPayload = sanitizeRecoveryPayloadForSync(payload);
                 break;
             }
 

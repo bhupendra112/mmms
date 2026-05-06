@@ -47,11 +47,23 @@ const GroupMasterSchema = new mongoose.Schema({
     loginEnabled: { type: Boolean, default: true },
     lastLoginAt: { type: Date },
 
-    // Supervisor and password-based login
+    // Legacy: treated as member linkage (deprecated — use linkedSupervisorId + Supervisor Management)
     supervisorId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Member",
         default: null,
+    },
+    /** Staff supervisor from Supervisor Management (not a SHG member) */
+    linkedSupervisorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Supervisor",
+        default: null,
+    },
+    /** Optional label when supervisor is external / not listed in Supervisor Management */
+    supervisorContactName: {
+        type: String,
+        trim: true,
+        default: "",
     },
     groupPassword: { type: String, select: false }, // Hashed; never returned by default
     passwordUpdatedAt: { type: Date },

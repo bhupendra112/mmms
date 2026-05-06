@@ -10,6 +10,31 @@
 import db, { createRecord, updateRecordTimestamp, EntityTypes, Operations, SyncStatuses } from './db';
 
 /**
+ * Returns true if a pending/failed recovery already has the same clientRequestId (idempotent enqueue).
+ */
+export async function shouldSkipRecoveryEnqueue({ groupId, clientRequestId }) {
+    if (!groupId || !clientRequestId) return false;
+
+    const txs = await db.transactions
+        .filter(
+            (tx) =>
+                tx.entityType === EntityTypes.RECOVERY &&
+                (tx.syncStatus === SyncStatuses.PENDING ||
+                    tx.syncStatus === SyncStatuses.FAILED ||
+                    tx.syncStatus === 'syncing')
+        )
+        .toArray();
+
+    for (const tx of txs) {
+        const p = tx.payload || {};
+        if (String(p.groupId) !== String(groupId)) continue;
+        if (p.clientRequestId === clientRequestId) return true;
+    }
+
+    return false;
+}
+
+/**
  * Base Repository Class
  * Provides common CRUD operations for all entity types
  */

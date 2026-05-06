@@ -53,7 +53,6 @@ export default function MemberRecoveryForm({
         <p className="text-xs font-semibold text-gray-900 leading-snug">
           <span className="text-emerald-800">Recovery · </span>
           <span className="wrap-break-word">{currentMember.name}</span>
-          <span className="font-normal text-gray-600"> ({currentMember.code})</span>
         </p>
       </div>
 
@@ -61,7 +60,7 @@ export default function MemberRecoveryForm({
         <div className="min-w-0">
           <h3 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center gap-2 truncate">
             <User size={20} className="text-blue-600 shrink-0 w-5 h-5" />
-            <span className="truncate">{currentMember.name} ({currentMember.code})</span>
+            <span className="truncate">{currentMember.name}<span className="hidden sm:inline">{` (${currentMember.code})`}</span></span>
           </h3>
           {(() => {
             const fh = (currentMember.raw && (currentMember.raw.F_H_Name || currentMember.raw.F_H_FatherName)) || currentMember.fatherOrHusbandName || "";

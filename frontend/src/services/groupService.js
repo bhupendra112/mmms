@@ -242,9 +242,19 @@ export const getGroupCharges = async (groupId) => {
 // -------------------------------------------------------------
 // SUPERVISOR & PASSWORD
 // -------------------------------------------------------------
+/** Linked staff + optional contact name — do not use sanitizePayload (must allow null to clear staff). */
 export const changeSupervisor = async (groupId, data) => {
     try {
-        const payload = sanitizePayload(data);
+        const payload = {};
+        if (Object.prototype.hasOwnProperty.call(data || {}, "linkedSupervisorId")) {
+            const v = data.linkedSupervisorId;
+            payload.linkedSupervisorId =
+                v === "" || v === undefined || v === null ? null : String(v).trim();
+        }
+        if (Object.prototype.hasOwnProperty.call(data || {}, "supervisorContactName")) {
+            payload.supervisorContactName =
+                data.supervisorContactName != null ? String(data.supervisorContactName).trim() : "";
+        }
         const res = await httpGroup.post(`/${groupId}/change-supervisor`, payload);
         return res.data;
     } catch (err) {

@@ -1,6 +1,5 @@
 import apiResponse from "../../utility/apiResponse.js";
 import message from "../../utility/message.js";
-import mongoose from "mongoose";
 import LoanMaster from "../../model/LoanMaster.js";
 import { GroupMaster, BankMaster, LoanAdjustmentLog, PaymentMaster, Member } from "../../model/index.js";
 import { createBankTransactionRecord } from "../../utility/bankTransactionHelper.js";
@@ -12,6 +11,7 @@ import { recalculateLoanState } from "../../service/loanRecalculationService.js"
 import { assertVoucherValidForLoan } from "../../service/voucherService.js";
 import { postJournal } from "../../service/journalPostingService.js";
 import { getLoanDisbursementLines } from "../../utility/accountHeadMap.js";
+import { runWithOptionalMongoTransaction } from "../../utility/mongoTransactionHelper.js";
 
 export const registerLoan = async (req, res) => {
     try {
@@ -219,30 +219,25 @@ export const registerLoan = async (req, res) => {
         // Only create transaction records and update balances if admin (loan is approved)
         // For group loans, transactions will be created when admin approves
         if (isAdmin && loan.transactionType === "Loan" && loan.amount > 0) {
-            const journalSession = await mongoose.startSession();
-            try {
-                await journalSession.withTransaction(async () => {
-                    const { entryId } = await postJournal({
-                        groupId: groupDoc._id,
-                        date: dateValue,
-                        sourceType: "LOAN",
-                        sourceId: loan._id,
-                        lines: getLoanDisbursementLines({
-                            amount: loan.amount,
-                            paymentMode: payload.paymentMode,
-                            bankId: payload.bankId || undefined,
-                            memberId: loan.memberId || undefined,
-                            notes: `Loan distribution - ${loan.purpose || ""}`,
-                        }),
-                        createdBy: req.user?.id || "admin",
-                        session: journalSession,
-                    });
-                    loan.journalEntryId = entryId;
-                    await loan.save({ session: journalSession });
+            await runWithOptionalMongoTransaction(async (journalSession) => {
+                const { entryId } = await postJournal({
+                    groupId: groupDoc._id,
+                    date: dateValue,
+                    sourceType: "LOAN",
+                    sourceId: loan._id,
+                    lines: getLoanDisbursementLines({
+                        amount: loan.amount,
+                        paymentMode: payload.paymentMode,
+                        bankId: payload.bankId || undefined,
+                        memberId: loan.memberId || undefined,
+                        notes: `Loan distribution - ${loan.purpose || ""}`,
+                    }),
+                    createdBy: req.user?.id || "admin",
+                    session: journalSession || undefined,
                 });
-            } finally {
-                await journalSession.endSession();
-            }
+                loan.journalEntryId = entryId;
+                await loan.save(journalSession ? { session: journalSession } : {});
+            });
 
             // Create bank transaction record if payment mode is Bank
             if (payload.paymentMode === "Bank" && payload.bankId) {
@@ -422,38 +417,32 @@ export const approveLoan = async (req, res) => {
             }
         }
 
-        // Update loan status
-        const journalSession = await mongoose.startSession();
-        try {
-            await journalSession.withTransaction(async () => {
-                loan.status = "approved";
-                loan.approvedBy = req.user?.id || "admin";
-                loan.approvedAt = new Date();
+        await runWithOptionalMongoTransaction(async (journalSession) => {
+            loan.status = "approved";
+            loan.approvedBy = req.user?.id || "admin";
+            loan.approvedAt = new Date();
 
-                if (loan.transactionType === "Loan" && loan.amount > 0) {
-                    const { entryId } = await postJournal({
-                        groupId: loan.groupId,
-                        date: loan.date,
-                        sourceType: "LOAN",
-                        sourceId: loan._id,
-                        lines: getLoanDisbursementLines({
-                            amount: loan.amount,
-                            paymentMode: loan.paymentMode,
-                            bankId: loan.bankId || undefined,
-                            memberId: loan.memberId || undefined,
-                            notes: `Loan distribution - ${loan.purpose || ""}`,
-                        }),
-                        createdBy: req.user?.id || "admin",
-                        session: journalSession,
-                    });
-                    loan.journalEntryId = entryId;
-                }
+            if (loan.transactionType === "Loan" && loan.amount > 0) {
+                const { entryId } = await postJournal({
+                    groupId: loan.groupId,
+                    date: loan.date,
+                    sourceType: "LOAN",
+                    sourceId: loan._id,
+                    lines: getLoanDisbursementLines({
+                        amount: loan.amount,
+                        paymentMode: loan.paymentMode,
+                        bankId: loan.bankId || undefined,
+                        memberId: loan.memberId || undefined,
+                        notes: `Loan distribution - ${loan.purpose || ""}`,
+                    }),
+                    createdBy: req.user?.id || "admin",
+                    session: journalSession || undefined,
+                });
+                loan.journalEntryId = entryId;
+            }
 
-                await loan.save({ session: journalSession });
-            });
-        } finally {
-            await journalSession.endSession();
-        }
+            await loan.save(journalSession ? { session: journalSession } : {});
+        });
 
         // Create bank transaction record if payment mode is Bank
         if (loan.paymentMode === "Bank" && loan.bankId) {

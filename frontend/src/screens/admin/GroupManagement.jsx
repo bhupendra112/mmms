@@ -3,6 +3,7 @@ import { Building2, Users, Banknote, DollarSign, Search, Edit, Eye, Plus, Trendi
 import { Link, useSearchParams } from "react-router-dom";
 import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransactions, updateGroup, updateBank, addGroupCharge, updateGroupCharge, deleteGroupCharge, getGroupCharges, changeSupervisor, changePassword, updateClusterApi, deleteClusterApi, deleteGroupApi } from "../../services/groupService";
 import { getMembersByGroup, getMembers, exportMemberLedger, updateMember, deleteMember, updateOpeningSaving } from "../../services/memberService";
+import { getSupervisors } from "../../services/supervisorService";
 import { getLoans } from "../../services/loanService";
 import { getRecoveries, getGroupRecoveryDetails } from "../../services/recoveryService";
 import { getFDsByGroup } from "../../services/fdService";
@@ -117,9 +118,11 @@ export default function GroupManagement() {
     const [selectedRecovery, setSelectedRecovery] = useState(null);
     const [showChangeSupervisorModal, setShowChangeSupervisorModal] = useState(false);
     const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
-    const [changeSupervisorForm, setChangeSupervisorForm] = useState({ supervisorId: "", supervisorName: "" });
-    const [useExistingForSupervisor, setUseExistingForSupervisor] = useState(true);
-    const [allMembersForSupervisor, setAllMembersForSupervisor] = useState([]);
+    const [changeSupervisorForm, setChangeSupervisorForm] = useState({
+        linkedSupervisorId: "",
+        supervisorContactName: "",
+    });
+    const [supervisorStaffList, setSupervisorStaffList] = useState([]);
     const [changePasswordNew, setChangePasswordNew] = useState("");
     const [savingSupervisor, setSavingSupervisor] = useState(false);
     const [savingPassword, setSavingPassword] = useState(false);
@@ -443,12 +446,15 @@ export default function GroupManagement() {
         }
     };
 
-    // Load all members when Change Supervisor modal opens (for dropdown)
     useEffect(() => {
         if (!showChangeSupervisorModal) return;
-        getMembers()
-            .then((res) => setAllMembersForSupervisor(Array.isArray(res?.data) ? res.data : []))
-            .catch(() => setAllMembersForSupervisor([]));
+        getSupervisors()
+            .then((res) => {
+                const raw = res?.data ?? res;
+                const list = Array.isArray(raw) ? raw : [];
+                setSupervisorStaffList(list.filter((s) => s.status === "active"));
+            })
+            .catch(() => setSupervisorStaffList([]));
     }, [showChangeSupervisorModal]);
 
     // Restore cluster/group from URL or sessionStorage when returning to the page (e.g. after Back)
@@ -1165,11 +1171,37 @@ export default function GroupManagement() {
                                     <div className="flex-1 min-w-0">
                                         <h2 className="text-xl md:text-2xl font-bold text-gray-800 break-words">{selectedGroupData.name}</h2>
                                         <p className="text-sm md:text-base text-gray-600 mt-1 break-words">Code: {selectedGroupData.code} | Village: {selectedGroupData.village}</p>
+                                        {selectedGroupRaw && (() => {
+                                            const ls = selectedGroupRaw.linkedSupervisorId;
+                                            const staffName =
+                                                ls && typeof ls === "object" ? ls.name : null;
+                                            const parts = [];
+                                            if (staffName) parts.push(`Staff supervisor: ${staffName}`);
+                                            if (selectedGroupRaw.supervisorContactName?.trim()) {
+                                                parts.push(`Contact: ${selectedGroupRaw.supervisorContactName.trim()}`);
+                                            }
+                                            if (!parts.length) return null;
+                                            return (
+                                                <p className="text-xs md:text-sm text-slate-500 mt-1">{parts.join(" · ")}</p>
+                                            );
+                                        })()}
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2 shrink-0">
                                         <button
                                             type="button"
-                                            onClick={() => setShowChangeSupervisorModal(true)}
+                                            onClick={() => {
+                                                const raw = selectedGroupRaw;
+                                                const ls = raw?.linkedSupervisorId;
+                                                const lid =
+                                                    ls && typeof ls === "object" && ls._id
+                                                        ? ls._id
+                                                        : ls || "";
+                                                setChangeSupervisorForm({
+                                                    linkedSupervisorId: lid ? String(lid) : "",
+                                                    supervisorContactName: raw?.supervisorContactName || "",
+                                                });
+                                                setShowChangeSupervisorModal(true);
+                                            }}
                                             className="flex items-center justify-center gap-2 px-3 md:px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 text-sm"
                                         >
                                             <UserPlus size={16} />
@@ -3016,57 +3048,69 @@ export default function GroupManagement() {
                             </button>
                         </div>
                         <div className="space-y-4">
-                            <div className="flex gap-4">
-                                <label className="inline-flex items-center gap-2 cursor-pointer">
-                                    <input type="radio" checked={useExistingForSupervisor} onChange={() => setUseExistingForSupervisor(true)} className="rounded border-gray-300 text-blue-600" />
-                                    <span className="text-sm font-medium">Existing member</span>
-                                </label>
-                                <label className="inline-flex items-center gap-2 cursor-pointer">
-                                    <input type="radio" checked={!useExistingForSupervisor} onChange={() => setUseExistingForSupervisor(false)} className="rounded border-gray-300 text-blue-600" />
-                                    <span className="text-sm font-medium">New supervisor name</span>
-                                </label>
+                            <p className="text-sm text-gray-600">
+                                Assign a supervisor from{" "}
+                                <Link to="/admin/supervisor-management" className="text-blue-600 underline font-medium">
+                                    Supervisor Management
+                                </Link>
+                                . They do not need to be SHG members. You can also set an optional contact / display name.
+                            </p>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Staff supervisor account</label>
+                                <select
+                                    value={changeSupervisorForm.linkedSupervisorId || ""}
+                                    onChange={(e) =>
+                                        setChangeSupervisorForm({
+                                            ...changeSupervisorForm,
+                                            linkedSupervisorId: e.target.value,
+                                        })
+                                    }
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="">— Not assigned —</option>
+                                    {supervisorStaffList.map((s) => (
+                                        <option key={s._id} value={s._id}>
+                                            {s.name}
+                                            {s.email ? ` (${s.email})` : ""}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
-                            {useExistingForSupervisor ? (
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Member</label>
-                                    <select
-                                        value={changeSupervisorForm.supervisorId || ""}
-                                        onChange={(e) => setChangeSupervisorForm({ ...changeSupervisorForm, supervisorId: e.target.value })}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                                    >
-                                        <option value="">— Select member —</option>
-                                        {(allMembersForSupervisor.length ? allMembersForSupervisor : groupMembers).map((m) => (
-                                            <option key={m._id} value={m._id}>{m.Member_Nm || m.Member_Id} {m.Member_Id ? `(${m.Member_Id})` : ""}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            ) : (
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Supervisor name</label>
-                                    <input
-                                        type="text"
-                                        value={changeSupervisorForm.supervisorName || ""}
-                                        onChange={(e) => setChangeSupervisorForm({ ...changeSupervisorForm, supervisorName: e.target.value })}
-                                        placeholder="Enter name"
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                            )}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Supervisor / contact name (optional)</label>
+                                <input
+                                    type="text"
+                                    value={changeSupervisorForm.supervisorContactName || ""}
+                                    onChange={(e) =>
+                                        setChangeSupervisorForm({
+                                            ...changeSupervisorForm,
+                                            supervisorContactName: e.target.value,
+                                        })
+                                    }
+                                    placeholder="External or display name"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
                         </div>
                         <div className="flex gap-2 mt-6">
                             <button
                                 type="button"
                                 disabled={savingSupervisor}
                                 onClick={async () => {
-                                    const id = useExistingForSupervisor ? changeSupervisorForm.supervisorId : null;
-                                    const name = !useExistingForSupervisor ? changeSupervisorForm.supervisorName?.trim() : null;
-                                    if (!id && !name) return;
                                     setSavingSupervisor(true);
                                     try {
-                                        const res = await changeSupervisor(selectedGroup, id ? { supervisorId: id } : { supervisorName: name });
+                                        const res = await changeSupervisor(selectedGroup, {
+                                            linkedSupervisorId:
+                                                changeSupervisorForm.linkedSupervisorId?.trim() || null,
+                                            supervisorContactName:
+                                                changeSupervisorForm.supervisorContactName ?? "",
+                                        });
                                         if (res?.success) {
                                             setShowChangeSupervisorModal(false);
-                                            setChangeSupervisorForm({ supervisorId: "", supervisorName: "" });
+                                            setChangeSupervisorForm({
+                                                linkedSupervisorId: "",
+                                                supervisorContactName: "",
+                                            });
                                             await loadGroupDetail(selectedGroup);
                                         }
                                     } catch (e) {

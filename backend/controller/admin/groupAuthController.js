@@ -21,6 +21,10 @@ export const loginGroup = async (req, res) => {
         // Find group by code; include groupPassword for verification (normally select: false)
         const groupDoc = await GroupMaster.findOne({ group_code: groupCode })
             .select("+groupPassword")
+            .populate({
+                path: "linkedSupervisorId",
+                select: "name email place status",
+            })
             .lean();
 
         if (!groupDoc) {
@@ -46,12 +50,21 @@ export const loginGroup = async (req, res) => {
         await GroupMaster.findByIdAndUpdate(groupDoc._id, { lastLoginAt: new Date() });
 
         // Generate JWT token (include supervisorId for downstream use)
+        const staff = groupDoc.linkedSupervisorId;
+        const staffObj =
+            staff && typeof staff === "object" && staff._id
+                ? staff
+                : null;
+        const staffId = staffObj ? staffObj._id : groupDoc.linkedSupervisorId || null;
+
         const token = jwt.sign(
             {
                 id: groupDoc._id,
                 groupName: groupDoc.group_name,
                 groupCode: groupDoc.group_code,
-                supervisorId: groupDoc.supervisorId || null,
+                linkedSupervisorId: staffId,
+                supervisorStaffName: staffObj?.name || null,
+                supervisorContactName: groupDoc.supervisorContactName || null,
                 type: "group",
             },
             JWT_SECRET,
@@ -68,7 +81,10 @@ export const loginGroup = async (req, res) => {
             no_members: groupDoc.no_members,
             place: groupDoc.place,
             lastLoginAt: new Date(),
-            supervisorId: groupDoc.supervisorId || null,
+            linkedSupervisorId: staffObj
+                ? { _id: staffObj._id, name: staffObj.name, email: staffObj.email }
+                : staffId,
+            supervisorContactName: groupDoc.supervisorContactName || "",
         };
 
         return apiResponse.success(res, "Group login successful", {

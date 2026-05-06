@@ -246,20 +246,31 @@ export const getMemberDemandClosingCaps = async ({ groupId, memberId }) => {
         return { saving: 0, loan: 0, interest: 0, fd: 0 };
     }
 
-    const latest = await RecoveryMaster.aggregate([
-        { $match: { groupId, status: { $ne: "rejected" }, approvalStatus: { $nin: ["pending", "rejected"] } } },
-        { $unwind: "$recoveries" },
-        { $match: { $or: [{ "recoveries.memberId": String(memberId) }, { "recoveries.memberId": memberId }] } },
-        { $sort: { date: -1, createdAt: -1 } },
-        { $limit: 1 },
-        {
-            $project: {
-                demandDetails: "$recoveries.demandDetails",
-            },
-        },
-    ]);
+    const sessions = await RecoveryMaster.find({
+        groupId,
+        status: { $ne: "rejected" },
+        approvalStatus: { $nin: ["pending", "rejected"] },
+    }).lean();
 
-    const dd = latest?.[0]?.demandDetails || {};
+    (sessions || []).sort((a, b) => {
+        const da = new Date(a.meetingDate || a.date).getTime();
+        const db = new Date(b.meetingDate || b.date).getTime();
+        if (da !== db) return db - da;
+        return (b.meetingSequence || 1) - (a.meetingSequence || 1);
+    });
+
+    let dd = {};
+    for (const s of sessions || []) {
+        const row = s.recoveries?.find(
+            (r) =>
+                String(r.memberId) === String(memberId) ||
+                r.memberId === memberId
+        );
+        if (row?.demandDetails && Object.keys(row.demandDetails).length > 0) {
+            dd = row.demandDetails;
+            break;
+        }
+    }
     const asCap = (value) => Math.max(0, round2(value));
 
     return {

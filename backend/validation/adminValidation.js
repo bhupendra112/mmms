@@ -153,16 +153,16 @@ export const registerGroupSchema = Joi.object({
     saving_rate: Joi.number().min(0).max(100).optional(),
     fd_rate: Joi.number().min(0).max(100).optional(),
     loan_rate: Joi.number().min(0).max(100).optional(),
-    // Supervisor and password-based login
     password: Joi.string().min(1).optional(),
     supervisorId: Joi.string().optional(),
     supervisorName: Joi.string().optional(),
-}).custom((value, helpers) => {
-    const { supervisorId, supervisorName } = value;
-    // If both provided, prefer supervisorId
-    if (supervisorId && supervisorName) {
-        delete value.supervisorName;
-    }
+    /** Staff from Supervisor Management */
+    linkedSupervisorId: Joi.string().optional().allow("", null),
+    /** Free-text field / contact when not using staff account */
+    supervisorContactName: Joi.string().allow("", null).optional(),
+}).custom((value) => {
+    delete value.supervisorName;
+    delete value.supervisorId;
     return value;
 });
 
@@ -242,7 +242,7 @@ export const updateGroupSchema = Joi.object({
     fd_rate: Joi.number().min(0).max(100).optional(),
     loan_rate: Joi.number().min(0).max(100).optional(),
     opening_cash_balance: Joi.number().min(0).optional(),
-    loginEnabled: Joi.boolean().optional()
+    loginEnabled: Joi.boolean().optional(),
 }).min(1); // At least one field is required for update
 
 // ======================

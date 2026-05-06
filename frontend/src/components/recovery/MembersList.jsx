@@ -27,11 +27,14 @@ export default function MembersList({
               }`}
           >
             <div className="flex items-center justify-between gap-1">
-              <span className="truncate">{member.code}</span>
+              <span className="truncate font-medium sm:font-normal">
+                <span className="sm:hidden">{member.name}</span>
+                <span className="hidden sm:inline">{member.code}</span>
+              </span>
               {isRecovered && <Check size={14} className="shrink-0 sm:w-4 sm:h-4" />}
               {isAbsent && <X size={14} className="shrink-0 sm:w-4 sm:h-4" />}
             </div>
-            <div className="text-[10px] sm:text-xs mt-1 truncate">{member.name}</div>
+            <div className="text-[10px] sm:text-xs mt-1 truncate hidden sm:block">{member.name}</div>
             {(() => {
               const fh = (member.raw && (member.raw.F_H_Name || member.raw.F_H_FatherName)) || member.fatherOrHusbandName || "";
               const fhStr = (typeof fh === "string" ? fh : String(fh || "")).trim();

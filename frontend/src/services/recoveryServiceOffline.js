@@ -8,8 +8,34 @@
  * Components should use this service instead of making direct API calls.
  */
 
-import { recoveryRepository, loanRepository, memberRepository, groupRepository, fdRepository } from '../database/repository';
+import { recoveryRepository, loanRepository, memberRepository, groupRepository, fdRepository, shouldSkipRecoveryEnqueue } from '../database/repository';
 import db from '../database/db';
+
+/** Normalize a recovery date to YYYY-MM-DD for stable IndexedDB + sync dedupe */
+function normalizeRecoveryDateYmd(value) {
+    if (value == null) return null;
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+        return value.trim();
+    }
+    let dateObj;
+    if (typeof value === 'string' && value.includes('/')) {
+        const [day, month, year] = value.split('/');
+        dateObj = new Date(parseInt(year, 10), parseInt(month, 10) - 1, parseInt(day, 10));
+    } else {
+        dateObj = new Date(value);
+    }
+    if (Number.isNaN(dateObj.getTime())) return null;
+    const y = dateObj.getFullYear();
+    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const d = String(dateObj.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function newClientRequestId() {
+    return typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 /**
  * Register a new recovery
@@ -19,6 +45,29 @@ export const registerRecovery = async (data, testMode = false) => {
     const payload = { ...data };
     if (testMode) {
         payload.testMode = true;
+    }
+
+    const dateYmd = normalizeRecoveryDateYmd(payload.date || payload.recoveryDate);
+    const clientRequestId = payload.clientRequestId || newClientRequestId();
+    payload.clientRequestId = clientRequestId;
+    if (dateYmd) {
+        payload.date = dateYmd;
+        if (payload.recoveryDate != null) payload.recoveryDate = dateYmd;
+    }
+
+    const dup = await shouldSkipRecoveryEnqueue({
+        groupId: payload.groupId,
+        clientRequestId,
+    });
+    if (dup) {
+        return {
+            success: true,
+            duplicateSkipped: true,
+            data: {
+                ...payload,
+                _syncStatus: 'pending',
+            },
+        };
     }
 
     const record = await recoveryRepository.create(payload);
@@ -174,7 +223,7 @@ export const getRecoveryByDate = async (groupId, date, testMode = false) => {
         let memberRecoveries = recovery.memberRecoveries || recovery.recoveries || [];
         // Enrich each member recovery with demandDetails (actual paid) so UI shows recovery detail not demand detail (same as admin)
         memberRecoveries = memberRecoveries.map((mr) => {
-            if (mr.demandDetails) return mr; // keep backend/synced demandDetails
+            if (mr.demandDetails) return mr;
             const amounts = mr.amounts || {};
             const saving = parseFloat(amounts.saving ?? 0) || 0;
             const loan = parseFloat(amounts.loan ?? 0) || 0;
@@ -189,7 +238,7 @@ export const getRecoveryByDate = async (groupId, date, testMode = false) => {
                 ? charges
                 : {};
             const chargesTotal = Object.values(chargesActual).reduce((sum, amt) => sum + (parseFloat(amt ?? 0) || 0), 0);
-            const demandDetails = {
+            const localPreview = {
                 saving: { prevDemand: 0, currDemand: saving, totalDemand: saving, actualPaid: saving, unpaidDemand: 0, openingBalance: 0, closingBalance: saving },
                 loan: { prevDemand: 0, currDemand: loan, totalDemand: loan, actualPaid: loan, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
                 interest: { prevDemand: 0, currDemand: interest, totalDemand: interest, actualPaid: interest, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
@@ -199,8 +248,9 @@ export const getRecoveryByDate = async (groupId, date, testMode = false) => {
                 memFeesSamiti: { prevDemand: 0, currDemand: memFeesSamiti, totalDemand: memFeesSamiti, actualPaid: memFeesSamiti, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
                 memFeesGroup: { prevDemand: 0, currDemand: memFeesGroup, totalDemand: memFeesGroup, actualPaid: memFeesGroup, unpaidDemand: 0, openingBalance: 0, closingBalance: 0 },
                 charges: { chargesDue: chargesActual, chargesTotalDemand: chargesTotal, actualPaid: chargesActual, actualPaidTotal: chargesTotal, unpaidDemandTotal: 0, unpaidDemand: {} },
+                _note: 'localPreview only — not authoritative; server recomputes demand on finalize',
             };
-            return { ...mr, demandDetails };
+            return { ...mr, localPreview };
         });
         return {
             success: true,

@@ -5,6 +5,7 @@ import message from "../../utility/message.js";
 import {
     BankMaster,
     GroupMaster,
+    Supervisor,
     Member,
     LoanMaster,
     RecoveryMaster,
@@ -34,8 +35,8 @@ export const registerGroup = async (req, res) => {
             cluster_name,
             cluster_code,
             password,
-            supervisorId,
-            supervisorName,
+            linkedSupervisorId: rawLinkedSupervisorId,
+            supervisorContactName: rawSupervisorContactName,
         } = req.body;
 
         // Get admin's place from token
@@ -62,11 +63,39 @@ export const registerGroup = async (req, res) => {
         }
 
         // Build group data (exclude password/supervisor fields from spread; set separately)
-        const { password: _p, supervisorId: _sid, supervisorName: _sname, ...restBody } = req.body;
+        const {
+            password: _p,
+            supervisorId: _omitSid,
+            supervisorName: _omitSname,
+            linkedSupervisorId: _omitL,
+            supervisorContactName: _omitC,
+            ...restBody
+        } = req.body;
         const groupData = {
             ...restBody,
             place: adminPlace,
         };
+
+        if (rawLinkedSupervisorId != null && String(rawLinkedSupervisorId).trim() !== "") {
+            const sv = await Supervisor.findById(String(rawLinkedSupervisorId).trim())
+                .select("_id place status")
+                .lean();
+            if (!sv || sv.status !== "active") {
+                return apiResponse.error(res, "Selected supervisor staff not found or inactive", 400);
+            }
+            if (String(sv.place || "").trim() !== String(adminPlace || "").trim()) {
+                return apiResponse.error(res, "Supervisor belongs to another place — only assign supervisors from your area", 400);
+            }
+            groupData.linkedSupervisorId = sv._id;
+        }
+
+        const contactTrim =
+            rawSupervisorContactName != null
+                ? String(rawSupervisorContactName).trim()
+                : "";
+        if (contactTrim) {
+            groupData.supervisorContactName = contactTrim;
+        }
 
         // Hash password if provided
         if (password && String(password).trim()) {
@@ -74,37 +103,9 @@ export const registerGroup = async (req, res) => {
             groupData.passwordUpdatedAt = new Date();
         }
 
-        // Create new group first (so we have group._id for member)
+        groupData.supervisorId = null;
+
         const newGroup = await GroupMaster.create(groupData);
-
-        let supervisorMemberId = null;
-        if (supervisorId) {
-            // Reuse existing member: ensure they exist and assign to this group
-            const existingMember = await Member.findById(supervisorId).lean();
-            if (!existingMember) {
-                await GroupMaster.findByIdAndDelete(newGroup._id);
-                return apiResponse.error(res, "Selected supervisor (member) not found", 400);
-            }
-            // Update member's group to this new group so they belong here
-            await Member.findByIdAndUpdate(supervisorId, { group: newGroup._id, Group_Name: group_name });
-            supervisorMemberId = existingMember._id;
-        } else if (supervisorName && String(supervisorName).trim()) {
-            // Create new member as supervisor for this group
-            const memberCode = `${group_code}-SUP-${Date.now().toString(36)}`;
-            const newMember = await Member.create({
-                Member_Id: memberCode,
-                Member_Nm: String(supervisorName).trim(),
-                Group_Name: group_name,
-                group: newGroup._id,
-                Desg: "Member",
-            });
-            supervisorMemberId = newMember._id;
-        }
-
-        if (supervisorMemberId) {
-            newGroup.supervisorId = supervisorMemberId;
-            await newGroup.save();
-        }
 
         // Return group without groupPassword (select: false already excludes it; ensure we don't leak)
         const result = await GroupMaster.findById(newGroup._id).select("-groupPassword").lean();
@@ -407,7 +408,14 @@ export const getGroupDetail = async (req, res) => {
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
 
-        let group = await GroupMaster.findById(id).populate("bankmaster").populate("bankmasters").lean();
+        let group = await GroupMaster.findById(id)
+            .populate("bankmaster")
+            .populate("bankmasters")
+            .populate({
+                path: "linkedSupervisorId",
+                select: "name email place status",
+            })
+            .lean();
 
         // Always include all banks for this group
         const banks = await BankMaster.find({ group_id: group._id }).sort({ createdAt: -1 }).lean();
@@ -445,7 +453,14 @@ export const getGroupByCode = async (req, res) => {
             return apiResponse.error(res, accessCheck.error || "Group not found or you don't have access to this group", 403);
         }
 
-        let group = await GroupMaster.findById(accessCheck.group._id).populate("bankmaster").populate("bankmasters").lean();
+        let group = await GroupMaster.findById(accessCheck.group._id)
+            .populate("bankmaster")
+            .populate("bankmasters")
+            .populate({
+                path: "linkedSupervisorId",
+                select: "name email place status",
+            })
+            .lean();
 
         const banks = await BankMaster.find({ group_id: group._id }).sort({ createdAt: -1 }).lean();
 
@@ -639,10 +654,13 @@ export const updateGroup = async (req, res) => {
             return apiResponse.error(res, error.details[0].message, 400);
         }
 
-        // Never update password or supervisor via generic update (use dedicated endpoints)
+        // Never update password or supervisor linkage via generic update (use dedicated endpoints)
         const updateBody = { ...req.body };
         delete updateBody.groupPassword;
         delete updateBody.passwordUpdatedAt;
+        delete updateBody.supervisorId;
+        delete updateBody.linkedSupervisorId;
+        delete updateBody.supervisorContactName;
 
         // Get admin's place from token
         const adminPlace = req.user?.place || req.admin?.place;
@@ -983,7 +1001,7 @@ export const getGroupCharges = async (req, res) => {
 export const changeSupervisor = async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { supervisorId, supervisorName } = req.body;
+        const { linkedSupervisorId, supervisorContactName } = req.body;
 
         if (!groupId) {
             return apiResponse.error(res, "groupId is required", 400);
@@ -1000,30 +1018,40 @@ export const changeSupervisor = async (req, res) => {
             return apiResponse.error(res, "Group not found", 404);
         }
 
-        if (supervisorId) {
-            const member = await Member.findById(supervisorId).lean();
-            if (!member) {
-                return apiResponse.error(res, "Selected member not found", 400);
+        let supervisorFieldsTouched = false;
+
+        if (Object.prototype.hasOwnProperty.call(req.body, "linkedSupervisorId")) {
+            supervisorFieldsTouched = true;
+            const raw = linkedSupervisorId;
+            if (raw === null || raw === undefined || String(raw).trim() === "") {
+                group.linkedSupervisorId = null;
+            } else {
+                const sv = await Supervisor.findById(String(raw).trim()).select("_id place status").lean();
+                if (!sv || sv.status !== "active") {
+                    return apiResponse.error(res, "Selected supervisor staff not found or inactive", 400);
+                }
+                if (String(sv.place || "").trim() !== String(adminPlace || "").trim()) {
+                    return apiResponse.error(res, "Supervisor belongs to another place", 403);
+                }
+                group.linkedSupervisorId = sv._id;
             }
-            // Assign member to this group if not already
-            await Member.findByIdAndUpdate(supervisorId, {
-                group: group._id,
-                Group_Name: group.group_name,
-            });
-            group.supervisorId = member._id;
-        } else if (supervisorName && String(supervisorName).trim()) {
-            const memberCode = `${group.group_code}-SUP-${Date.now().toString(36)}`;
-            const newMember = await Member.create({
-                Member_Id: memberCode,
-                Member_Nm: String(supervisorName).trim(),
-                Group_Name: group.group_name,
-                group: group._id,
-                Desg: "Member",
-            });
-            group.supervisorId = newMember._id;
-        } else {
-            return apiResponse.error(res, "Either supervisorId or supervisorName is required", 400);
         }
+
+        if (Object.prototype.hasOwnProperty.call(req.body, "supervisorContactName")) {
+            supervisorFieldsTouched = true;
+            const trimmed = supervisorContactName != null ? String(supervisorContactName).trim() : "";
+            group.supervisorContactName = trimmed || "";
+        }
+
+        if (!supervisorFieldsTouched) {
+            return apiResponse.error(
+                res,
+                "Send linkedSupervisorId and/or supervisorContactName",
+                400
+            );
+        }
+
+        group.supervisorId = null;
 
         await group.save({ validateBeforeSave: true });
         const updated = await GroupMaster.findById(groupId).select("-groupPassword").lean();

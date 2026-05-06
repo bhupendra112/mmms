@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { createGroup, getClusters } from "../../services/groupService";
-import { getMembers } from "../../services/memberService";
+import { getSupervisors } from "../../services/supervisorService";
 import { PlusCircle, Building2, Users, Calendar, DollarSign, FileText, LayoutGrid, UserPlus, Lock } from "lucide-react";
 import BackButton from "../../components/admin/BackButton";
 import { Input, Select, TextArea, FormSection } from "../../components/forms/FormComponents";
@@ -38,15 +39,14 @@ export default function CreateGroup() {
         fd_rate: "",
         loan_rate: "",
         password: "",
-        supervisorId: "",
-        supervisorName: "",
+        linkedSupervisorId: "",
+        supervisorContactName: "",
     });
 
     const [clusters, setClusters] = useState([]);
     const [selectedClusterId, setSelectedClusterId] = useState("");
     const [isNewCluster, setIsNewCluster] = useState(false);
-    const [useExistingSupervisor, setUseExistingSupervisor] = useState(true);
-    const [existingMembers, setExistingMembers] = useState([]);
+    const [supervisorStaffOptions, setSupervisorStaffOptions] = useState([]);
 
     useEffect(() => {
         fetchClusters();
@@ -55,11 +55,13 @@ export default function CreateGroup() {
     useEffect(() => {
         const load = async () => {
             try {
-                const res = await getMembers();
-                const list = Array.isArray(res?.data) ? res.data : [];
-                setExistingMembers(list);
+                const res = await getSupervisors();
+                const raw = res?.data ?? res;
+                const list = Array.isArray(raw) ? raw : [];
+                setSupervisorStaffOptions(list.filter((s) => s.status === "active"));
             } catch (err) {
-                console.error("Failed to load members for supervisor dropdown:", err);
+                console.error("Failed to load supervisors:", err);
+                setSupervisorStaffOptions([]);
             }
         };
         load();
@@ -105,16 +107,10 @@ export default function CreateGroup() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         const payload = { ...form };
-        if (useExistingSupervisor && form.supervisorId) {
-            payload.supervisorId = form.supervisorId;
-            delete payload.supervisorName;
-        } else if (!useExistingSupervisor && form.supervisorName?.trim()) {
-            payload.supervisorName = form.supervisorName.trim();
-            delete payload.supervisorId;
-        } else {
-            delete payload.supervisorId;
-            delete payload.supervisorName;
-        }
+        if (!payload.linkedSupervisorId?.trim()) delete payload.linkedSupervisorId;
+        delete payload.supervisorId;
+        delete payload.supervisorName;
+        if (!payload.supervisorContactName?.trim()) delete payload.supervisorContactName;
         if (!payload.password?.trim()) delete payload.password;
         const result = await execute(() => createGroup(payload));
         
@@ -146,8 +142,8 @@ export default function CreateGroup() {
                 fd_rate: "",
                 loan_rate: "",
                 password: "",
-                supervisorId: "",
-                supervisorName: "",
+                linkedSupervisorId: "",
+                supervisorContactName: "",
             });
             setSelectedClusterId("");
             setIsNewCluster(false);
@@ -329,58 +325,40 @@ export default function CreateGroup() {
                     />
                 </FormSection>
 
-                {/* Supervisor & Group Login */}
-                <FormSection title="Supervisor & Group Panel Login" icon={UserPlus}>
+                {/* Supervisor (staff — separate from SHG members) */}
+                <FormSection title="Assigned supervisor" icon={UserPlus}>
+                    <p className="text-sm text-gray-600 mb-3">
+                        Supervisors are managed under{" "}
+                        <Link to="/admin/supervisor-management" className="text-blue-600 underline font-medium hover:text-blue-800">
+                            Supervisor Management
+                        </Link>
+                        . They are not SHG members — pick a staff account below, and/or enter a contact / field name if needed.
+                    </p>
                     <div className="space-y-4">
-                        <div className="flex flex-wrap gap-4">
-                            <label className="inline-flex items-center gap-2 cursor-pointer">
-                                <input
-                                    type="radio"
-                                    name="supervisorMode"
-                                    checked={useExistingSupervisor}
-                                    onChange={() => setUseExistingSupervisor(true)}
-                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="text-sm font-medium text-gray-700">Select existing member</span>
-                            </label>
-                            <label className="inline-flex items-center gap-2 cursor-pointer">
-                                <input
-                                    type="radio"
-                                    name="supervisorMode"
-                                    checked={!useExistingSupervisor}
-                                    onChange={() => setUseExistingSupervisor(false)}
-                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="text-sm font-medium text-gray-700">Create new supervisor</span>
-                            </label>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1.5">Staff supervisor (login account)</label>
+                            <select
+                                name="linkedSupervisorId"
+                                value={form.linkedSupervisorId || ""}
+                                onChange={handleChange}
+                                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                            >
+                                <option value="">— None selected —</option>
+                                {supervisorStaffOptions.map((s) => (
+                                    <option key={s._id} value={s._id}>
+                                        {s.name}
+                                        {s.email ? ` (${s.email})` : ""}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
-                        {useExistingSupervisor ? (
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Existing member</label>
-                                <select
-                                    name="supervisorId"
-                                    value={form.supervisorId || ""}
-                                    onChange={handleChange}
-                                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                                >
-                                    <option value="">— Select member —</option>
-                                    {existingMembers.map((m) => (
-                                        <option key={m._id} value={m._id}>
-                                            {m.Member_Nm || m.Member_Id || m._id}
-                                            {m.Member_Id ? ` (${m.Member_Id})` : ""}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        ) : (
-                            <Input
-                                label="Supervisor name"
-                                name="supervisorName"
-                                value={form.supervisorName}
-                                handleChange={handleChange}
-                                placeholder="Enter name for new supervisor"
-                            />
-                        )}
+                        <Input
+                            label="Supervisor / contact name (optional)"
+                            name="supervisorContactName"
+                            value={form.supervisorContactName}
+                            handleChange={handleChange}
+                            placeholder="Name for display or external contact (not a member)"
+                        />
                     </div>
                 </FormSection>
 
@@ -545,8 +523,8 @@ export default function CreateGroup() {
                                         fd_rate: "",
                                         loan_rate: "",
                                         password: "",
-                                        supervisorId: "",
-                                        supervisorName: "",
+                                        linkedSupervisorId: "",
+                                        supervisorContactName: "",
                                     });
                                     setSelectedClusterId("");
                                     setIsNewCluster(false);

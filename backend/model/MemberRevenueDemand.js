@@ -39,35 +39,58 @@ const MemberRevenueDemandSchema = new mongoose.Schema({
     },
     isAnnualDemand: {
         type: Boolean,
-        default: false, // false for new member registration, true for April annual demand
+        default: false,
     },
     year: {
-        type: String, // Financial year format: "2024-25" (April to April)
+        type: String,
         required: true,
     },
     notes: {
         type: String,
         default: "",
     },
-    // Reference to recovery session where payment was made
     recoveryId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "RecoveryMaster",
         default: null,
     },
-    // Reference to loan if this is yogdan
     loanId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "LoanMaster",
         default: null,
     },
+    meetingKey: {
+        type: String,
+        default: undefined,
+    },
 }, {
     timestamps: true,
 });
 
-// Index for efficient queries
 MemberRevenueDemandSchema.index({ memberId: 1, groupId: 1, revenueType: 1, year: 1 });
 MemberRevenueDemandSchema.index({ memberId: 1, isPaid: 1 });
 MemberRevenueDemandSchema.index({ groupId: 1, year: 1, isPaid: 1 });
+
+MemberRevenueDemandSchema.index(
+    { memberId: 1, groupId: 1, revenueType: 1, demandDate: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { revenueType: "penalty" },
+    }
+);
+MemberRevenueDemandSchema.index(
+    { memberId: 1, groupId: 1, revenueType: 1, year: 1, isAnnualDemand: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { isAnnualDemand: true },
+    }
+);
+MemberRevenueDemandSchema.index(
+    { memberId: 1, groupId: 1, revenueType: 1, isAnnualDemand: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { isAnnualDemand: false },
+    }
+);
 
 export default mongoose.model("MemberRevenueDemand", MemberRevenueDemandSchema);

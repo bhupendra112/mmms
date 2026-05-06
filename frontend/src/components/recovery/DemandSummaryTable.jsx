@@ -5,6 +5,19 @@ function parseAmt(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function formatYmdIso(ymd) {
+  if (!ymd || typeof ymd !== "string") return "—";
+  const p = ymd.split("-");
+  if (p.length !== 3) return ymd;
+  const [y, m, d] = p;
+  return `${d}/${m}/${y}`;
+}
+
+function formatInr(n) {
+  const v = Math.round(Number(n) || 0);
+  return `₹${v.toLocaleString("en-IN")}`;
+}
+
 /**
  * In recovery edit mode, demand API rows can be all zeros after payment; merge form/saved amounts
  * so the table matches what we show during normal demand entry.
@@ -85,6 +98,11 @@ export default function DemandSummaryTable({
     return null;
   }
 
+  const meetingAccrualByLoanRows = Array.isArray(summary?.interestSchedule?.meetingAccrualByLoan)
+    ? summary.interestSchedule.meetingAccrualByLoan
+    : [];
+  const shouldShowInterestSchedule = !!(summary?.interestSchedule?.summary && meetingAccrualByLoanRows.length > 0);
+
   const fatherOrHusband = (currentMember && (
     (currentMember.raw && (currentMember.raw.F_H_Name || currentMember.raw.F_H_FatherName)) ||
     currentMember.fatherOrHusbandName ||
@@ -110,8 +128,8 @@ export default function DemandSummaryTable({
   const rows = [];
   Object.entries(summary)
     .filter(([key, data]) => {
-      // Skip non-category keys (e.g. interestDayDetails)
-      if (key === "interestDayDetails") return false;
+      // Skip non-category keys (e.g. interestDayDetails, interestSchedule)
+      if (key === "interestDayDetails" || key === "interestSchedule") return false;
       // Always show: saving, loan, interest, fd
       if (['saving', 'loan', 'interest', 'fd'].includes(key)) {
         return true;
@@ -189,7 +207,7 @@ export default function DemandSummaryTable({
             <div>
               <span className="text-gray-500">Name:</span> <span className="font-medium">{currentMember.name || "—"}</span>
             </div>
-            <div>
+            <div className="hidden sm:block">
               <span className="text-gray-500">Code:</span> <span className="font-medium">{currentMember.code || "—"}</span>
             </div>
             <div>
@@ -228,19 +246,19 @@ export default function DemandSummaryTable({
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
                 ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => {
-                  if (k === "interestDayDetails" || !d || Array.isArray(d)) return sum;
+                  if (k === "interestDayDetails" || k === "interestSchedule" || !d || Array.isArray(d)) return sum;
                   const val = typeof d.total === 'number' ? d.total : parseFloat(d.total ?? 0) || 0;
                   return sum + val;
                 }, 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.actual === "number" ? d.actual : parseFloat(d.actual ?? 0) || 0), 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || k === "interestSchedule" || !d || Array.isArray(d)) ? sum : sum + (typeof d.actual === "number" ? d.actual : parseFloat(d.actual ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.unpaid === "number" ? d.unpaid : parseFloat(d.unpaid ?? 0) || 0), 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || k === "interestSchedule" || !d || Array.isArray(d)) ? sum : sum + (typeof d.unpaid === "number" ? d.unpaid : parseFloat(d.unpaid ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">
-                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || !d || Array.isArray(d)) ? sum : sum + (typeof d.opening === "number" ? d.opening : parseFloat(d.opening ?? 0) || 0), 0)).toLocaleString()}
+                ₹{Math.round(Object.entries(summary).reduce((sum, [k, d]) => (k === "interestDayDetails" || k === "interestSchedule" || !d || Array.isArray(d)) ? sum : sum + (typeof d.opening === "number" ? d.opening : parseFloat(d.opening ?? 0) || 0), 0)).toLocaleString()}
               </td>
               <td className="border border-gray-200 p-1.5 sm:p-2 text-center text-gray-800">—</td>
             </tr>
@@ -248,11 +266,107 @@ export default function DemandSummaryTable({
         </table>
       </div>
 
-      {/* Interest calculation (days) – debug/detail from backend */}
+      {/* Interest breakdown: overdue + meeting accrual by loan (from demandDetails.interestSchedule) */}
+      {shouldShowInterestSchedule && (
+        <div className="mt-4 p-3 sm:p-4 rounded-lg border border-slate-200 bg-slate-50/80 shadow-sm">
+          <h4 className="text-sm sm:text-base font-semibold text-gray-800 mb-1">Interest on loan — calculation</h4>
+          <p className="text-[11px] sm:text-xs text-gray-600 mb-3 leading-relaxed">
+            {summary.interestSchedule.formula}
+          </p>
+          <p className="text-xs text-gray-700 mb-2">
+            <span className="font-medium text-gray-600">Meeting:</span>{" "}
+            {formatYmdIso(summary.interestSchedule.meetingDateYmd)}
+            {summary.interestSchedule.meetingSequence != null && (
+              <span className="text-gray-500"> (sequence {summary.interestSchedule.meetingSequence})</span>
+            )}
+          </p>
+
+          <div className="overflow-x-auto mb-4">
+            <table className="min-w-[320px] w-full border-collapse text-[11px] sm:text-xs">
+              <caption className="sr-only">How overdue and meeting accrual build interest demand</caption>
+              <thead>
+                <tr className="bg-slate-200/90">
+                  <th className="border border-slate-300 p-1.5 sm:p-2 text-left font-semibold text-gray-800">Component</th>
+                  <th className="border border-slate-300 p-1.5 sm:p-2 text-right font-semibold text-gray-800">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white">
+                <tr className="hover:bg-slate-50/80">
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-gray-700">Previous unpaid (carried)</td>
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-right text-gray-900 tabular-nums">{formatInr(summary.interestSchedule.summary.interestPrevDemand)}</td>
+                </tr>
+                <tr className="hover:bg-slate-50/80">
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-gray-700">Overdue on member record</td>
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-right text-gray-900 tabular-nums">{formatInr(summary.interestSchedule.summary.overdueStoredOnMember)}</td>
+                </tr>
+                <tr className="hover:bg-slate-50/80">
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-gray-700">Interest already recovered before this meeting</td>
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-right text-gray-900 tabular-nums">{formatInr(summary.interestSchedule.summary.interestPaidBeforeThisMeeting)}</td>
+                </tr>
+                <tr className="hover:bg-slate-50/80">
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-gray-700 font-medium">Overdue still in current demand</td>
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-right font-medium text-gray-900 tabular-nums">{formatInr(summary.interestSchedule.summary.remainingOverdueInCurr)}</td>
+                </tr>
+                <tr className="hover:bg-slate-50/80">
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-gray-700 font-medium">This meeting accrual (all loans)</td>
+                  <td className="border border-slate-200 p-1.5 sm:p-2 text-right font-medium text-gray-900 tabular-nums">{formatInr(summary.interestSchedule.summary.meetingPeriodInterest)}</td>
+                </tr>
+                <tr className="bg-slate-100/90 font-semibold">
+                  <td className="border border-slate-300 p-1.5 sm:p-2 text-gray-900">Current demand (overdue remaining + accrual)</td>
+                  <td className="border border-slate-300 p-1.5 sm:p-2 text-right text-gray-900 tabular-nums">{formatInr(summary.interestSchedule.summary.interestCurrDemand)}</td>
+                </tr>
+                <tr className="bg-slate-100/90 font-semibold">
+                  <td className="border border-slate-300 p-1.5 sm:p-2 text-gray-900">Total demand (Prev + Curr)</td>
+                  <td className="border border-slate-300 p-1.5 sm:p-2 text-right text-gray-900 tabular-nums">{formatInr(summary.interestSchedule.summary.interestTotalDemand)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h5 className="text-xs sm:text-sm font-semibold text-gray-800 mb-1">Meeting accrual by loan</h5>
+          <p className="text-[11px] text-gray-600 mb-2 max-w-3xl">
+            <span className="font-medium text-gray-700">Loan date</span> is disbursement on file. <span className="font-medium text-gray-700">Accrual from → to</span> is only this meeting’s window (not from loan date to meeting in one step). Loans with no days in this window are omitted.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="min-w-[720px] w-full border-collapse text-[11px] sm:text-xs">
+              <thead>
+                <tr className="bg-emerald-100/80">
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-left font-semibold text-gray-800">#</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-left font-semibold text-gray-800">Loan date</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-left font-semibold text-gray-800 min-w-[120px]">Purpose</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-left font-semibold text-gray-800">Accrual from</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-left font-semibold text-gray-800">Accrual to</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-center font-semibold text-gray-800">Days</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-right font-semibold text-gray-800">Principal</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-center font-semibold text-gray-800">Rate %</th>
+                  <th className="border border-emerald-200/90 p-1.5 sm:p-2 text-right font-semibold text-gray-800">Interest</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white">
+                {meetingAccrualByLoanRows.map((row) => (
+                  <tr key={`${row.loanId}-${row.rowIndex}`} className="hover:bg-emerald-50/40">
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-gray-800">{row.rowIndex}</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-gray-700 whitespace-nowrap">{formatYmdIso(row.loanDateYmd)}</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-gray-700 max-w-[200px] truncate" title={row.purpose || ""}>{row.purpose || "—"}</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-gray-700 whitespace-nowrap">{formatYmdIso(row.accrualFromYmd || row.startDateYmd)}</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-gray-700 whitespace-nowrap">{formatYmdIso(row.accrualToYmd || row.endDateYmd)}</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-center text-gray-800 tabular-nums">{row.days ?? "—"}</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-right text-gray-800 tabular-nums">{formatInr(row.principal)}</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-center text-gray-800">{row.ratePercent ?? "—"}%</td>
+                    <td className="border border-emerald-100 p-1.5 sm:p-2 text-right font-medium text-gray-900 tabular-nums">{formatInr(row.interest)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Detailed day ledger (optional, when backend sent _debugInterestDays) */}
       {Array.isArray(summary.interestDayDetails) && summary.interestDayDetails.length > 0 && (
         <div className="mt-4 p-3 rounded-lg border border-blue-200 bg-blue-50/50">
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">Interest calculation (days used)</h4>
-          <p className="text-xs text-gray-600 mb-2">Each period shows the start date, end date, number of days, and how interest was calculated.</p>
+          <h4 className="text-sm font-semibold text-gray-700 mb-2">Interest — day-detail trace</h4>
+          <p className="text-xs text-gray-600 mb-2">Fine-grained periods from the engine (same formula as above).</p>
           <div className="overflow-x-auto">
             <table className="min-w-[400px] w-full border-collapse text-xs">
               <thead>
@@ -281,7 +395,7 @@ export default function DemandSummaryTable({
                       <td className="border border-blue-200 p-1.5 text-center text-gray-700">{isLabelOnly ? "—" : (period.days ?? "—")}</td>
                       <td className="border border-blue-200 p-1.5 text-right text-gray-700">{isLabelOnly ? "—" : `₹${Number(period.principal ?? 0).toLocaleString("en-IN")}`}</td>
                       <td className="border border-blue-200 p-1.5 text-center text-gray-700">{isLabelOnly ? "—" : `${period.rate ?? "—"}%`}</td>
-                      <td className="border border-blue-200 p-1.5 text-right font-medium text-gray-800">₹{Math.round(Number(period.interest ?? 0)).toLocaleString()}</td>
+                      <td className="border border-blue-200 p-1.5 text-right font-medium text-gray-800">₹{Math.round(Number(period.interest ?? 0)).toLocaleString("en-IN")}</td>
                     </tr>
                   );
                 })}

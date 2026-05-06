@@ -149,6 +149,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         actualCharges: dd.charges?.actualPaid ?? {},
       },
       interestDayDetails: dd._debugInterestDays ?? null,
+      interestSchedule: dd.interestSchedule ?? null,
     };
   }
 
@@ -262,6 +263,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
         actualCharges: recovery?.amounts?.charges ?? {},
       },
       interestDayDetails: dd._debugInterestDays ?? null,
+      interestSchedule: dd.interestSchedule ?? null,
     };
   }
 
@@ -278,6 +280,7 @@ export const getDemandSummary = (memberId, recoveries, demandSummaries) => {
     penalty: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0 },
     charges: { prev: 0, curr: 0, total: 0, actual: 0, unpaid: 0, opening: 0, closing: 0, chargesDue: {}, actualCharges: {} },
     interestDayDetails: null,
+    interestSchedule: null,
   };
 };
 

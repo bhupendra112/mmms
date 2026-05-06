@@ -1325,10 +1325,9 @@ export default function DemandRecovery() {
               </div>
             )}
 
-            {/* Responsive grid: Members list left on desktop, form right */}
+            {/* Desktop: members list left, form right. Mobile/tablet: list hidden — use Prev / Save & Next + sticky header */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 md:gap-6">
-              {/* Members List */}
-              <div className="lg:col-span-4">
+              <div className="hidden lg:block lg:col-span-4">
                 <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                   <div className="max-h-[40vh] lg:max-h-[calc(100vh-220px)] overflow-auto">
                     <MembersList
