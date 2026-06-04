@@ -162,3 +162,8 @@ export const rejectRecovery = async (id, reason) => {
   const res = await httpRecovery.put(`/reject/${id}`, { reason });
   return res.data;
 };
+
+export const deleteRecovery = async (id) => {
+  const res = await httpRecovery.delete(`/${id}`);
+  return res.data;
+};

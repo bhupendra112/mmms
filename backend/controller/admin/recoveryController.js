@@ -11,7 +11,8 @@ import { createCashTransactionRecord } from "../../utility/cashTransactionHelper
 import { verifyGroupAccess, verifyGroupAccessByCode, verifyGroupAccessByName } from "../../utility/groupAccessHelper.js";
 import { generateRecoveryPDF } from "../../utility/pdfGenerator.js";
 import { getDateRange, parseDate } from "../../utility/dateUtils.js";
-import { postTransaction } from "../../service/ledgerPostingService.js";
+import { postTransaction, removeTransaction } from "../../service/ledgerPostingService.js";
+import CashToBankConversion from "../../model/CashToBankConversion.js";
 import { findOrCreateHead } from "../../utility/headMappingHelper.js";
 import { removeCashAmountInternal } from "./cashAmountController.js";
 import { postJournal } from "../../service/journalPostingService.js";
@@ -206,6 +207,132 @@ async function revertMemberRecoveryUpdateSideEffects(oldMemberRecovery, recovery
         }
     }
 }
+
+/**
+ * Undo legacy member.loanDetails.loanPaid increments from a recovery row.
+ */
+async function revertLoanPaidForMemberRecovery(memberRecovery, groupDoc) {
+    const loanAmt = parseFloat(memberRecovery?.amounts?.loan) || 0;
+    if (loanAmt <= 0 || !memberRecovery?.memberId || !groupDoc?._id) return;
+
+    const hasLoanMasterEntries = await LoanMaster.findOne({
+        groupId: groupDoc._id,
+        memberId: memberRecovery.memberId.toString(),
+        transactionType: "Loan",
+        status: "approved",
+    }).lean();
+
+    if (hasLoanMasterEntries) return;
+
+    const member = await Member.findById(memberRecovery.memberId);
+    if (!member?.loanDetails) return;
+
+    member.loanDetails.loanPaid = Math.max(
+        0,
+        roundDemand((parseFloat(member.loanDetails.loanPaid) || 0) - loanAmt)
+    );
+    await member.save();
+}
+
+/**
+ * Delete a full recovery session and undo cash/bank, revenue demands, yogdan, and ledger side effects.
+ */
+export const deleteRecovery = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return apiResponse.error(res, "Recovery ID is required", 400);
+        }
+
+        const recovery = await RecoveryMaster.findById(id).lean();
+        if (!recovery) {
+            return apiResponse.error(res, "Recovery not found", 404);
+        }
+
+        const adminPlace = req.user?.place || req.admin?.place;
+        const accessCheck = await verifyGroupAccess(recovery.groupId, adminPlace);
+        if (!accessCheck.valid) {
+            return apiResponse.error(res, accessCheck.error || "You don't have access to this recovery's group", 403);
+        }
+        const groupDoc = accessCheck.group;
+
+        const linkedConversion = await CashToBankConversion.findOne({
+            $or: [{ recoveryId: recovery._id }, { recoveryIds: recovery._id }],
+        }).lean();
+        if (linkedConversion) {
+            return apiResponse.error(
+                res,
+                "This recovery is linked to a cash-to-bank conversion and cannot be deleted. Remove the conversion first.",
+                400
+            );
+        }
+
+        const parsedDate = parseDate(recovery.recoveryDate || recovery.date);
+        const recoverySessionId = recovery._id;
+
+        if (Array.isArray(recovery.recoveries)) {
+            for (const memberRecovery of recovery.recoveries) {
+                await revertMemberRecoveryUpdateSideEffects(
+                    memberRecovery,
+                    recoverySessionId,
+                    groupDoc,
+                    parsedDate
+                );
+                await revertLoanPaidForMemberRecovery(memberRecovery, groupDoc);
+            }
+        }
+
+        const leftoverDemands = await MemberRevenueDemand.find({ recoveryId: recoverySessionId });
+        for (const demand of leftoverDemands) {
+            demand.paidAmount = 0;
+            demand.isPaid = false;
+            demand.paidDate = null;
+            demand.recoveryId = null;
+            await demand.save();
+        }
+
+        const orphanCash = await CashTransaction.find({ recoveryId: recoverySessionId });
+        for (const ct of orphanCash) {
+            const amt = parseFloat(ct.amount) || 0;
+            if (amt > 0) {
+                try {
+                    await removeCashAmountInternal(groupDoc._id, amt);
+                } catch (e) {
+                    console.error("[deleteRecovery] removeCashAmountInternal:", e);
+                }
+            }
+        }
+        await CashTransaction.deleteMany({ recoveryId: recoverySessionId });
+
+        const orphanBank = await BankTransaction.find({ recoveryId: recoverySessionId });
+        const bankIds = new Set();
+        for (const bt of orphanBank) {
+            if (bt.bankId) bankIds.add(bt.bankId.toString());
+        }
+        await BankTransaction.deleteMany({ recoveryId: recoverySessionId });
+        for (const bankId of bankIds) {
+            const bank = await BankMaster.findById(bankId);
+            if (bank && typeof bank.recalculateBalance === "function") {
+                try {
+                    await bank.recalculateBalance();
+                } catch (e) {
+                    console.error("[deleteRecovery] bank recalculateBalance:", e);
+                }
+            }
+        }
+
+        await removeTransaction("RecoveryMaster", recoverySessionId);
+        await RecoveryMaster.deleteMany({ _id: recoverySessionId });
+
+        return apiResponse.success(res, "Recovery deleted successfully", { deletedRecoveryId: id });
+    } catch (error) {
+        console.error("Error deleting recovery:", error);
+        if (error.name === "RecoverySnapshotImmutableError") {
+            return apiResponse.error(res, error.message, 400);
+        }
+        return apiResponse.error(res, error.message || "Failed to delete recovery", 500);
+    }
+};
 
 export const registerRecovery = async (req, res) => {
     try {
@@ -2583,13 +2710,51 @@ export const getGroupRecoveryDetails = async (req, res) => {
             query.date = dateFilter;
         }
 
+        const toYmd = (value) => {
+            if (!value) return null;
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return null;
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const day = String(d.getDate()).padStart(2, "0");
+            return `${y}-${m}-${day}`;
+        };
+
         // Fetch all recovery sessions for the group
         const recoveries = await RecoveryMaster.find(query)
             .populate("groupId", "group_name group_code village")
             .sort({ date: -1, meetingSequence: -1 }) // Newest first
             .lean();
 
-        return apiResponse.success(res, "Group recovery details fetched successfully", recoveries);
+        const enrichedRecoveries = (recoveries || []).map((row) => {
+            const demandDate = row?.recoveryDate || row?.date || null;
+            const resolvedMeeting = demandDate
+                ? resolveMeetingForRecovery({
+                      groupDoc: accessCheck.group,
+                      recoveryDate: demandDate,
+                  })
+                : null;
+            const meetingDate =
+                row?.meetingDate ||
+                row?.MeetingDate ||
+                resolvedMeeting?.meetingDate ||
+                demandDate;
+            const meetingSequence =
+                row?.meetingSequence ||
+                resolvedMeeting?.meetingSequence ||
+                1;
+            return {
+                ...row,
+                // Explicit date fields for frontend display clarity
+                demandDate,
+                demandDateYmd: toYmd(demandDate),
+                meetingDate,
+                meetingDateYmd: toYmd(meetingDate),
+                meetingSequence,
+            };
+        });
+
+        return apiResponse.success(res, "Group recovery details fetched successfully", enrichedRecoveries);
     } catch (error) {
         console.error("Error fetching group recovery details:", error);
         return apiResponse.error(res, error.message, 500);

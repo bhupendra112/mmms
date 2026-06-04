@@ -1,5 +1,5 @@
 import express from "express";
-import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, addPenaltyDemand, getGroupRecoveryDetails, exportRecoveryPDF, getMemberRecoveryStatus, approveRecovery, rejectRecovery } from "../../controller/admin/recoveryController.js";
+import { registerRecovery, listRecoveries, getRecoveryDetail, updateMemberRecovery, getRecoveryByDate, updateRecoveryPhoto, getPreviousRecoveryData, getDemandDetails, getMemberLoanTotals, getMemberRevenueRemaining, addPenaltyDemand, getGroupRecoveryDetails, exportRecoveryPDF, getMemberRecoveryStatus, approveRecovery, rejectRecovery, deleteRecovery } from "../../controller/admin/recoveryController.js";
 import authAdmin from "../../middleware/authorization.js";
 
 const Router = express.Router();
@@ -51,6 +51,9 @@ Router.put("/approve/:id", authAdmin, approveRecovery);
 
 // Reject Recovery (from group panel)
 Router.put("/reject/:id", authAdmin, rejectRecovery);
+
+// Delete full recovery session (must be last — /:id is a catch-all)
+Router.delete("/:id", authAdmin, deleteRecovery);
 
 export default Router;
 

@@ -5,7 +5,7 @@ import { getGroupBanks, getGroups, getGroupDetail, getBankDetail, getCashTransac
 import { getMembersByGroup, getMembers, exportMemberLedger, updateMember, deleteMember, updateOpeningSaving } from "../../services/memberService";
 import { getSupervisors } from "../../services/supervisorService";
 import { getLoans } from "../../services/loanService";
-import { getRecoveries, getGroupRecoveryDetails } from "../../services/recoveryService";
+import { getRecoveries, getGroupRecoveryDetails, deleteRecovery } from "../../services/recoveryService";
 import { getFDsByGroup } from "../../services/fdService";
 import { exportMemberSummaryToExcel, exportMemberSummaryToPDF, exportRecoveryDetailsToExcel, exportRecoveryDetailsToPDF } from "../../utils/exportUtils";
 import BankPresetQuickFill from "../../components/common/BankPresetQuickFill";
@@ -41,6 +41,20 @@ const getImageUrl = (imagePath) => {
 
     return fullUrl;
 };
+
+const formatDisplayDate = (value) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+    });
+};
+
+const getDemandDate = (recovery) => recovery?.demandDate || recovery?.recoveryDate || recovery?.date || null;
+const getMeetingDate = (recovery) => recovery?.meetingDate || recovery?.MeetingDate || getDemandDate(recovery);
 
 const STORAGE_KEY_CLUSTER = "groupManagement_selectedCluster";
 const STORAGE_KEY_GROUP = "groupManagement_selectedGroup";
@@ -116,6 +130,7 @@ export default function GroupManagement() {
     const [recoveryDetails, setRecoveryDetails] = useState([]);
     const [recoveryDetailsLoading, setRecoveryDetailsLoading] = useState(false);
     const [selectedRecovery, setSelectedRecovery] = useState(null);
+    const [recoveryDeleteLoading, setRecoveryDeleteLoading] = useState(false);
     const [showChangeSupervisorModal, setShowChangeSupervisorModal] = useState(false);
     const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
     const [changeSupervisorForm, setChangeSupervisorForm] = useState({
@@ -443,6 +458,38 @@ export default function GroupManagement() {
             setRecoveryDetails([]);
         } finally {
             setRecoveryDetailsLoading(false);
+        }
+    };
+
+    const handleDeleteRecovery = async (recovery) => {
+        if (!recovery?._id || !selectedGroup) return;
+        const meetingLabel = formatDisplayDate(getMeetingDate(recovery));
+        const demandLabel = formatDisplayDate(getDemandDate(recovery));
+        const confirmMsg =
+            `Delete this entire recovery session?\n\n` +
+            `Meeting date: ${meetingLabel}\n` +
+            `Demand date: ${demandLabel}\n` +
+            `Grand total: ₹${Math.round(recovery.totals?.totalAmount || 0).toLocaleString()}\n\n` +
+            `This will remove all member entries, cash/bank transactions, and ledger postings for this session. This cannot be undone.`;
+        if (!window.confirm(confirmMsg)) return;
+
+        setRecoveryDeleteLoading(true);
+        try {
+            const res = await deleteRecovery(recovery._id);
+            if (res?.success === false) {
+                throw new Error(res?.message || "Failed to delete recovery");
+            }
+            alert(res?.message || "Recovery deleted successfully");
+            if (selectedRecovery?._id === recovery._id) {
+                setSelectedRecovery(null);
+            }
+            await loadRecoveryDetails(selectedGroup);
+            calculateFinance(selectedGroup);
+        } catch (error) {
+            console.error("Failed to delete recovery:", error);
+            alert(error?.response?.data?.message || error?.message || "Failed to delete recovery");
+        } finally {
+            setRecoveryDeleteLoading(false);
         }
     };
 
@@ -2122,19 +2169,18 @@ export default function GroupManagement() {
                                                 <div className="flex items-center justify-between mb-4">
                                                     <div>
                                                         <h4 className="text-xl font-bold text-gray-800">
-                                                            Recovery Session - {new Date(selectedRecovery.date).toLocaleDateString("en-GB", {
-                                                                day: "2-digit",
-                                                                month: "2-digit",
-                                                                year: "numeric"
-                                                            })}
+                                                            Recovery Session
                                                         </h4>
-                                                        {selectedRecovery.meetingSequence > 1 && (
-                                                            <p className="text-sm text-gray-600 mt-1">
-                                                                Meeting Sequence: {selectedRecovery.meetingSequence}
-                                                            </p>
-                                                        )}
+                                                        <p className="text-sm text-gray-700 mt-1">
+                                                            <span className="font-medium">Meeting date:</span> {formatDisplayDate(getMeetingDate(selectedRecovery))}
+                                                            {" "}
+                                                            <span className="text-gray-500">(sequence {selectedRecovery?.meetingSequence || 1})</span>
+                                                        </p>
+                                                        <p className="text-sm text-gray-700 mt-0.5">
+                                                            <span className="font-medium">Demand date:</span> {formatDisplayDate(getDemandDate(selectedRecovery))}
+                                                        </p>
                                                     </div>
-                                                    <div className="flex items-center gap-4">
+                                                    <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                                                         <button
                                                             onClick={() => handleExportRecoveryDetails(selectedRecovery, 'excel')}
                                                             className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
@@ -2148,6 +2194,14 @@ export default function GroupManagement() {
                                                         >
                                                             <FileText size={16} />
                                                             Export PDF
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteRecovery(selectedRecovery)}
+                                                            disabled={recoveryDeleteLoading}
+                                                            className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 text-sm disabled:opacity-50"
+                                                        >
+                                                            <Trash2 size={16} />
+                                                            {recoveryDeleteLoading ? "Deleting…" : "Delete Recovery"}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -2349,7 +2403,8 @@ export default function GroupManagement() {
                                             <table className="w-full border-collapse">
                                                 <thead>
                                                     <tr className="bg-gray-100">
-                                                        <th className="border p-3 text-left font-semibold text-gray-700">Date</th>
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Meeting date</th>
+                                                        <th className="border p-3 text-left font-semibold text-gray-700">Demand date</th>
                                                         <th className="border p-3 text-center font-semibold text-gray-700">Meeting Sequence</th>
                                                         <th className="border p-3 text-center font-semibold text-gray-700">Member Count</th>
                                                         <th className="border p-3 text-right font-semibold text-gray-700">Total Cash</th>
@@ -2362,27 +2417,37 @@ export default function GroupManagement() {
                                                     {recoveryDetails.map((recovery) => (
                                                         <tr key={recovery._id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedRecovery(recovery)}>
                                                             <td className="border p-3 text-gray-800">
-                                                                {new Date(recovery.date).toLocaleDateString("en-GB", {
-                                                                    day: "2-digit",
-                                                                    month: "2-digit",
-                                                                    year: "numeric"
-                                                                })}
+                                                                {formatDisplayDate(getMeetingDate(recovery))}
                                                             </td>
+                                                            <td className="border p-3 text-gray-800">{formatDisplayDate(getDemandDate(recovery))}</td>
                                                             <td className="border p-3 text-center text-gray-800">{recovery.meetingSequence || 1}</td>
                                                             <td className="border p-3 text-center text-gray-800">{recovery.memberCount || (recovery.recoveries?.length || 0)}</td>
                                                             <td className="border p-3 text-right text-gray-800">₹{Math.round(recovery.totals?.totalCash || 0).toLocaleString()}</td>
                                                             <td className="border p-3 text-right text-gray-800">₹{Math.round(recovery.totals?.totalOnline || 0).toLocaleString()}</td>
                                                             <td className="border p-3 text-right font-semibold text-gray-800">₹{Math.round(recovery.totals?.totalAmount || 0).toLocaleString()}</td>
                                                             <td className="border p-3 text-center">
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        setSelectedRecovery(recovery);
-                                                                    }}
-                                                                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                                                                >
-                                                                    View Details
-                                                                </button>
+                                                                <div className="flex flex-wrap items-center justify-center gap-2">
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setSelectedRecovery(recovery);
+                                                                        }}
+                                                                        className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                                                                    >
+                                                                        View Details
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleDeleteRecovery(recovery);
+                                                                        }}
+                                                                        disabled={recoveryDeleteLoading}
+                                                                        title="Delete full recovery session"
+                                                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50"
+                                                                    >
+                                                                        <Trash2 size={18} />
+                                                                    </button>
+                                                                </div>
                                                             </td>
                                                         </tr>
                                                     ))}
